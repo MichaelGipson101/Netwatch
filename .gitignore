@@ -1,0 +1,30 @@
+# Runtime config — contains your network's secret map
+hosts.yaml
+auth.json
+
+# Runtime data
+netwatch.db
+netwatch.db-shm
+netwatch.db-wal
+
+# Backup files from the patch chain
+*.bak
+*.bak_*
+
+# hosts.yaml auto-backups
+backups/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor junk
+*.swp
+*.swo
+.vscode/
+.idea/

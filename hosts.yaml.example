@@ -1,0 +1,37 @@
+# netwatch host configuration
+# Copy this to hosts.yaml and fill in your actual network.
+
+settings:
+  default_interval: 30      # seconds between pings
+  ping_timeout: 2           # seconds
+  history_window: 100       # ping history retained per host
+  refresh_rate: 5           # dashboard refresh rate
+  history_days: 7           # SQLite ping retention
+
+  # Optional: ntfy alerts (set ntfy_topic to enable)
+  # ntfy_topic: "your-topic-name"
+  # ntfy_server: "https://ntfy.sh"
+
+hosts:
+  - name: Router
+    ip: 192.168.1.1
+    group: Network
+    always_on: true
+    alert: true
+
+  - name: NAS
+    ip: 192.168.1.10
+    group: Storage
+    always_on: true
+    alert: true
+    specs:
+      cpu: Example CPU
+      ram: 32GB DDR4
+      mac: aa:bb:cc:dd:ee:ff
+
+  - name: Workstation
+    ip: 192.168.1.50
+    group: Computers
+    interval: 15
+    always_on: false        # don't alert when a laptop is asleep
+    alert: false
