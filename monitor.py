@@ -24,6 +24,11 @@ BRAND   = "NETWATCH"
 VERSION = "3.37"
 
 
+def _column_exists(conn, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row[1] == column for row in rows)
+
+
 # ============================================================================
 # Host state
 # ============================================================================
@@ -959,11 +964,9 @@ class HistoryDB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(self.SCHEMA)
-        try:
+        if not _column_exists(self.conn, "incidents", "alert_sent"):
             self.conn.execute("ALTER TABLE incidents ADD COLUMN alert_sent INTEGER DEFAULT 0")
             logging.info("HistoryDB: added alert_sent column to incidents")
-        except sqlite3.OperationalError:
-            pass
         logging.info(f"HistoryDB: opened {db_path} (retention {retention_days} days)")
 
     def close(self):
@@ -1248,18 +1251,11 @@ class InventoryDB:
         self.lock = history_db.lock  # share the same lock to serialize writes
         self.conn = history_db.conn
         self.conn.executescript(self.SCHEMA)
-        # Schema migration: add device_type and properties columns.
-        # ALTER TABLE on existing column raises sqlite3.OperationalError.
-        import sqlite3 as _sqlite3
-        try:
+        if not _column_exists(self.conn, "inventory", "device_type"):
             self.conn.execute("ALTER TABLE inventory ADD COLUMN device_type TEXT DEFAULT 'host' NOT NULL")
             logging.info("InventoryDB: added device_type column")
-        except _sqlite3.OperationalError:
-            pass
-        try:
+        if not _column_exists(self.conn, "inventory", "properties"):
             self.conn.execute("ALTER TABLE inventory ADD COLUMN properties TEXT")
-        except _sqlite3.OperationalError:
-            pass
         # Connections table - records edges between inventory devices.
         # CREATE TABLE IF NOT EXISTS is idempotent so re-runs are safe.
         self.conn.executescript("""
