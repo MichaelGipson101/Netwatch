@@ -298,9 +298,9 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-node-icon{transition:transform .25s cubic-bezier(.4,0,.2,1),filter .3s ease}
 .topo-node-hit{fill:transparent;stroke:none;pointer-events:all}
 
-.topo-status-up      .topo-node-icon{filter:drop-shadow(0 0 4px rgba(93,187,141,.45)) drop-shadow(0 0 9px rgba(93,187,141,.22))}
+.topo-status-up      .topo-node-icon{filter:drop-shadow(0 0 5px rgba(93,187,141,.6)) drop-shadow(0 0 12px rgba(93,187,141,.35))}
 .topo-status-degraded .topo-node-icon{filter:drop-shadow(0 0 4px rgba(240,169,59,.50)) drop-shadow(0 0 9px rgba(240,169,59,.22))}
-.topo-status-down    .topo-node-icon{filter:drop-shadow(0 0 5px rgba(229,115,115,.55)) drop-shadow(0 0 11px rgba(229,115,115,.28))}
+.topo-status-down    .topo-node-icon{filter:grayscale(.55) brightness(.78) drop-shadow(0 0 6px rgba(229,115,115,.75)) drop-shadow(0 0 14px rgba(229,115,115,.45))}
 .topo-status-idle    .topo-node-icon{filter:drop-shadow(0 0 3px rgba(122,122,122,.30))}
 .topo-status-unknown .topo-node-icon{filter:drop-shadow(0 0 3px rgba(122,122,122,.18))}
 
@@ -326,7 +326,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 /* Down-pulse: dim the icon rhythmically */
 @keyframes topo-icon-down-pulse{
   0%,100%{opacity:1}
-  50%    {opacity:.72}
+  50%    {opacity:.55}
 }
 .topo-status-down .topo-node-icon{animation:topo-icon-down-pulse 2.2s ease-in-out infinite}
 
