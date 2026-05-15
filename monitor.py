@@ -739,17 +739,21 @@ class AuthManager:
 
     def _open_attempts_db(self, db_path):
         import sqlite3
-        conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS login_attempts "
-            "(ip TEXT NOT NULL, timestamp INTEGER NOT NULL)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_attempts_ip ON login_attempts(ip)"
-        )
-        return conn
+        try:
+            conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS login_attempts "
+                "(ip TEXT NOT NULL, timestamp INTEGER NOT NULL)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attempts_ip ON login_attempts(ip)"
+            )
+            return conn
+        except Exception as e:
+            logging.warning(f"AuthManager: could not open attempts DB at {db_path}: {e}; brute-force attempts will not persist")
+            return None
 
     def _load_attempts(self):
         cutoff = time.time() - self.LOCKOUT_MINUTES * 60
@@ -909,6 +913,12 @@ class AuthManager:
                 self._attempts_db.execute(
                     "DELETE FROM login_attempts WHERE ip = ?", (ip,)
                 )
+
+    def close(self):
+        with self.lock:
+            if self._attempts_db:
+                self._attempts_db.close()
+                self._attempts_db = None
 
     # ── Session cookie signing ──────────────────────────────────────────────
 
@@ -3727,21 +3737,24 @@ def main():
         wt.start()
         print(f"[netwatch] Dashboard -> http://0.0.0.0:{args.port}")
 
-    if args.no_tui:
-        print(f"[netwatch] Monitoring {len(host_manager.list_hosts())} hosts")
-        print("[netwatch] Headless mode. Ctrl+C to stop.")
-        try:
-            while True: time.sleep(1)
-        except KeyboardInterrupt:
-            stop_event.set()
-    else:
-        try:
-            curses.wrapper(draw_tui, host_manager, refresh_rate, args.port, stop_event)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            stop_event.set()
-            print("\n[netwatch] Stopped.")
+    try:
+        if args.no_tui:
+            print(f"[netwatch] Monitoring {len(host_manager.list_hosts())} hosts")
+            print("[netwatch] Headless mode. Ctrl+C to stop.")
+            try:
+                while True: time.sleep(1)
+            except KeyboardInterrupt:
+                stop_event.set()
+        else:
+            try:
+                curses.wrapper(draw_tui, host_manager, refresh_rate, args.port, stop_event)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                stop_event.set()
+                print("\n[netwatch] Stopped.")
+    finally:
+        auth_manager.close()
 
 
 if __name__ == "__main__":
