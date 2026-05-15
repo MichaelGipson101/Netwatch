@@ -1613,7 +1613,9 @@ function renderHost(h){
   const isDegraded = h.status === 'DEGRADED';
   const dotCls = h.status === 'WAIT' ? 'dot-wt' : isDegraded ? 'dot-degraded' : h.is_up ? 'dot-up' : (isIdle ? 'dot-idle' : 'dot-dn');
   const badgeCls = h.status === 'WAIT' ? 'badge-wt' : isDegraded ? 'badge-degraded' : h.is_up ? 'badge-up' : (isIdle ? 'badge-idle' : 'badge-dn');
-  const nameStyle = h.is_up || h.status === 'WAIT' || isIdle || isDegraded ? '' : 'style="color:var(--red)"';
+  const nameStyle = 'style="display:flex;align-items:center;gap:5px'
+    + (h.is_up || h.status === 'WAIT' || isIdle || isDegraded ? '' : ';color:var(--red)')
+    + '"';
   const uPct = h.uptime_pct;
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(uPct);
   const uBarColor = isIdle ? 'var(--border)' : uColor;
@@ -1623,7 +1625,7 @@ function renderHost(h){
   const ipAttr = ' data-ip="' + escapeHtml(h.ip) + '"';
   return '<div class="row' + rowCls + '"' + ipAttr + ' onclick="openDrawer(this.dataset.ip)">'
     + '<div><span class="dot ' + dotCls + '"></span></div>'
-    + '<div><div class="host-name" ' + nameStyle + ' style="display:flex;align-items:center;gap:5px">'
+    + '<div><div class="host-name" ' + nameStyle + '>'
     + deviceIcon(h.device_type, 13)
     + '<span>' + escapeHtml(h.name) + '</span></div><div class="host-ip-sub">' + escapeHtml(h.ip) + '</div></div>'
     + '<div class="col-ip">' + escapeHtml(h.ip) + '</div>'
