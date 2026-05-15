@@ -150,3 +150,9 @@ def test_build_api_payload_annotates_device_type():
         assert hosts["10.0.0.1"]["device_type"] == "tablet"
         assert hosts["10.0.0.99"]["device_type"] == "host"  # no record → default
         hdb.close()
+
+
+def test_build_api_payload_without_inventory_db():
+    hm = _FakeHostManager([_FakeHost("10.0.0.1")])
+    payload = build_api_payload(hm, {})
+    assert payload["hosts"][0]["device_type"] == "host"

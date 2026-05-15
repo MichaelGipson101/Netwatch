@@ -1344,11 +1344,13 @@ class InventoryDB:
         return ":".join(clean[i:i+2] for i in range(0, 12, 2))
 
     def get_device_type_map(self):
-        """Return {ip: device_type} for all inventory records with a non-empty IP."""
+        """Return {ip: device_type} for all inventory records with a non-empty IP.
+        When multiple records share an IP, the one with the lowest id wins."""
         with self.lock:
             cur = self.conn.execute(
                 "SELECT ip, device_type FROM inventory"
                 " WHERE ip IS NOT NULL AND ip != ''"
+                " ORDER BY id ASC"
             )
             return {row[0]: (row[1] or "host") for row in cur.fetchall()}
 
