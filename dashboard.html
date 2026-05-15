@@ -2325,7 +2325,7 @@ function truncateLabel(s, max){
 }
 
 function buildNodeTip(d){
-  const typeLabel = {host:'Host', network:'Network', ups:'UPS', disk:'Disk',
+  const typeLabel = {host:'Host', vm:'VM', network:'Network', ups:'UPS', disk:'Disk',
     peripheral:'Peripheral', tablet:'Tablet', phone:'Phone', printer:'Printer'}[d.device_type] || d.device_type;
   // Check if the SVG group for this node has the VM class
   const isVm = !!(_topoSvg && !_topoSvg.select('g.topo-node[data-id="' + d.id + '"].topo-node-vm').empty());
