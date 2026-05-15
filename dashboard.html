@@ -2043,8 +2043,15 @@ function renderTopologyWeb(){
         .attr('x', -w/2).attr('y', -h/2)
         .attr('width', w).attr('height', h)
         .attr('rx', 8).attr('ry', 8);
+      sel.append('use')
+        .attr('href', '#icon-' + (d.device_type || 'host'))
+        .attr('x', -48).attr('y', -8)
+        .attr('width', 16).attr('height', 16)
+        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
+        .attr('fill', 'none').attr('stroke-width', 1.75)
+        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
       sel.append('text').attr('class', 'topo-node-label-inside')
-        .attr('y', 5).text(truncateLabel(d.name, 16));
+        .attr('x', 6).attr('y', 5).text(truncateLabel(d.name, 13));
     } else if(d.device_type === 'disk'){
       const s = 32;
       sel.append('rect')
@@ -2052,22 +2059,50 @@ function renderTopologyWeb(){
         .attr('x', -s/2).attr('y', -s/2)
         .attr('width', s).attr('height', s)
         .attr('rx', 5).attr('ry', 5);
+      sel.append('use')
+        .attr('href', '#icon-disk')
+        .attr('x', -6).attr('y', -6)
+        .attr('width', 12).attr('height', 12)
+        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
+        .attr('fill', 'none').attr('stroke-width', 1.75)
+        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
       sel.append('text').attr('class', 'topo-node-label-below')
         .attr('y', s/2 + 14).text(truncateLabel(d.name, 20));
     } else if(d.device_type === 'peripheral' || d.device_type === 'tablet'
               || d.device_type === 'phone' || d.device_type === 'printer'){
       sel.append('circle').attr('class', 'topo-node-shape').attr('r', 14);
+      sel.append('use')
+        .attr('href', '#icon-' + (d.device_type || 'peripheral'))
+        .attr('x', -5).attr('y', -5)
+        .attr('width', 10).attr('height', 10)
+        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
+        .attr('fill', 'none').attr('stroke-width', 1.75)
+        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
       sel.append('text').attr('class', 'topo-node-label-below')
         .attr('y', 14 + 14).text(truncateLabel(d.name, 20));
     } else if(d.device_type === 'vm'){
       // VM - smaller circle than a host, slight purple tint, conveys
       // "runs inside something else" via reduced size
       sel.append('circle').attr('class', 'topo-node-shape').attr('r', 16);
+      sel.append('use')
+        .attr('href', '#icon-vm')
+        .attr('x', -5).attr('y', -5)
+        .attr('width', 10).attr('height', 10)
+        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
+        .attr('fill', 'none').attr('stroke-width', 1.75)
+        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
       sel.append('text').attr('class', 'topo-node-label-below')
         .attr('y', 16 + 14).text(truncateLabel(d.name, 20));
     } else {
       // host (default)
       sel.append('circle').attr('class', 'topo-node-shape').attr('r', 22);
+      sel.append('use')
+        .attr('href', '#icon-host')
+        .attr('x', -7).attr('y', -7)
+        .attr('width', 14).attr('height', 14)
+        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
+        .attr('fill', 'none').attr('stroke-width', 1.75)
+        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
       sel.append('text').attr('class', 'topo-node-label-below')
         .attr('y', 22 + 14).text(truncateLabel(d.name, 20));
     }
