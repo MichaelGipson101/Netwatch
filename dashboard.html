@@ -2598,6 +2598,7 @@ function renderSummary(data){
 async function refresh(){
   try {
     const res = await fetch('/api/status');
+    if(res.status === 401){ openLogin(refresh); return; }
     if(!res.ok) throw new Error('bad');
     const data = await res.json();
     lastData = data;

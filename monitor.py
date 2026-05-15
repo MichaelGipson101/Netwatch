@@ -2692,6 +2692,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self.wfile.write(body)
                 return
             if self.path == "/api/status":
+                if not self._require_auth():
+                    return
                 self._send_json(200, build_api_payload(host_manager, settings, incident_log))
                 return
             if self.path == "/api/hosts":
