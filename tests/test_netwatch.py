@@ -30,3 +30,46 @@ def test_real_operationalerror_propagates_on_bad_sql():
         assert False, "Should have raised"
     except _sq.OperationalError:
         pass  # expected — real errors propagate
+
+
+import tempfile, time
+from monitor import AuthManager
+
+
+def _make_auth(tmpdir, db_path=None):
+    auth_path = os.path.join(tmpdir, "auth.json")
+    return AuthManager(auth_path, db_path=db_path)
+
+
+def test_failed_attempts_persist_across_restart():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test.db")
+        am1 = _make_auth(tmpdir, db_path=db_path)
+        for _ in range(AuthManager.LOCKOUT_AFTER):
+            am1.record_failed_attempt("1.2.3.4")
+        assert am1.is_locked_out("1.2.3.4")
+
+        # New instance, same DB — lockout must survive
+        am2 = _make_auth(tmpdir, db_path=db_path)
+        assert am2.is_locked_out("1.2.3.4")
+
+
+def test_successful_login_clears_persisted_attempts():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test.db")
+        am1 = _make_auth(tmpdir, db_path=db_path)
+        for _ in range(AuthManager.LOCKOUT_AFTER):
+            am1.record_failed_attempt("10.0.0.1")
+        am1.record_successful_login("10.0.0.1")
+
+        am2 = _make_auth(tmpdir, db_path=db_path)
+        assert not am2.is_locked_out("10.0.0.1")
+
+
+def test_no_db_path_works_as_before():
+    """AuthManager without db_path still works (in-memory only)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir, db_path=None)
+        for _ in range(AuthManager.LOCKOUT_AFTER):
+            am.record_failed_attempt("192.168.1.1")
+        assert am.is_locked_out("192.168.1.1")

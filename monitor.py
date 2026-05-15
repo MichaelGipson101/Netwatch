@@ -728,11 +728,36 @@ class AuthManager:
     LOCKOUT_AFTER = 5
     LOCKOUT_MINUTES = 15
 
-    def __init__(self, auth_path):
+    def __init__(self, auth_path, db_path=None):
         self.path = auth_path
         self.lock = threading.Lock()
-        self._failed_attempts = {}  # ip -> [(timestamp, ...), ...]
+        self._failed_attempts = {}  # ip -> [timestamp, ...]
+        self._attempts_db = self._open_attempts_db(db_path) if db_path else None
         self.data = self._load()
+        if self._attempts_db:
+            self._load_attempts()
+
+    def _open_attempts_db(self, db_path):
+        import sqlite3
+        conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS login_attempts "
+            "(ip TEXT NOT NULL, timestamp INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attempts_ip ON login_attempts(ip)"
+        )
+        return conn
+
+    def _load_attempts(self):
+        cutoff = time.time() - self.LOCKOUT_MINUTES * 60
+        rows = self._attempts_db.execute(
+            "SELECT ip, timestamp FROM login_attempts WHERE timestamp > ?", (cutoff,)
+        ).fetchall()
+        for ip, ts in rows:
+            self._failed_attempts.setdefault(ip, []).append(ts)
 
     def _load(self):
         if not os.path.isfile(self.path):
@@ -853,6 +878,11 @@ class AuthManager:
         ]
         if not self._failed_attempts[ip]:
             del self._failed_attempts[ip]
+        if self._attempts_db:
+            self._attempts_db.execute(
+                "DELETE FROM login_attempts WHERE ip = ? AND timestamp <= ?",
+                (ip, cutoff),
+            )
 
     def is_locked_out(self, ip):
         now = time.time()
@@ -866,10 +896,19 @@ class AuthManager:
         with self.lock:
             self._prune_old_attempts(ip, now)
             self._failed_attempts.setdefault(ip, []).append(now)
+            if self._attempts_db:
+                self._attempts_db.execute(
+                    "INSERT INTO login_attempts (ip, timestamp) VALUES (?, ?)",
+                    (ip, int(now)),
+                )
 
     def record_successful_login(self, ip):
         with self.lock:
             self._failed_attempts.pop(ip, None)
+            if self._attempts_db:
+                self._attempts_db.execute(
+                    "DELETE FROM login_attempts WHERE ip = ?", (ip,)
+                )
 
     # ── Session cookie signing ──────────────────────────────────────────────
 
@@ -3649,15 +3688,16 @@ def main():
     stop_event = threading.Event()
 
     # Authentication
-    auth_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "auth.json")
-    auth_manager = AuthManager(auth_path)
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    auth_path = os.path.join(config_dir, "auth.json")
+    db_path = os.path.join(config_dir, "netwatch.db")
+    auth_manager = AuthManager(auth_path, db_path=db_path)
     if auth_manager.has_users:
         print(f"[netwatch] Auth enabled - {len(auth_manager.list_users())} user(s) configured")
     else:
         print(f"[netwatch] Auth NOT YET CONFIGURED - visit the dashboard to set up the first admin user")
 
     # SQLite-backed history (persists pings & incidents across restarts)
-    db_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "netwatch.db")
     retention_days = int(settings.get("history_days", 30))
     history_db = HistoryDB(db_path, retention_days=retention_days)
     print(f"[netwatch] History DB -> {db_path} (retention {retention_days} days)")
