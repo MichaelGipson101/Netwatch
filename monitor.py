@@ -2678,7 +2678,6 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             body = json.dumps(obj).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Length", len(body))
             self.end_headers()
             self.wfile.write(body)
