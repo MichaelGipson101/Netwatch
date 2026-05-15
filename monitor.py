@@ -24,7 +24,8 @@ BRAND   = "NETWATCH"
 VERSION = "3.37"
 
 
-def _column_exists(conn, table: str, column: str) -> bool:
+def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
+    """Return True if `column` exists in `table`. Both must be code-controlled identifiers."""
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(row[1] == column for row in rows)
 
@@ -1256,6 +1257,7 @@ class InventoryDB:
             logging.info("InventoryDB: added device_type column")
         if not _column_exists(self.conn, "inventory", "properties"):
             self.conn.execute("ALTER TABLE inventory ADD COLUMN properties TEXT")
+            logging.info("InventoryDB: added properties column")
         # Connections table - records edges between inventory devices.
         # CREATE TABLE IF NOT EXISTS is idempotent so re-runs are safe.
         self.conn.executescript("""
