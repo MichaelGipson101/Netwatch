@@ -1,52 +1,111 @@
-# netwatch
+# NETWATCH
 
-Homelab ping monitor + inventory + topology visualization, designed to run on a Raspberry Pi.
+> Homelab ping monitor · inventory CMDB · topology visualizer  
+> Runs on a Raspberry Pi. Single Python file. No dependencies beyond stdlib + PyYAML + openpyxl.
 
-A single-file Python application (`monitor.py`) that serves a web dashboard for monitoring host availability, tracking network connections, and visualizing your homelab as a force-directed graph.
+---
+
+## What it does
+
+Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, and serving a dark-mode web dashboard with live status, a full inventory database, and an interactive network topology graph.
+
+```
+192.168.6.90:8080  ←  open in any browser
+```
+
+---
 
 ## Features
 
-- Live ping monitoring with configurable intervals and timeouts
-- Incident logging with ntfy push alerts
-- Full inventory CMDB (hosts, VMs, network gear, UPS, disks, peripherals)
-- Connection tracking (ethernet, WiFi, fiber, virtual, power, USB)
-- Force-directed topology graph with VM clustering
-- Kiosk fullscreen mode for dashboard displays
-- XLSX import/export for inventory
+**Monitoring**
+- Continuous ICMP ping with configurable intervals and timeouts
+- Up / Down / Idle / Degraded / Pending status per host
+- Uptime percentage tracked with sparkbar visualization
+- Incident log with timestamps and duration
+- Push alerts via [ntfy](https://ntfy.sh)
+
+**Inventory CMDB**
+- 9 device types, each with type-specific fields:
+
+  | Type | Icon | Fields |
+  |---|---|---|
+  | Host | 🖥 | CPU, RAM, OS, architecture, TPM |
+  | VM | ⬜ | Hypervisor, vCPU, RAM/disk allocation |
+  | Network | 🔲 | Port count, PoE budget, managed, uplink |
+  | UPS | 🔋 | Capacity (VA/Wh), runtime, battery age |
+  | Disk | 💾 | Capacity, interface, RPM, health |
+  | Peripheral | 🔌 | Subtype, model |
+  | Tablet | 📱 | Subtype, model |
+  | Phone | 📱 | Subtype, model |
+  | Printer | 🖨 | Subtype, model |
+
+- Arbitrary connection edges (ethernet, WiFi, fiber, virtual, power, USB)
+- XLSX import / export
 - Network discovery via nmap
-- Authenticated single-user (admin)
+- Link inventory records to monitored hosts for live status in tables
+
+**Topology graph**
+- Force-directed D3.js graph — nodes, edges, clusters
+- VM clustering with host grouping
+- Per-type SVG icons inside nodes (9 icon types)
+- Per-type fill colors; status glow (green up, amber degraded, red down)
+- Pan, zoom, drag; fit-to-view button
+- Tooltips with live status
+
+**Dashboard**
+- Responsive dark-mode UI; compact mode for small screens
+- Kiosk / fullscreen mode
+- Inventory table with sort, filter, type chips
+- Host drawer with uptime history sparkline
+- Inventory drawer with full record detail and edit
+
+**Security**
+- Session-based auth (login required for all routes and API)
+- Brute-force lockout — persists across restarts via SQLite
+- HTTP access logging to `monitor.log`
+
+---
 
 ## Setup
 
-1. Install dependencies:
+**1. Dependencies**
 ```bash
-   sudo apt install python3 python3-pip nmap sqlite3
-   pip3 install pyyaml openpyxl
+sudo apt install python3 python3-pip nmap sqlite3
+pip3 install pyyaml openpyxl
 ```
 
-2. Copy `hosts.yaml.example` to `hosts.yaml` and configure your hosts.
-
-3. Run:
+**2. Configure hosts**
 ```bash
-   python3 monitor.py --no-tui --port 8080
+cp hosts.yaml.example hosts.yaml
+# edit hosts.yaml — add your IPs, names, groups
 ```
 
-4. First-run admin setup (must run from the Pi itself for security):
+**3. Run**
 ```bash
-   curl -X POST http://localhost:8080/api/auth/setup \
-     -H 'Content-Type: application/json' \
-     -d '{"username":"admin","password":"yourpassword"}'
+python3 monitor.py --no-tui --port 8080
 ```
 
-5. Open the dashboard at `http://<pi-ip>:8080`, log in.
+**4. Create admin account** *(must run from the Pi itself)*
+```bash
+curl -X POST http://localhost:8080/api/auth/setup \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword"}'
+```
 
-## systemd
+**5. Open the dashboard**
+```
+http://<pi-ip>:8080
+```
 
-For production use, create `/etc/systemd/system/netwatch.service`:
+---
+
+## Run as a service
+
+Create `/etc/systemd/system/netwatch.service`:
 
 ```ini
 [Unit]
-Description=Netwatch homelab ping monitor
+Description=Netwatch homelab monitor
 After=network-online.target
 Wants=network-online.target
 
@@ -65,11 +124,29 @@ SyslogIdentifier=netwatch
 WantedBy=multi-user.target
 ```
 
-Then: `sudo systemctl enable --now netwatch`
+```bash
+sudo systemctl enable --now netwatch
+```
 
-## Development history
+Logs: `journalctl -u netwatch -f`  
+HTTP access log: `tail -f monitor.log`
 
-The `patches/` directory preserves the historical patch chain that built netwatch from earlier versions. Going forward, changes happen as direct commits to `monitor.py`.
+---
+
+## Files
+
+```
+monitor.py          — entire application (~8,600 lines)
+dashboard.html      — frontend (served inline by the Python server)
+hosts.yaml          — host list (ping targets)
+hosts.yaml.example  — template
+tests/              — pytest suite
+docs/               — design specs and implementation plans
+```
+
+Data is stored in `~/.config/netwatch/` (SQLite: ping history, inventory, auth).
+
+---
 
 ## License
 
