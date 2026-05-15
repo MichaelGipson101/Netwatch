@@ -3577,7 +3577,9 @@ async function openEditor(){
 // ── Landing page ──────────────────────────────────────────────────────────
 function showLanding(mode){
   const lp = document.getElementById('landing-page');
+  const alreadyVisible = !lp.classList.contains('hidden');
   lp.classList.remove('hidden');
+  if(alreadyVisible) return;
   const loginForm = document.getElementById('landing-login-form');
   const setupForm = document.getElementById('landing-setup-form');
   if(mode === 'setup'){
