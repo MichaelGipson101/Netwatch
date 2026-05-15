@@ -262,9 +262,6 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-edge-virtual  .topo-edge-line{stroke:#b07cd6;stroke-dasharray:3,2;opacity:.7;stroke-width:1.2}
 .topo-edge-virtual  .topo-edge-flow{fill:#cfa0e8;opacity:.85}
 
-/* VM badge */
-.topo-vm-badge rect{fill:#b07cd6;stroke:#8a5ab2;stroke-width:.5}
-.topo-vm-badge text{fill:#fff;font-family:'DM Mono',monospace;font-size:8px;font-weight:600;letter-spacing:.5px;pointer-events:none}
 .topo-tip-vm{display:inline-block;background:rgba(176,124,214,.2);color:#b07cd6;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.05em;padding:1px 5px;border-radius:3px;vertical-align:middle;margin-left:4px}
 .topo-edge-power    .topo-edge-line{stroke:#f0a93b;stroke-dasharray:8,3}
 .topo-edge-power    .topo-edge-flow{fill:#ffd070}
@@ -342,34 +339,6 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   .topo-status-up .topo-node-icon,
   .topo-status-down .topo-node-icon{animation:none}
 }
-.topo-node-shape{fill:var(--surface);stroke:var(--border);stroke-width:2;transition:stroke .3s,stroke-width .3s,fill .3s}
-.topo-node:hover .topo-node-shape,.topo-node.focus .topo-node-shape{stroke-width:3}
-
-/* Status colors (border) + ambient glows */
-.topo-status-up        .topo-node-shape{stroke:#5dbb8d}
-.topo-status-up        > .topo-node-shape{filter:url(#topo-glow-up)}
-.topo-status-degraded  .topo-node-shape{stroke:#f0a93b}
-.topo-status-degraded  > .topo-node-shape{filter:url(#topo-glow-degraded)}
-.topo-status-down      .topo-node-shape{stroke:#e57373}
-.topo-status-down      > .topo-node-shape{filter:url(#topo-glow-down)}
-.topo-status-idle      .topo-node-shape{stroke:#7a7a7a}
-.topo-status-unknown   .topo-node-shape{stroke:var(--border-light)}
-
-/* Ambient breathing on UP nodes - very subtle scale animation, staggered
-   via animation-delay (set per-node by JS) so the network doesn't pulse
-   in unison. */
-@keyframes topo-breathe{
-  0%,100% {transform:scale(1)}
-  50%     {transform:scale(1.02)}
-}
-.topo-status-up .topo-node-shape{animation:topo-breathe 4s ease-in-out infinite;transform-origin:center;transform-box:fill-box}
-
-/* Status-down nodes get a stronger pulse to attract attention */
-@keyframes topo-down-pulse{
-  0%,100% {opacity:1}
-  50%     {opacity:.75}
-}
-.topo-status-down .topo-node-shape{animation:topo-down-pulse 2.2s ease-in-out infinite;transform-origin:center;transform-box:fill-box}
 
 /* Background grid drift - very slow translate so the dots feel alive */
 @keyframes topo-grid-drift{
@@ -384,7 +353,6 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 
 /* Smoother transitions on state changes */
 .topo-node{transition:opacity .3s cubic-bezier(.4,0,.2,1)}
-.topo-node-shape{transition:stroke .4s cubic-bezier(.4,0,.2,1),stroke-width .25s cubic-bezier(.4,0,.2,1)}
 
 /* Hover ring pulse */
 @keyframes topo-hover-ring{
@@ -392,27 +360,8 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   100% {opacity:0;transform:scale(1.6)}
 }
 
-/* Respect motion preferences */
-@media (prefers-reduced-motion: reduce){
-  .topo-status-up .topo-node-shape,
-  .topo-status-down .topo-node-shape,
-  .topo-grid-bg{animation:none}
-  .topo-edge-line,.topo-edge-flow{filter:none}
-}
-
-/* Type-specific fills */
-.topo-node-network  .topo-node-shape{fill:#1a2540}
-.topo-node-ups      .topo-node-shape{fill:#3a2e15}
-.topo-node-disk     .topo-node-shape{fill:#1f2a25}
-.topo-node-vm       .topo-node-shape{fill:#1f1a26}
-.topo-node-peripheral .topo-node-shape{fill:var(--subtle)}
-.topo-node-tablet   .topo-node-shape{fill:#1a2d2d}
-.topo-node-phone    .topo-node-shape{fill:#2a1e2d}
-.topo-node-printer  .topo-node-shape{fill:#2d2a1e}
-
 /* Labels */
 .topo-node-label-below{text-anchor:middle;fill:var(--text);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;pointer-events:none;paint-order:stroke;stroke:var(--bg);stroke-width:3.5;stroke-linejoin:round;letter-spacing:.01em}
-.topo-node-label-inside{text-anchor:middle;fill:var(--text);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;pointer-events:none}
 
 /* Status pulse on transition */
 @keyframes topo-pulse{
@@ -420,9 +369,9 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   50%  {filter:drop-shadow(0 0 12px var(--blue));transform:scale(1.15)}
   100% {filter:drop-shadow(0 0 0 var(--blue));transform:scale(1)}
 }
-.topo-pulsing .topo-node-shape{animation:topo-pulse 1.6s ease-in-out}
-.topo-status-down.topo-pulsing .topo-node-shape{animation:topo-pulse 1.6s ease-in-out;filter:drop-shadow(0 0 12px #e57373)}
-.topo-status-up.topo-pulsing   .topo-node-shape{animation:topo-pulse 1.6s ease-in-out;filter:drop-shadow(0 0 12px #5dbb8d)}
+.topo-pulsing .topo-node-icon{animation:topo-pulse 1.6s ease-in-out}
+.topo-status-down.topo-pulsing .topo-node-icon{animation:topo-pulse 1.6s ease-in-out;filter:drop-shadow(0 0 12px #e57373)}
+.topo-status-up.topo-pulsing   .topo-node-icon{animation:topo-pulse 1.6s ease-in-out;filter:drop-shadow(0 0 12px #5dbb8d)}
 
 /* Tooltip */
 .topo-tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 11px;box-shadow:0 4px 16px rgba(0,0,0,.25);font-size:12px;z-index:50;max-width:280px}
@@ -2073,30 +2022,6 @@ function renderTopologyWeb(){
       .attr('cx', 1).attr('cy', 1).attr('r', 1)
       .attr('class', 'topo-grid-dot');
 
-  // Status glow filters - drop-shadow with status-appropriate color
-  function addGlow(id, color, stddev){
-    const f = defs.append('filter')
-      .attr('id', id)
-      .attr('x', '-50%').attr('y', '-50%')
-      .attr('width', '200%').attr('height', '200%');
-    f.append('feGaussianBlur')
-      .attr('in', 'SourceGraphic')
-      .attr('stdDeviation', stddev)
-      .attr('result', 'blur');
-    f.append('feFlood')
-      .attr('flood-color', color)
-      .attr('flood-opacity', '0.6')
-      .attr('result', 'color');
-    f.append('feComposite')
-      .attr('in', 'color').attr('in2', 'blur')
-      .attr('operator', 'in').attr('result', 'shadow');
-    const merge = f.append('feMerge');
-    merge.append('feMergeNode').attr('in', 'shadow');
-    merge.append('feMergeNode').attr('in', 'SourceGraphic');
-  }
-  addGlow('topo-glow-up',       '#5dbb8d', 4);
-  addGlow('topo-glow-down',     '#e57373', 6);
-  addGlow('topo-glow-degraded', '#f0a93b', 5);
 
   // Vignette: radial gradient overlay at canvas edges
   const vignette = defs.append('radialGradient').attr('id', 'topo-vignette')
@@ -2188,32 +2113,6 @@ function renderTopologyWeb(){
     }
   });
 
-  // Helper: append a small "VM" badge to a node's group. Position is
-  // type-dependent so it sits at the top-right of whatever shape we drew.
-  function appendVmBadge(sel, dtype){
-    let bx, by;
-    if(dtype === 'network' || dtype === 'ups'){
-      bx = 110/2 - 8;  by = -38/2 - 4;  // top-right of rectangle
-    } else if(dtype === 'disk'){
-      bx = 32/2 - 4;   by = -32/2 - 4;  // top-right of square
-    } else if(dtype === 'peripheral' || dtype === 'tablet'
-              || dtype === 'phone' || dtype === 'printer'){
-      bx = 14 - 4;     by = -14 - 4;    // top-right of small circle
-    } else {
-      bx = 22 - 4;     by = -22 - 4;    // top-right of host circle
-    }
-    const pillW = 22, pillH = 12;
-    const g = sel.append('g').attr('class', 'topo-vm-badge')
-      .attr('transform', 'translate(' + bx + ',' + by + ')');
-    g.append('rect')
-      .attr('x', -pillW/2).attr('y', -pillH/2)
-      .attr('width', pillW).attr('height', pillH)
-      .attr('rx', 4).attr('ry', 4);
-    g.append('text')
-      .attr('text-anchor', 'middle')
-      .attr('y', 3.5)
-      .text('VM');
-  }
 
   // Render the node body as a dimensional icon. There is no longer
   // a backdrop shape; status is conveyed by the parent .topo-status-*
@@ -2611,7 +2510,7 @@ function spreadOverlappingLabels(nodeSel){
   // Collect all labels with their current positions and bounding boxes
   const labels = [];
   nodeSel.each(function(d){
-    const labelEl = this.querySelector('.topo-node-label-below, .topo-node-label-inside');
+    const labelEl = this.querySelector('.topo-node-label-below');
     if(!labelEl) return;
     let bbox;
     try { bbox = labelEl.getBBox(); }
