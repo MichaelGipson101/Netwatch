@@ -1,25 +1,26 @@
 # Device Icons — Design Spec
 **Date:** 2026-05-14
-**Scope:** Add two new device types (`tablet`, `phone`), expose `device_type` on `/api/status`, and render clean inline SVG icons in the host card list, topology graph, and inventory table.
+**Scope:** Add three new device types (`tablet`, `phone`, `printer`), expose `device_type` on `/api/status`, and render clean inline SVG icons in the host card list, topology graph, and inventory table.
 
 ---
 
 ## 1. New Device Types
 
-Add `tablet` and `phone` as first-class types alongside the existing six. Every place that enumerates device types must be updated:
+Add `tablet`, `phone`, and `printer` as first-class types alongside the existing six. Every place that enumerates device types must be updated:
 
 ### dashboard.html
-- **Inventory form dropdown** (`<select class="inv-f-device_type">`): add two new `<option>` elements:
+- **Inventory form dropdown** (`<select class="inv-f-device_type">`): add three new `<option>` elements:
   ```html
   <option value="tablet">Tablet</option>
   <option value="phone">Phone / mobile</option>
+  <option value="printer">Printer</option>
   ```
-- **`INV_TYPE_COLUMNS`**: add entries for `tablet` and `phone`, both with the same column layout as `peripheral` (system, category, p:subtype, p:model, linked).
-- **`INV_TYPE_LABELS`**: add `tablet: 'Tablets'` and `phone: 'Phones'`.
-- **`INV_TYPE_ORDER`**: append `'tablet'` and `'phone'` at the end.
+- **`INV_TYPE_COLUMNS`**: add entries for `tablet`, `phone`, and `printer`, all with the same column layout as `peripheral` (system, category, p:subtype, p:model, linked).
+- **`INV_TYPE_LABELS`**: add `tablet: 'Tablets'`, `phone: 'Phones'`, `printer: 'Printers'`.
+- **`INV_TYPE_ORDER`**: append `'tablet'`, `'phone'`, and `'printer'` at the end.
 
 ### monitor.py — topology node renderer
-The topology `if/elif` chain in the D3 node-drawing code currently has no cases for `tablet` or `phone`. They fall through to the default (host circle, r=22). Add explicit cases that render them like `peripheral` (small circle, r=14, label below), distinguishable from `peripheral` only by icon.
+The topology `if/elif` chain in the D3 node-drawing code currently has no cases for `tablet`, `phone`, or `printer`. They fall through to the default (host circle, r=22). Add explicit cases that render them like `peripheral` (small circle, r=14, label below), distinguishable from `peripheral` only by icon.
 
 ---
 
@@ -97,6 +98,7 @@ All symbols: `fill="none"`, `stroke="currentColor"`, `stroke-width="1.75"`, `str
 | `icon-disk` | Hard drive cylinder | Ellipse(12,6,8,3) + lines(4,6,4,18)+(20,6,20,18) + ellipse(12,18,8,3) |
 | `icon-tablet` | Portrait tablet | Rect(5,2,14,20,rx2) + circle(12,19.5,0.75) |
 | `icon-phone` | Portrait phone | Rect(7,2,10,20,rx2) + line(10,4,14,4,stroke-width=2) |
+| `icon-printer`    | Printer box + paper | Rect body(3,7,18,10,rx2) + paper tray(7,17,10,4,rx1) + paper sheet(7,3,10,7,rx1) + two vent dots |
 | `icon-peripheral` | Power plug | Rect(8,12,8,8,rx1) + line(12,12,12,5) + line(9,7,9,10) + line(15,7,15,10) |
 
 ### Helper function
