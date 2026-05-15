@@ -1623,7 +1623,9 @@ function renderHost(h){
   const ipAttr = ' data-ip="' + escapeHtml(h.ip) + '"';
   return '<div class="row' + rowCls + '"' + ipAttr + ' onclick="openDrawer(this.dataset.ip)">'
     + '<div><span class="dot ' + dotCls + '"></span></div>'
-    + '<div><div class="host-name" ' + nameStyle + '>' + escapeHtml(h.name) + '</div><div class="host-ip-sub">' + escapeHtml(h.ip) + '</div></div>'
+    + '<div><div class="host-name" ' + nameStyle + ' style="display:flex;align-items:center;gap:5px">'
+    + deviceIcon(h.device_type, 13)
+    + '<span>' + escapeHtml(h.name) + '</span></div><div class="host-ip-sub">' + escapeHtml(h.ip) + '</div></div>'
     + '<div class="col-ip">' + escapeHtml(h.ip) + '</div>'
     + '<div><span class="badge ' + badgeCls + '">' + h.status + '</span></div>'
     + '<div class="lat">' + fmtLatency(h.latency_ms) + '</div>'
@@ -4200,8 +4202,15 @@ function renderTypeTable(deviceType, rows, showHeading){
   out += '<tbody>';
   sortedRows.forEach(rec => {
     out += '<tr class="inv-row" onclick="openInventoryDrawer(' + rec.id + ')">';
-    cols.forEach(c => {
-      out += '<td>' + formatInvCell(rec, c.key) + '</td>';
+    cols.forEach((c, i) => {
+      if(i === 0){
+        out += '<td><span style="display:flex;align-items:center;gap:5px">'
+          + deviceIcon(rec.device_type, 14)
+          + formatInvCell(rec, c.key)
+          + '</span></td>';
+      } else {
+        out += '<td>' + formatInvCell(rec, c.key) + '</td>';
+      }
     });
     out += '</tr>';
   });
