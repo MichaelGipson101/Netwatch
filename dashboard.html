@@ -290,6 +290,58 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 /* Nodes */
 .topo-node{cursor:pointer;transition:opacity .25s}
 .topo-node.dim{opacity:.25}
+/* ─── Dimensional icon nodes ────────────────────────────────────
+   The topology renders each node as a self-contained dimensional
+   icon (sprite #topo-icon-{type}) sitting on top of an invisible
+   hit-target circle. Status is encoded two ways:
+     (1) via `color` on the parent .topo-status-X class, which the
+         icon's LED element inherits through `currentColor`
+     (2) via a soft drop-shadow halo on .topo-node-icon
+*/
+.topo-node-icon{transition:transform .25s cubic-bezier(.4,0,.2,1),filter .3s ease}
+.topo-node-hit{fill:transparent;stroke:none;pointer-events:all}
+
+.topo-status-up      .topo-node-icon{filter:drop-shadow(0 0 4px rgba(93,187,141,.45)) drop-shadow(0 0 9px rgba(93,187,141,.22))}
+.topo-status-degraded .topo-node-icon{filter:drop-shadow(0 0 4px rgba(240,169,59,.50)) drop-shadow(0 0 9px rgba(240,169,59,.22))}
+.topo-status-down    .topo-node-icon{filter:drop-shadow(0 0 5px rgba(229,115,115,.55)) drop-shadow(0 0 11px rgba(229,115,115,.28))}
+.topo-status-idle    .topo-node-icon{filter:drop-shadow(0 0 3px rgba(122,122,122,.30))}
+.topo-status-unknown .topo-node-icon{filter:drop-shadow(0 0 3px rgba(122,122,122,.18))}
+
+/* currentColor drives the .topo-icon-led inside each sprite */
+.topo-status-up      {color:#5dbb8d}
+.topo-status-degraded{color:#f0a93b}
+.topo-status-down    {color:#e57373}
+.topo-status-idle    {color:#7a7a7a}
+.topo-status-unknown {color:#5a5a5a}
+
+/* Hover / focus: subtle scale-up + a touch more halo */
+.topo-node:hover .topo-node-icon,
+.topo-node.focus .topo-node-icon{transform:scale(1.06)}
+.topo-node-icon{transform-origin:center;transform-box:fill-box}
+
+/* Ambient breathing on UP nodes (stagger applied per-node via JS) */
+@keyframes topo-icon-breathe{
+  0%,100%{transform:scale(1)}
+  50%    {transform:scale(1.03)}
+}
+.topo-status-up .topo-node-icon{animation:topo-icon-breathe 4.6s ease-in-out infinite}
+
+/* Down-pulse: dim the icon rhythmically */
+@keyframes topo-icon-down-pulse{
+  0%,100%{opacity:1}
+  50%    {opacity:.72}
+}
+.topo-status-down .topo-node-icon{animation:topo-icon-down-pulse 2.2s ease-in-out infinite}
+
+/* Hover scale wins over the breathing animation */
+.topo-node:hover .topo-node-icon,
+.topo-node.focus .topo-node-icon{animation:none}
+
+/* Reduced-motion: kill the animations but keep the halo */
+@media (prefers-reduced-motion: reduce){
+  .topo-status-up .topo-node-icon,
+  .topo-status-down .topo-node-icon{animation:none}
+}
 .topo-node-shape{fill:var(--surface);stroke:var(--border);stroke-width:2;transition:stroke .3s,stroke-width .3s,fill .3s}
 .topo-node:hover .topo-node-shape,.topo-node.focus .topo-node-shape{stroke-width:3}
 
@@ -2163,90 +2215,66 @@ function renderTopologyWeb(){
       .text('VM');
   }
 
-  // Render the node body shape based on type
+  // Render the node body as a dimensional icon. There is no longer
+  // a backdrop shape; status is conveyed by the parent .topo-status-*
+  // class (drives both `color:` for the icon's LED and the drop-
+  // shadow halo on .topo-node-icon) plus the breathing/pulse
+  // animations defined in CSS.
   nodeSel.each(function(d){
     const sel = d3.select(this);
-    if(d.device_type === 'network' || d.device_type === 'ups'){
-      const w = 110, h = 38;
-      sel.append('rect')
-        .attr('class', 'topo-node-shape')
-        .attr('x', -w/2).attr('y', -h/2)
-        .attr('width', w).attr('height', h)
-        .attr('rx', 8).attr('ry', 8);
-      sel.append('use')
-        .attr('href', '#icon-' + d.device_type)
-        .attr('x', -48).attr('y', -8)
-        .attr('width', 16).attr('height', 16)
-        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
-        .attr('fill', 'none').attr('stroke-width', 1.75)
-        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
-      sel.append('text').attr('class', 'topo-node-label-inside')
-        .attr('x', 6).attr('y', 5).text(truncateLabel(d.name, 12));
+    // iconSize: rendered px width/height of the sprite. hitR: radius
+    // of the invisible hit-target circle (covers the icon + a bit of
+    // breathing room so drag/click still feels generous).
+    let iconSize, hitR;
+    if(d.device_type === 'network'){
+      iconSize = 64; hitR = 30;
+    } else if(d.device_type === 'ups'){
+      iconSize = 56; hitR = 28;
+    } else if(d.device_type === 'host'){
+      iconSize = 52; hitR = 26;
     } else if(d.device_type === 'disk'){
-      const s = 32;
-      sel.append('rect')
-        .attr('class', 'topo-node-shape')
-        .attr('x', -s/2).attr('y', -s/2)
-        .attr('width', s).attr('height', s)
-        .attr('rx', 5).attr('ry', 5);
-      sel.append('use')
-        .attr('href', '#icon-disk')
-        .attr('x', -6).attr('y', -6)
-        .attr('width', 12).attr('height', 12)
-        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
-        .attr('fill', 'none').attr('stroke-width', 1.75)
-        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
-      sel.append('text').attr('class', 'topo-node-label-below')
-        .attr('y', s/2 + 14).text(truncateLabel(d.name, 20));
-    } else if(d.device_type === 'peripheral' || d.device_type === 'tablet'
-              || d.device_type === 'phone' || d.device_type === 'printer'){
-      sel.append('circle').attr('class', 'topo-node-shape').attr('r', 14);
-      sel.append('use')
-        .attr('href', '#icon-' + (d.device_type || 'peripheral'))
-        .attr('x', -5).attr('y', -5)
-        .attr('width', 10).attr('height', 10)
-        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
-        .attr('fill', 'none').attr('stroke-width', 1.75)
-        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
-      sel.append('text').attr('class', 'topo-node-label-below')
-        .attr('y', 14 + 14).text(truncateLabel(d.name, 20));
+      iconSize = 48; hitR = 24;
     } else if(d.device_type === 'vm'){
-      // VM - smaller circle than a host, slight purple tint, conveys
-      // "runs inside something else" via reduced size
-      sel.append('circle').attr('class', 'topo-node-shape').attr('r', 16);
-      sel.append('use')
-        .attr('href', '#icon-vm')
-        .attr('x', -5).attr('y', -5)
-        .attr('width', 10).attr('height', 10)
-        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
-        .attr('fill', 'none').attr('stroke-width', 1.75)
-        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
-      sel.append('text').attr('class', 'topo-node-label-below')
-        .attr('y', 16 + 14).text(truncateLabel(d.name, 20));
+      iconSize = 44; hitR = 22;
+    } else if(d.device_type === 'printer'){
+      iconSize = 44; hitR = 22;
     } else {
-      // host (default)
-      sel.append('circle').attr('class', 'topo-node-shape').attr('r', 22);
-      sel.append('use')
-        .attr('href', '#icon-host')
-        .attr('x', -7).attr('y', -7)
-        .attr('width', 14).attr('height', 14)
-        .attr('stroke', 'white').attr('stroke-opacity', 0.7)
-        .attr('fill', 'none').attr('stroke-width', 1.75)
-        .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
-      sel.append('text').attr('class', 'topo-node-label-below')
-        .attr('y', 22 + 14).text(truncateLabel(d.name, 20));
+      // tablet, phone, peripheral, and any fallback
+      iconSize = 40; hitR = 20;
     }
-    // VM badge if this node hosts a virtual outbound connection
+    const iconHref = '#topo-icon-' + (d.device_type || 'host');
+
+    // Invisible hit target sits first so the icon paints over it
+    sel.append('circle')
+      .attr('class', 'topo-node-hit')
+      .attr('r', hitR);
+
+    // The dimensional sprite
+    sel.append('use')
+      .attr('class', 'topo-node-icon')
+      .attr('href', iconHref)
+      .attr('x', -iconSize/2).attr('y', -iconSize/2)
+      .attr('width', iconSize).attr('height', iconSize);
+
+    // Label sits below the icon for every type now
+    sel.append('text')
+      .attr('class', 'topo-node-label-below')
+      .attr('y', iconSize/2 + 14)
+      .text(truncateLabel(d.name, 20));
+
+    // VM-class marker (still used by tooltip + isVm detection
+    // elsewhere). No more pill badge — the VM icon carries its own
+    // "VM" mark.
     if(vmIds.has(d.id)){
-      appendVmBadge(sel, d.device_type || 'host');
       sel.classed('topo-node-vm', true);
     }
-    // Stagger the ambient breathing animation so nodes don't pulse in
-    // unison. We hash the node id into a delay between 0-4s.
-    const shape = sel.select('.topo-node-shape');
-    if(!shape.empty()){
+
+    // Stagger the ambient breathing so the network doesn't pulse
+    // in unison. Hash the node id into a delay between 0–4s.
+    const iconEl = sel.select('.topo-node-icon');
+    if(!iconEl.empty()){
       const delay = ((d.id * 1.7) % 4).toFixed(2);
-      shape.style('animation-delay', delay + 's');
+      iconEl.style('animation-delay', delay + 's');
     }
   });
 
@@ -2409,12 +2437,14 @@ function renderTopologyWeb(){
 }
 
 function nodeRadiusFor(d){
-  if(d.device_type === 'network' || d.device_type === 'ups') return 60;
-  if(d.device_type === 'disk') return 22;
+  if(d.device_type === 'network') return 34;
+  if(d.device_type === 'ups')     return 32;
+  if(d.device_type === 'disk')    return 28;
+  if(d.device_type === 'vm')      return 26;
+  if(d.device_type === 'printer') return 26;
   if(d.device_type === 'peripheral' || d.device_type === 'tablet'
-     || d.device_type === 'phone' || d.device_type === 'printer') return 16;
-  if(d.device_type === 'vm') return 18;
-  return 24; // host
+     || d.device_type === 'phone') return 24;
+  return 30; // host
 }
 
 function seedPosition(node, w, h){
