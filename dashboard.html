@@ -2010,7 +2010,8 @@ function renderTopologyWeb(){
       bx = 110/2 - 8;  by = -38/2 - 4;  // top-right of rectangle
     } else if(dtype === 'disk'){
       bx = 32/2 - 4;   by = -32/2 - 4;  // top-right of square
-    } else if(dtype === 'peripheral'){
+    } else if(dtype === 'peripheral' || dtype === 'tablet'
+              || dtype === 'phone' || dtype === 'printer'){
       bx = 14 - 4;     by = -14 - 4;    // top-right of small circle
     } else {
       bx = 22 - 4;     by = -22 - 4;    // top-right of host circle
@@ -4580,7 +4581,8 @@ function renderInventoryDrawer(rec){
   document.getElementById('d-name').textContent = rec.system || 'Inventory record';
   const meta = document.getElementById('d-meta');
   if(meta){
-    const dtypeLabel = {host:'Host', network:'Network', ups:'UPS', disk:'Disk', peripheral:'Peripheral'}[rec.device_type || 'host'] || 'Host';
+    const dtypeLabel = {host:'Host', network:'Network', ups:'UPS', disk:'Disk',
+      peripheral:'Peripheral', tablet:'Tablet', phone:'Phone', printer:'Printer'}[rec.device_type || 'host'] || 'Host';
     meta.innerHTML = '<span class="inv-mono" style="background:var(--blue-bg);color:var(--blue);padding:2px 7px;border-radius:3px;font-size:10px">' + escapeHtml(dtypeLabel) + '</span>'
       + '<span>·</span><span>' + escapeHtml(rec.category || '-') + '</span>';
     if(rec.architecture && (rec.device_type || 'host') === 'host'){
