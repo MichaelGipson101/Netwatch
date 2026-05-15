@@ -1045,6 +1045,48 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 </style>
 </head>
 <body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="icon-host" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="3" width="20" height="14" rx="2"/>
+    <path d="M8 21h8M12 17v4"/>
+  </symbol>
+  <symbol id="icon-vm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="7" y="7" width="10" height="10" rx="1"/>
+    <path d="M7 10H5M7 14H5M17 10h2M17 14h2M10 7V5M14 7V5M10 17v2M14 17v2"/>
+  </symbol>
+  <symbol id="icon-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="9" width="20" height="6" rx="2"/>
+    <path d="M6 9V6M10 9V6M14 9V6M18 9V6"/>
+    <path d="M6 15v3M18 15v3"/>
+  </symbol>
+  <symbol id="icon-ups" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="6" y="5" width="12" height="16" rx="2"/>
+    <path d="M10 3h4"/>
+    <path d="M13 10l-2 4h4l-2 4"/>
+  </symbol>
+  <symbol id="icon-disk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="12" cy="6" rx="8" ry="3"/>
+    <path d="M4 6v12c0 1.657 3.582 3 8 3s8-1.343 8-3V6"/>
+  </symbol>
+  <symbol id="icon-tablet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="2" width="14" height="20" rx="2"/>
+    <circle cx="12" cy="19" r="1"/>
+  </symbol>
+  <symbol id="icon-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="7" y="2" width="10" height="20" rx="2"/>
+    <path d="M10 6h4"/>
+  </symbol>
+  <symbol id="icon-printer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="6,9 6,2 18,2 18,9"/>
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+    <rect x="6" y="14" width="12" height="8"/>
+  </symbol>
+  <symbol id="icon-peripheral" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 4v4M16 4v4"/>
+    <rect x="5" y="8" width="14" height="6" rx="2"/>
+    <path d="M12 14v4M9 20h6"/>
+  </symbol>
+</svg>
 <div id="landing-page">
   <div class="landing-card">
     <div class="landing-brand">
@@ -1340,6 +1382,9 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
             <option value="ups">UPS (power)</option>
             <option value="disk">Disk / drive</option>
             <option value="peripheral">Peripheral / other</option>
+            <option value="tablet">Tablet</option>
+            <option value="phone">Phone / mobile</option>
+            <option value="printer">Printer</option>
           </select>
         </label>
         <label class="full">System name <span style="color:var(--red);text-transform:none;letter-spacing:0">*</span><input type="text" class="inv-f-system" required></label>
@@ -1518,6 +1563,13 @@ let lastOk = true;
 let lastData = null;
 let openDrawerIp = null;
 
+function deviceIcon(type, size){
+  const id = 'icon-' + (type || 'host');
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none"'
+    + ' stroke="currentColor" stroke-width="1.75" stroke-linecap="round"'
+    + ' stroke-linejoin="round" style="vertical-align:middle;flex-shrink:0"'
+    + ' aria-hidden="true"><use href="#' + id + '"/></svg>';
+}
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -1997,7 +2049,8 @@ function renderTopologyWeb(){
         .attr('rx', 5).attr('ry', 5);
       sel.append('text').attr('class', 'topo-node-label-below')
         .attr('y', s/2 + 14).text(truncateLabel(d.name, 20));
-    } else if(d.device_type === 'peripheral'){
+    } else if(d.device_type === 'peripheral' || d.device_type === 'tablet'
+              || d.device_type === 'phone' || d.device_type === 'printer'){
       sel.append('circle').attr('class', 'topo-node-shape').attr('r', 14);
       sel.append('text').attr('class', 'topo-node-label-below')
         .attr('y', 14 + 14).text(truncateLabel(d.name, 20));
@@ -2188,7 +2241,8 @@ function renderTopologyWeb(){
 function nodeRadiusFor(d){
   if(d.device_type === 'network' || d.device_type === 'ups') return 60;
   if(d.device_type === 'disk') return 22;
-  if(d.device_type === 'peripheral') return 16;
+  if(d.device_type === 'peripheral' || d.device_type === 'tablet'
+     || d.device_type === 'phone' || d.device_type === 'printer') return 16;
   if(d.device_type === 'vm') return 18;
   return 24; // host
 }
@@ -2200,7 +2254,8 @@ function seedPosition(node, w, h){
   if(t === 'network')    return { x: cx + (Math.random() - 0.5) * 60, y: cy + (Math.random() - 0.5) * 60 };
   if(t === 'ups')        return { x: cx + (Math.random() - 0.5) * 100, y: cy + 130 + (Math.random() - 0.5) * 50 };
   if(t === 'disk')       return { x: cx - 200 + (Math.random() - 0.5) * 80, y: cy + 100 + (Math.random() - 0.5) * 50 };
-  if(t === 'peripheral') return { x: cx + 200 + (Math.random() - 0.5) * 80, y: cy - 100 + (Math.random() - 0.5) * 50 };
+  if(t === 'peripheral' || t === 'tablet' || t === 'phone' || t === 'printer')
+    return { x: cx + 200 + (Math.random() - 0.5) * 80, y: cy - 100 + (Math.random() - 0.5) * 50 };
   if(t === 'vm'){
     // VMs seed near the center so they're close to their host once
     // the virtual edge force pulls them in.
@@ -2227,7 +2282,8 @@ function truncateLabel(s, max){
 }
 
 function buildNodeTip(d){
-  const typeLabel = {host:'Host', network:'Network', ups:'UPS', disk:'Disk', peripheral:'Peripheral'}[d.device_type] || d.device_type;
+  const typeLabel = {host:'Host', network:'Network', ups:'UPS', disk:'Disk',
+    peripheral:'Peripheral', tablet:'Tablet', phone:'Phone', printer:'Printer'}[d.device_type] || d.device_type;
   // Check if the SVG group for this node has the VM class
   const isVm = !!(_topoSvg && !_topoSvg.select('g.topo-node[data-id="' + d.id + '"].topo-node-vm').empty());
   let html = '<div class="topo-tip-name">' + escapeHtml(d.name)
@@ -2452,7 +2508,8 @@ function fitTopologyToView(){
     let r = 30;
     if(n.device_type === 'network' || n.device_type === 'ups') r = 70;
     else if(n.device_type === 'disk') r = 32;
-    else if(n.device_type === 'peripheral') r = 28;
+    else if(n.device_type === 'peripheral' || n.device_type === 'tablet'
+            || n.device_type === 'phone' || n.device_type === 'printer') r = 28;
     else if(n.device_type === 'vm') r = 32;
     minX = Math.min(minX, n.x - r);
     minY = Math.min(minY, n.y - r);
@@ -3949,13 +4006,35 @@ const INV_TYPE_COLUMNS = {
     {key:'p:model',    label:'Model',    sort:'p:model'},
     {key:'linked',     label:'Status',   sort:'linked'},
   ],
+  tablet: [
+    {key:'system',     label:'System',   sort:'system'},
+    {key:'category',   label:'Category', sort:'category'},
+    {key:'p:subtype',  label:'Subtype',  sort:'p:subtype'},
+    {key:'p:model',    label:'Model',    sort:'p:model'},
+    {key:'linked',     label:'Status',   sort:'linked'},
+  ],
+  phone: [
+    {key:'system',     label:'System',   sort:'system'},
+    {key:'category',   label:'Category', sort:'category'},
+    {key:'p:subtype',  label:'Subtype',  sort:'p:subtype'},
+    {key:'p:model',    label:'Model',    sort:'p:model'},
+    {key:'linked',     label:'Status',   sort:'linked'},
+  ],
+  printer: [
+    {key:'system',     label:'System',   sort:'system'},
+    {key:'category',   label:'Category', sort:'category'},
+    {key:'p:subtype',  label:'Subtype',  sort:'p:subtype'},
+    {key:'p:model',    label:'Model',    sort:'p:model'},
+    {key:'linked',     label:'Status',   sort:'linked'},
+  ],
 };
 
 const INV_TYPE_LABELS = {
   host: 'Hosts', vm: 'VMs', network: 'Network', ups: 'UPS',
-  disk: 'Disks', peripheral: 'Peripherals'
+  disk: 'Disks', peripheral: 'Peripherals',
+  tablet: 'Tablets', phone: 'Phones', printer: 'Printers'
 };
-const INV_TYPE_ORDER = ['host', 'vm', 'network', 'ups', 'disk', 'peripheral'];
+const INV_TYPE_ORDER = ['host', 'vm', 'network', 'ups', 'disk', 'peripheral', 'tablet', 'phone', 'printer'];
 
 // Get a value from a record using a column key. "p:foo" reads from
 // the properties blob; bare keys read top-level fields.
