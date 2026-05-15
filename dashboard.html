@@ -1090,6 +1090,133 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
     <path d="M12 14v4M9 20h6"/>
   </symbol>
 </svg>
+<!-- Dimensional ("Variant A") icons used inside the topology web view.
+     Each icon has fixed chassis colors plus one or more LED elements
+     drawn with currentColor — set per-node via the .topo-status-X CSS
+     classes so the LED takes on the up/down/degraded/idle color. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+
+  <symbol id="topo-icon-host" viewBox="0 0 32 32">
+    <rect x="3" y="7" width="26" height="18" rx="2" fill="#2c3242" stroke="#4a5366" stroke-width=".8"/>
+    <rect x="3" y="7" width="26" height="2.4" fill="#3a4256"/>
+    <g stroke="#15171f" stroke-width=".9" stroke-linecap="round">
+      <line x1="7" y1="13" x2="17" y2="13"/>
+      <line x1="7" y1="15" x2="17" y2="15"/>
+      <line x1="7" y1="17" x2="17" y2="17"/>
+      <line x1="7" y1="19" x2="17" y2="19"/>
+      <line x1="7" y1="21" x2="17" y2="21"/>
+    </g>
+    <rect x="20" y="13" width="6.5" height="3.2" rx=".6" fill="#1b1e28" stroke="#3a4256" stroke-width=".5"/>
+    <circle class="topo-icon-led" cx="25" cy="21" r="1.6" fill="currentColor"/>
+    <circle cx="25" cy="21" r="2.8" fill="currentColor" opacity=".22"/>
+    <rect x="5" y="25" width="3" height="1.4" fill="#1b1e28"/>
+    <rect x="24" y="25" width="3" height="1.4" fill="#1b1e28"/>
+  </symbol>
+
+  <symbol id="topo-icon-vm" viewBox="0 0 32 32">
+    <rect x="4" y="6" width="24" height="20" rx="2.2" fill="#2a2336" stroke="#4a3f5e" stroke-width=".8" stroke-dasharray="2.5 1.6"/>
+    <rect x="8" y="10" width="16" height="12" rx="1.6" fill="#3a2f4d" stroke="#695582" stroke-width=".7"/>
+    <g stroke="#1b1626" stroke-width=".8" stroke-linecap="round">
+      <line x1="10.5" y1="13.5" x2="21.5" y2="13.5"/>
+      <line x1="10.5" y1="15.5" x2="21.5" y2="15.5"/>
+      <line x1="10.5" y1="17.5" x2="18" y2="17.5"/>
+    </g>
+    <circle class="topo-icon-led" cx="20.5" cy="18.7" r="1.2" fill="currentColor"/>
+    <text x="6.5" y="9.2" font-family="DM Mono, monospace" font-size="4.5" font-weight="600" fill="#b07cd6" letter-spacing=".2">VM</text>
+  </symbol>
+
+  <symbol id="topo-icon-network" viewBox="0 0 32 32">
+    <line x1="9" y1="3" x2="9" y2="9" stroke="#5a6478" stroke-width="1.4" stroke-linecap="round"/>
+    <line x1="23" y1="3" x2="23" y2="9" stroke="#5a6478" stroke-width="1.4" stroke-linecap="round"/>
+    <circle cx="9" cy="3" r="1.1" fill="#7a8499"/>
+    <circle cx="23" cy="3" r="1.1" fill="#7a8499"/>
+    <rect x="3" y="10" width="26" height="14" rx="2.4" fill="#2a3a52" stroke="#4c5e7e" stroke-width=".8"/>
+    <rect x="3" y="10" width="26" height="2.5" rx="2.4" fill="#3b4d6c"/>
+    <g fill="currentColor">
+      <rect class="topo-icon-led" x="7" y="17" width="2.5" height="2.5" rx=".4"/>
+      <rect x="11.5" y="17" width="2.5" height="2.5" rx=".4" opacity=".35"/>
+      <rect x="16" y="17" width="2.5" height="2.5" rx=".4" opacity=".55"/>
+      <rect x="20.5" y="17" width="2.5" height="2.5" rx=".4" opacity=".35"/>
+    </g>
+    <rect x="24.5" y="17" width="2.8" height="2.5" rx=".4" fill="#7a8499"/>
+    <rect x="5" y="24" width="3" height="1.6" fill="#1b1e28"/>
+    <rect x="24" y="24" width="3" height="1.6" fill="#1b1e28"/>
+  </symbol>
+
+  <symbol id="topo-icon-ups" viewBox="0 0 32 32">
+    <rect x="7" y="3" width="18" height="26" rx="2.2" fill="#3a2f1f" stroke="#5d4d33" stroke-width=".8"/>
+    <rect x="10" y="5.5" width="12" height="2" rx=".6" fill="#1f1810"/>
+    <rect x="10" y="9.5" width="12" height="5" rx=".7" fill="#0f1d10" stroke="#3d6b42" stroke-width=".5"/>
+    <path d="M17.2 11l-2 2.6h1.7l-1.4 2.4 2.6-2.6h-1.7l1-2.4z" fill="currentColor"/>
+    <g stroke="#7a6a4a" stroke-width="1" stroke-linecap="round">
+      <line x1="11" y1="17.5" x2="21" y2="17.5"/>
+      <line x1="11" y1="19.5" x2="21" y2="19.5"/>
+      <line x1="11" y1="21.5" x2="21" y2="21.5"/>
+    </g>
+    <circle class="topo-icon-led" cx="13" cy="25.5" r="1.2" fill="currentColor"/>
+    <text x="16.6" y="26.5" font-family="DM Mono, monospace" font-size="3.4" fill="#a89169" letter-spacing=".4">UPS</text>
+  </symbol>
+
+  <symbol id="topo-icon-disk" viewBox="0 0 32 32">
+    <rect x="4" y="5" width="24" height="22" rx="1.5" fill="#283a32" stroke="#4a6a5c" stroke-width=".8"/>
+    <circle cx="18" cy="16" r="9" fill="#152821" stroke="#2c4a3b" stroke-width=".6"/>
+    <circle cx="18" cy="16" r="5.5" fill="#1a2f27" stroke="#2c4a3b" stroke-width=".4"/>
+    <circle cx="18" cy="16" r="1.4" fill="#3a5b4c"/>
+    <path d="M7 9 L13 14 L11.5 15.5 L6 11 Z" fill="#3a5b4c" stroke="#5a7e6d" stroke-width=".4"/>
+    <circle cx="6.5" cy="10" r="1.4" fill="#5a7e6d"/>
+    <circle class="topo-icon-led" cx="26" cy="25" r="1.2" fill="currentColor"/>
+  </symbol>
+
+  <symbol id="topo-icon-tablet" viewBox="0 0 32 32">
+    <rect x="6" y="2" width="20" height="28" rx="2.4" fill="#1f2f30" stroke="#3a5b5c" stroke-width=".8"/>
+    <rect x="8" y="4.5" width="16" height="20" rx="1" fill="#0f1d1e" stroke="#2c4444" stroke-width=".4"/>
+    <rect x="9.5" y="6" width="13" height=".8" fill="#2c4444"/>
+    <rect x="9.5" y="8" width="9" height=".8" fill="#1d3030"/>
+    <rect x="9.5" y="10" width="11" height=".8" fill="#1d3030"/>
+    <rect x="9.5" y="13" width="6" height="5" fill="#1d3030" rx=".5"/>
+    <rect x="17" y="13" width="5.5" height="5" fill="#1d3030" rx=".5"/>
+    <circle cx="16" cy="3.2" r=".55" fill="#0a1213"/>
+    <circle cx="16" cy="27" r="1.1" fill="#0f1d1e" stroke="#3a5b5c" stroke-width=".4"/>
+    <circle class="topo-icon-led" cx="20.5" cy="27" r=".9" fill="currentColor"/>
+  </symbol>
+
+  <symbol id="topo-icon-phone" viewBox="0 0 32 32">
+    <rect x="9" y="2" width="14" height="28" rx="2.4" fill="#2f1f30" stroke="#5b3a5b" stroke-width=".8"/>
+    <rect x="10.5" y="4.5" width="11" height="20" rx="1" fill="#1d0f1e" stroke="#442c44" stroke-width=".4"/>
+    <rect x="13" y="4.5" width="6" height="1.4" rx=".5" fill="#0a050a"/>
+    <rect x="11.5" y="7.5" width="8" height=".8" fill="#442c44"/>
+    <rect x="11.5" y="9.5" width="5" height=".8" fill="#2c1d2c"/>
+    <rect x="11.5" y="13" width="9" height="6" fill="#2c1d2c" rx=".5"/>
+    <rect x="13" y="27" width="6" height=".9" rx=".4" fill="#5b3a5b"/>
+    <circle class="topo-icon-led" cx="20.5" cy="3.5" r=".7" fill="currentColor"/>
+  </symbol>
+
+  <symbol id="topo-icon-printer" viewBox="0 0 32 32">
+    <rect x="9" y="3" width="14" height="6" fill="#e8e6e0" stroke="#999" stroke-width=".4"/>
+    <line x1="11" y1="5" x2="21" y2="5" stroke="#bbb" stroke-width=".4"/>
+    <line x1="11" y1="6.5" x2="19" y2="6.5" stroke="#bbb" stroke-width=".4"/>
+    <line x1="11" y1="8" x2="20" y2="8" stroke="#bbb" stroke-width=".4"/>
+    <rect x="4" y="9" width="24" height="14" rx="1.8" fill="#3a361f" stroke="#5d5733" stroke-width=".8"/>
+    <rect x="8" y="10" width="16" height="2" rx=".4" fill="#15140b"/>
+    <rect x="20" y="14" width="6" height="4" rx=".5" fill="#0f1d10" stroke="#3d6b42" stroke-width=".4"/>
+    <circle cx="22" cy="20.5" r=".7" fill="#5d5733"/>
+    <circle cx="24" cy="20.5" r=".7" fill="#5d5733"/>
+    <rect x="6" y="23" width="20" height="6" rx="1.4" fill="#2a2614" stroke="#5d5733" stroke-width=".7"/>
+    <rect x="9" y="25" width="14" height=".8" fill="#5d5733"/>
+    <circle class="topo-icon-led" cx="7" cy="15.5" r="1.1" fill="currentColor"/>
+  </symbol>
+
+  <symbol id="topo-icon-peripheral" viewBox="0 0 32 32">
+    <rect x="9" y="9" width="14" height="14" rx="2" fill="#2c2c2c" stroke="#4a4a4a" stroke-width=".8"/>
+    <rect x="13.5" y="3" width="5" height="6.5" rx=".4" fill="#4a4a4a" stroke="#6a6a6a" stroke-width=".5"/>
+    <rect x="14.4" y="4.5" width="3.2" height="3.5" fill="#1a1a1a"/>
+    <circle class="topo-icon-led" cx="16" cy="16.5" r="1.4" fill="currentColor"/>
+    <circle cx="16" cy="16.5" r="2.4" fill="currentColor" opacity=".25"/>
+    <rect x="12" y="19" width="8" height="1.6" rx=".4" fill="#4a4a4a"/>
+    <path d="M16 23 Q 16 28 22 28" fill="none" stroke="#4a4a4a" stroke-width="1.2" stroke-linecap="round"/>
+  </symbol>
+
+</svg>
 <div id="landing-page">
   <div class="landing-card">
     <div class="landing-brand">
