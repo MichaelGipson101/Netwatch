@@ -73,3 +73,80 @@ def test_no_db_path_works_as_before():
         for _ in range(AuthManager.LOCKOUT_AFTER):
             am.record_failed_attempt("192.168.1.1")
         assert am.is_locked_out("192.168.1.1")
+
+
+# ── device_type in /api/status ──────────────────────────────────────────────
+
+from monitor import HistoryDB, InventoryDB, build_api_payload
+
+
+class _FakeHost:
+    def __init__(self, ip):
+        self.ip = ip
+        self.is_up = True
+        self.last_checked = None
+        self.always_on = True
+    def to_dict(self):
+        return {"ip": self.ip, "is_up": self.is_up}
+
+
+class _FakeHostManager:
+    def __init__(self, hosts): self._hosts = hosts
+    def list_hosts(self): return self._hosts
+
+
+def _make_idb(tmpdir):
+    db_path = os.path.join(tmpdir, "icons_test.db")
+    hdb = HistoryDB(db_path)
+    idb = InventoryDB(hdb)
+    return hdb, idb
+
+
+def test_get_device_type_map_returns_ip_to_type():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("TabletA", "10.0.0.1", "tablet", 0, 0)
+            )
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("Phone1", "10.0.0.2", "phone", 0, 0)
+            )
+        result = idb.get_device_type_map()
+        assert result == {"10.0.0.1": "tablet", "10.0.0.2": "phone"}
+        hdb.close()
+
+
+def test_get_device_type_map_excludes_null_ip():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("NoIP", None, "host", 0, 0)
+            )
+        result = idb.get_device_type_map()
+        assert result == {}
+        hdb.close()
+
+
+def test_build_api_payload_annotates_device_type():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("MyTablet", "10.0.0.1", "tablet", 0, 0)
+            )
+        hm = _FakeHostManager([_FakeHost("10.0.0.1"), _FakeHost("10.0.0.99")])
+        payload = build_api_payload(hm, {}, inventory_db=idb)
+        hosts = {h["ip"]: h for h in payload["hosts"]}
+        assert hosts["10.0.0.1"]["device_type"] == "tablet"
+        assert hosts["10.0.0.99"]["device_type"] == "host"  # no record → default
+        hdb.close()

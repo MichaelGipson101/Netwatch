@@ -1343,6 +1343,15 @@ class InventoryDB:
             return s
         return ":".join(clean[i:i+2] for i in range(0, 12, 2))
 
+    def get_device_type_map(self):
+        """Return {ip: device_type} for all inventory records with a non-empty IP."""
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT ip, device_type FROM inventory"
+                " WHERE ip IS NOT NULL AND ip != ''"
+            )
+            return {row[0]: (row[1] or "host") for row in cur.fetchall()}
+
     def list_all(self):
         with self.lock:
             cur = self.conn.execute(
@@ -2638,9 +2647,10 @@ def build_topology_payload(inventory_db, host_manager):
     return {"nodes": nodes, "edges": edges}
 
 
-def build_api_payload(host_manager, settings, incident_log=None):
+def build_api_payload(host_manager, settings, incident_log=None, inventory_db=None):
     hosts = host_manager.list_hosts()
     events = incident_log.list_incidents() if incident_log else []
+    device_types = inventory_db.get_device_type_map() if inventory_db else {}
     return {
         "generated": datetime.now().isoformat(),
         "settings":  settings,
@@ -2651,7 +2661,10 @@ def build_api_payload(host_manager, settings, incident_log=None):
             "idle":    sum(1 for h in hosts if not h.is_up and h.last_checked and not h.always_on),
             "pending": sum(1 for h in hosts if not h.last_checked),
         },
-        "hosts":  [h.to_dict() for h in hosts],
+        "hosts": [
+            {**h.to_dict(), "device_type": device_types.get(h.ip, "host")}
+            for h in hosts
+        ],
         "events": events,
     }
 
@@ -2741,7 +2754,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/status":
                 if not self._require_auth():
                     return
-                self._send_json(200, build_api_payload(host_manager, settings, incident_log))
+                self._send_json(200, build_api_payload(host_manager, settings, incident_log, inventory_db))
                 return
             if self.path == "/api/hosts":
                 if not self._require_auth():
