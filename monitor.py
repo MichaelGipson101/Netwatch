@@ -1345,7 +1345,7 @@ class InventoryDB:
 
     def get_device_type_map(self):
         """Return {ip: device_type} for all inventory records with a non-empty IP.
-        When multiple records share an IP, the one with the lowest id wins."""
+        When multiple records share an IP, the one with the highest id wins."""
         with self.lock:
             cur = self.conn.execute(
                 "SELECT ip, device_type FROM inventory"
