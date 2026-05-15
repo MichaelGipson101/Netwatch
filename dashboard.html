@@ -1027,8 +1027,62 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 
 }
 </style>
+<style>
+/* ── Login landing page ─────────────────────────────────────────────────── */
+#landing-page{position:fixed;inset:0;z-index:9000;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;}
+#landing-page.hidden{display:none;}
+.landing-card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px 36px;box-shadow:0 4px 24px rgba(0,0,0,.07);}
+.landing-brand{text-align:center;margin-bottom:32px;}
+.landing-brand-name{font-family:'DM Mono',monospace;font-size:20px;font-weight:500;letter-spacing:.12em;color:var(--text);}
+.landing-brand-sub{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.05em;text-transform:uppercase;}
+.landing-field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
+.landing-field label{font-size:12px;color:var(--muted);}
+.landing-field input{padding:9px 11px;border:1px solid var(--border);border-radius:7px;font-size:13px;background:var(--bg);color:var(--text);outline:none;transition:border-color .15s;width:100%;}
+.landing-field input:focus{border-color:var(--text);}
+.landing-error{font-size:12px;color:var(--red-text);min-height:18px;margin-bottom:6px;}
+.landing-submit{width:100%;padding:10px;font-size:13px;margin-top:4px;}
+.landing-setup-desc{font-size:13px;color:var(--muted);margin-bottom:18px;line-height:1.5;}
+</style>
 </head>
 <body>
+<div id="landing-page">
+  <div class="landing-card">
+    <div class="landing-brand">
+      <div class="landing-brand-name">NETWATCH</div>
+      <div class="landing-brand-sub">homelab monitor</div>
+    </div>
+    <form id="landing-login-form" onsubmit="submitLandingLogin(event)">
+      <div class="landing-field">
+        <label>Username</label>
+        <input id="landing-username" type="text" autocomplete="username" spellcheck="false">
+      </div>
+      <div class="landing-field">
+        <label>Password</label>
+        <input id="landing-password" type="password" autocomplete="current-password">
+      </div>
+      <div id="landing-error" class="landing-error"></div>
+      <button type="submit" class="btn btn-primary landing-submit">Log in</button>
+    </form>
+    <form id="landing-setup-form" style="display:none" onsubmit="submitLandingSetup(event)">
+      <p class="landing-setup-desc">No admin account exists yet. Create one to get started.</p>
+      <div class="landing-field">
+        <label>Username</label>
+        <input id="landing-setup-username" type="text" autocomplete="username" placeholder="alphanumeric, underscores, hyphens">
+      </div>
+      <div class="landing-field">
+        <label>Password</label>
+        <input id="landing-setup-password" type="password" autocomplete="new-password" placeholder="at least 8 characters">
+      </div>
+      <div class="landing-field">
+        <label>Confirm password</label>
+        <input id="landing-setup-password2" type="password" autocomplete="new-password">
+      </div>
+      <div id="landing-setup-error" class="landing-error"></div>
+      <button type="submit" class="btn btn-primary landing-submit">Create admin account</button>
+    </form>
+  </div>
+</div>
+
 <div class="shell">
 
   <nav>
@@ -2598,7 +2652,11 @@ function renderSummary(data){
 async function refresh(){
   try {
     const res = await fetch('/api/status');
-    if(res.status === 401){ openLogin(refresh); return; }
+    if(res.status === 401){
+      if(_authState.logged_in){ _authState.logged_in = false; updateAuthUI(); openLogin(refresh); }
+      else { showLanding(_authState.setup_required ? 'setup' : 'login'); }
+      return;
+    }
     if(!res.ok) throw new Error('bad');
     const data = await res.json();
     lastData = data;
@@ -3460,8 +3518,17 @@ async function fetchAuthState(){
   try {
     const res = await fetch('/api/auth/status');
     if(res.ok){
+      const wasLoggedIn = _authState.logged_in;
       _authState = await res.json();
       updateAuthUI();
+      if(_authState.logged_in){
+        hideLanding();
+        if(!wasLoggedIn) refresh();
+      } else if(_authState.setup_required){
+        showLanding('setup');
+      } else {
+        showLanding('login');
+      }
     }
   } catch(e){ /* ignore */ }
 }
@@ -3507,6 +3574,74 @@ async function openEditor(){
   } catch(e) { alert('Could not load host list.'); }
 }
 
+// ── Landing page ──────────────────────────────────────────────────────────
+function showLanding(mode){
+  const lp = document.getElementById('landing-page');
+  lp.classList.remove('hidden');
+  const loginForm = document.getElementById('landing-login-form');
+  const setupForm = document.getElementById('landing-setup-form');
+  if(mode === 'setup'){
+    loginForm.style.display = 'none';
+    setupForm.style.display = '';
+    document.getElementById('landing-setup-error').textContent = '';
+    setTimeout(() => document.getElementById('landing-setup-username').focus(), 50);
+  } else {
+    loginForm.style.display = '';
+    setupForm.style.display = 'none';
+    document.getElementById('landing-error').textContent = '';
+    document.getElementById('landing-username').value = '';
+    document.getElementById('landing-password').value = '';
+    setTimeout(() => document.getElementById('landing-username').focus(), 50);
+  }
+}
+function hideLanding(){
+  document.getElementById('landing-page').classList.add('hidden');
+}
+async function submitLandingLogin(ev){
+  if(ev) ev.preventDefault();
+  const username = document.getElementById('landing-username').value.trim();
+  const password = document.getElementById('landing-password').value;
+  const err = document.getElementById('landing-error');
+  err.textContent = '';
+  if(!username || !password){ err.textContent = 'Username and password required'; return; }
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if(!res.ok){ err.textContent = data.error || 'Login failed'; return; }
+    _authState = { logged_in: true, username: data.username, admin: data.admin, setup_required: false };
+    updateAuthUI();
+    hideLanding();
+    refresh();
+  } catch(e){ err.textContent = 'Network error'; }
+}
+async function submitLandingSetup(ev){
+  if(ev) ev.preventDefault();
+  const username = document.getElementById('landing-setup-username').value.trim();
+  const password = document.getElementById('landing-setup-password').value;
+  const password2 = document.getElementById('landing-setup-password2').value;
+  const err = document.getElementById('landing-setup-error');
+  err.textContent = '';
+  if(password !== password2){ err.textContent = 'Passwords do not match'; return; }
+  if(password.length < 8){ err.textContent = 'Password must be at least 8 characters'; return; }
+  try {
+    const res = await fetch('/api/auth/setup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if(!res.ok){ err.textContent = data.error || 'Setup failed'; return; }
+    _authState = { logged_in: true, username: data.username, admin: true, setup_required: false };
+    updateAuthUI();
+    hideLanding();
+    refresh();
+  } catch(e){ err.textContent = 'Network error'; }
+}
+
 let _afterLogin = null;
 
 function openLogin(thenCallback){
@@ -3545,6 +3680,7 @@ async function logout(){
   await fetch('/api/auth/logout', { method: 'POST' });
   _authState = { logged_in: false, username: null, admin: false, setup_required: false };
   updateAuthUI();
+  showLanding('login');
 }
 
 async function downloadBackup(){
@@ -4896,12 +5032,9 @@ document.addEventListener('click', e => {
 // Initial inventory fetch on page load if tab is restored
 if(localStorage.getItem('nw-tab') === 'inventory') fetchInventory();
 
-// Initial auth state load
+// fetchAuthState() hides the landing page and calls refresh() once authenticated
 fetchAuthState();
-// Re-check auth state every minute (in case session expired)
 setInterval(fetchAuthState, 60000);
-
-refresh();
 setInterval(refresh, REFRESH);
 setInterval(clockTick, 1000);
 clockTick();
