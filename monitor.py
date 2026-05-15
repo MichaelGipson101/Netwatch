@@ -1220,7 +1220,7 @@ def _prune_loop(history_db, stop_event):
 # Inventory type taxonomy. Each type has a list of "type-specific" properties
 # stored in the properties JSON blob; common fields (system name, mac, ip,
 # serial, notes, etc.) live as top-level columns and are shared across types.
-INVENTORY_TYPES = ("host", "vm", "network", "ups", "disk", "peripheral")
+INVENTORY_TYPES = ("host", "vm", "network", "ups", "disk", "peripheral", "tablet", "phone", "printer")
 
 INVENTORY_TYPE_PROPERTIES = {
     "host": [],  # all fields are top-level (cpu, ram, os, etc.)
