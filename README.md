@@ -148,6 +148,12 @@ Data is stored in `~/.config/netwatch/` (SQLite: ping history, inventory, auth).
 
 ---
 
+## Related
+
+- **[Hearthboard](https://github.com/MichaelGipson101/hearthboard)** — a wall-mounted kiosk dashboard that reads Netwatch's API to display live network topology, host health, and incident history alongside weather and a clock. Runs on a Raspberry Pi; displayed on a Surface Pro 4 in fullscreen kiosk mode.
+
+---
+
 ## License
 
 Personal project — not currently distributed.
