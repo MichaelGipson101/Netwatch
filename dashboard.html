@@ -3995,7 +3995,7 @@ let _inventorySort = {
   disk:       { col: 'system', dir: 'asc' },
   peripheral: { col: 'system', dir: 'asc' },
 };
-let _inventoryFilter = { category: null, deviceType: null, search: '' };
+let _inventoryFilter = { category: null, deviceType: null, search: '', status: null };
 let _editingInvId = null;
 
 async function fetchInventory(){
@@ -4056,15 +4056,29 @@ function renderInventoryMetrics(){
 }
 
 function renderInventoryChips(){
+  // Calculate counts from the search-filtered set so chips reflect what's visible
+  let searchFiltered = _inventoryData;
+  if(_inventoryFilter.search){
+    const q = _inventoryFilter.search.toLowerCase();
+    searchFiltered = _inventoryData.filter(i =>
+      (i.system || '').toLowerCase().includes(q)
+      || (i.role || '').toLowerCase().includes(q)
+      || (i.os || '').toLowerCase().includes(q)
+      || (i.cpu || '').toLowerCase().includes(q)
+      || (i.gpu || '').toLowerCase().includes(q)
+      || JSON.stringify(i.properties || {}).toLowerCase().includes(q)
+    );
+  }
+
   // Type chips (top row)
   const typeCounts = {};
-  _inventoryData.forEach(i => {
+  searchFiltered.forEach(i => {
     const t = i.device_type || 'host';
     typeCounts[t] = (typeCounts[t] || 0) + 1;
   });
   // Use the global INV_TYPE_ORDER / INV_TYPE_LABELS constants so this
   // automatically picks up future type additions.
-  const typeChips = ['<span class="inv-chip inv-chip-type ' + (_inventoryFilter.deviceType === null ? 'active' : '') + '" onclick="setInvTypeFilter(null)">All<span class="inv-chip-count">' + _inventoryData.length + '</span></span>'];
+  const typeChips = ['<span class="inv-chip inv-chip-type ' + (_inventoryFilter.deviceType === null ? 'active' : '') + '" onclick="setInvTypeFilter(null)">All<span class="inv-chip-count">' + searchFiltered.length + '</span></span>'];
   INV_TYPE_ORDER.forEach(t => {
     if(!typeCounts[t]) return;  // hide empty types
     // HTML-escape the JSON string so the inline onclick attribute parses
@@ -4076,7 +4090,7 @@ function renderInventoryChips(){
 
   // Category chips (existing - second row). Filter categories by current
   // type filter so we only show categories that exist within the active type.
-  let scope = _inventoryData;
+  let scope = searchFiltered;
   if(_inventoryFilter.deviceType !== null){
     scope = scope.filter(i => (i.device_type || 'host') === _inventoryFilter.deviceType);
   }
@@ -4091,9 +4105,21 @@ function renderInventoryChips(){
     catChips.push('<span class="inv-chip ' + (_inventoryFilter.category === cat ? 'active' : '') + '" onclick="setInvCategoryFilter(' + JSON.stringify(cat).replace(/"/g, '&quot;') + ')">' + escapeHtml(cat) + '<span class="inv-chip-count">' + count + '</span></span>');
   });
 
+  const STATUS_OPTS = [
+    {val: null,       label: 'All'},
+    {val: 'up',       label: 'Up'},
+    {val: 'down',     label: 'Down'},
+    {val: 'unlinked', label: 'Unlinked'},
+  ];
+  const statusChips = STATUS_OPTS.map(o =>
+    '<span class="inv-chip ' + (_inventoryFilter.status === o.val ? 'active' : '') + '"'
+    + ' onclick="setInvStatusFilter(' + (o.val === null ? 'null' : JSON.stringify(o.val)) + ')">'
+    + escapeHtml(o.label) + '</span>'
+  );
   document.getElementById('inv-chips').innerHTML =
-    '<div class="inv-chip-row inv-chip-row-types">' + typeChips.join('') + '</div>' +
-    (catChips.length > 1 ? '<div class="inv-chip-row inv-chip-row-cats">' + catChips.join('') + '</div>' : '');
+    '<div class="inv-chip-row">' + statusChips.join('') + '</div>'
+    + '<div class="inv-chip-row inv-chip-row-types">' + typeChips.join('') + '</div>'
+    + (catChips.length > 1 ? '<div class="inv-chip-row inv-chip-row-cats">' + catChips.join('') + '</div>' : '');
 }
 
 function setInvTypeFilter(t){
@@ -4106,6 +4132,12 @@ function setInvTypeFilter(t){
 
 function setInvCategoryFilter(cat){
   _inventoryFilter.category = cat;
+  renderInventoryChips();
+  renderInventoryRows();
+}
+
+function setInvStatusFilter(s){
+  _inventoryFilter.status = s;
   renderInventoryChips();
   renderInventoryRows();
 }
@@ -4298,6 +4330,13 @@ function renderInventoryTablesByType(){
         || (i.gpu || '').toLowerCase().includes(q)
         || JSON.stringify(i.properties || {}).toLowerCase().includes(q);
     });
+  }
+  if(_inventoryFilter.status === 'up'){
+    rows = rows.filter(i => i.linked_host && i.linked_host.is_up && i.linked_host.status !== 'DEGRADED' && i.linked_host.status !== 'WAIT');
+  } else if(_inventoryFilter.status === 'down'){
+    rows = rows.filter(i => i.linked_host && (!i.linked_host.is_up || i.linked_host.status === 'DEGRADED' || i.linked_host.status === 'WAIT'));
+  } else if(_inventoryFilter.status === 'unlinked'){
+    rows = rows.filter(i => !i.linked_host);
   }
 
   // Group rows by device_type
