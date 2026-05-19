@@ -2812,7 +2812,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self._send_json(200, {"users": auth_manager.list_users()})
                 return
 
-            if self.path == "/api/inventory-export":
+            if self.path == "/api/inventory-export" or self.path.startswith("/api/inventory-export?"):
                 # Build XLSX in memory and stream it back as a download.
                 # Admin-only because inventory contains hardware identifiers.
                 if not self._require_auth(admin_only=True):
@@ -2821,7 +2821,11 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                     self._send_json(500, {"error": "inventory not available"})
                     return
                 try:
-                    data, result = export_inventory_to_xlsx(inventory_db)
+                    from urllib.parse import urlparse as _up, parse_qs as _pqs
+                    _scope = _pqs(_up(self.path).query).get('scope', ['hosts'])[0]
+                    if _scope not in ('hosts', 'all'):
+                        _scope = 'hosts'
+                    data, result = export_inventory_to_xlsx(inventory_db, scope=_scope)
                     if data is None:
                         self._send_json(500, {"error": result})
                         return
