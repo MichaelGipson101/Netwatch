@@ -739,7 +739,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .inv-link-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:10px;font-size:10px;font-family:'DM Mono',monospace}
 .inv-link-pill.up{background:var(--green-bg);color:var(--green-text)}
 .inv-link-pill.down{background:var(--red-bg);color:var(--red-text)}
-.inv-link-pill.idle{background:var(--subtle);color:var(--text);border:1px solid var(--border-light);font-weight:500}
+.inv-link-pill.idle{background:var(--subtle);color:var(--muted);border:1px solid var(--border-light)}
 .inv-link-pill.degraded{background:var(--amber-bg);color:var(--amber-text)}
 .inv-link-pill.none{color:var(--hint)}
 .inv-empty{padding:32px 20px;text-align:center;color:var(--muted);font-size:13px;background:var(--subtle);border:1px dashed var(--border);border-radius:8px}
@@ -4227,12 +4227,15 @@ function formatInvCell(rec, key){
     return '<span class="inv-cat-tag">' + escapeHtml(v || '-') + '</span>';
   }
   if(key === 'linked'){
-    if(!rec.linked_host) return '<span class="inv-link-pill none">no link</span>';
+    if(!rec.linked_host) return '<span style="color:var(--hint);font-size:11px;font-style:italic">no link</span>';
     const lh = rec.linked_host;
-    const cls = lh.status === 'DEGRADED' ? 'degraded'
-              : lh.is_up ? 'up'
-              : (lh.status === 'IDLE' ? 'idle' : 'down');
-    return '<span class="inv-link-pill ' + cls + '">' + escapeHtml(lh.status) + '</span>';
+    let cls, label;
+    if(lh.status === 'DEGRADED'){ cls = 'degraded'; label = 'Degraded'; }
+    else if(lh.status === 'WAIT'){ cls = 'degraded'; label = 'Wait'; }
+    else if(lh.is_up){ cls = 'up'; label = 'Up'; }
+    else if(lh.status === 'IDLE'){ cls = 'idle'; label = 'Idle'; }
+    else { cls = 'down'; label = 'Down'; }
+    return '<span class="inv-link-pill ' + cls + '">' + label + '</span>';
   }
   // Host columns
   if(key === 'cpu'){
