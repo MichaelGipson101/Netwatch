@@ -3410,6 +3410,88 @@ async function openEditor(){
 }
 function closeEditor(){ document.getElementById('modal-overlay').classList.remove('open'); }
 
+function openAddHostModal(){
+  if(_authState.setup_required){ openSetup(); return; }
+  if(!_authState.logged_in){ openLogin(() => openAddHostModal()); return; }
+  // Clear all fields
+  ['ah-name','ah-ip','ah-group','ah-interval','ah-cpu','ah-ram','ah-storage','ah-os','ah-mac','ah-notes'].forEach(cls => {
+    const el = document.querySelector('.' + cls);
+    if(el) el.tagName === 'TEXTAREA' ? (el.value = '') : (el.value = cls === 'ah-group' ? 'General' : '');
+  });
+  ['ah-alwayson','ah-alert'].forEach(cls => {
+    const el = document.querySelector('.' + cls);
+    if(el) el.checked = true;
+  });
+  document.getElementById('add-host-error').textContent = '';
+  document.getElementById('add-host-status').textContent = '';
+  document.getElementById('add-host-overlay').classList.add('open');
+  setTimeout(() => { const el = document.querySelector('.ah-name'); if(el) el.focus(); }, 50);
+}
+
+function closeAddHostModal(){
+  document.getElementById('add-host-overlay').classList.remove('open');
+}
+
+async function saveAddHost(){
+  const nameEl  = document.querySelector('.ah-name');
+  const ipEl    = document.querySelector('.ah-ip');
+  const macEl   = document.querySelector('.ah-mac');
+  const errEl   = document.getElementById('add-host-error');
+  const statEl  = document.getElementById('add-host-status');
+  errEl.textContent = '';
+  [nameEl, ipEl, macEl].forEach(el => el && el.classList.remove('invalid'));
+
+  const name  = nameEl.value.trim();
+  const ip    = ipEl.value.trim();
+  const group = (document.querySelector('.ah-group').value.trim()) || 'General';
+  const intervalRaw = document.querySelector('.ah-interval').value.trim();
+  const mac   = macEl.value.trim();
+
+  let hasError = false;
+  if(!name){ nameEl.classList.add('invalid'); hasError = true; }
+  if(!ipValid(ip)){ ipEl.classList.add('invalid'); hasError = true; }
+  if(mac && !macValid(mac)){ macEl.classList.add('invalid'); hasError = true; }
+  if(hasError){ errEl.textContent = 'Fix the highlighted fields.'; return; }
+
+  const entry = { name, ip, group, always_on: document.querySelector('.ah-alwayson').checked };
+  if(!document.querySelector('.ah-alert').checked) entry.alert = false;
+  if(intervalRaw){ const iv = parseInt(intervalRaw); if(!isNaN(iv) && iv >= 5) entry.interval = iv; }
+
+  const specs = {};
+  [['cpu','ah-cpu'],['ram','ah-ram'],['storage','ah-storage'],['os','ah-os'],['mac','ah-mac']].forEach(([k, cls]) => {
+    const el = document.querySelector('.' + cls);
+    if(el && el.value.trim()) specs[k] = el.value.trim();
+  });
+  if(Object.keys(specs).length) entry.specs = specs;
+  const notes = document.querySelector('.ah-notes').value.trim();
+  if(notes) entry.notes = notes;
+
+  statEl.textContent = 'Saving…';
+  try {
+    const existing = await fetch('/api/hosts');
+    if(existing.status === 401){ closeAddHostModal(); openLogin(() => openAddHostModal()); return; }
+    const existingData = await existing.json();
+    const hosts = [...(existingData.hosts || []), entry];
+
+    if(hosts.some((h, i) => i !== hosts.length - 1 && h.ip === ip)){
+      ipEl.classList.add('invalid');
+      errEl.textContent = 'A host with this IP already exists.';
+      statEl.textContent = '';
+      return;
+    }
+
+    const res = await fetch('/api/hosts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ hosts })
+    });
+    const data = await res.json();
+    if(!res.ok){ statEl.textContent = ''; errEl.textContent = data.error || 'Save failed.'; return; }
+    statEl.textContent = 'Added!';
+    setTimeout(() => { closeAddHostModal(); refresh(); }, 600);
+  } catch(e){ statEl.textContent = ''; errEl.textContent = 'Network error.'; }
+}
+
 function addRow(h){
   const row = document.createElement('div');
   row.className = 'edit-row';
