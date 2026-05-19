@@ -1716,7 +1716,7 @@ function escapeHtml(s){
 }
 function fmtLatency(ms){
   if(ms === null) return '<span style="color:var(--hint)">- ms</span>';
-  const c = ms < 10 ? 'var(--green)' : ms < 50 ? 'var(--blue)' : 'var(--amber)';
+  const c = ms < 20 ? 'var(--green-text)' : ms < 100 ? 'var(--amber-text)' : 'var(--red-text)';
   return '<span style="color:' + c + '">' + ms.toFixed(1) + ' ms</span>';
 }
 function uptimeColor(pct){
