@@ -3936,14 +3936,43 @@ function updateAuthUI(){
   const navAuth = document.getElementById('nav-auth');
   if(!navAuth) return;
   if(_authState.logged_in){
-    const adminTools = _authState.admin
-      ? '<button class="btn btn-ghost" onclick="downloadBackup()" style="font-size:11px;padding:4px 10px" title="Download a complete backup tarball">Download backup</button>'
+    const label = escapeHtml(_authState.username) + (_authState.admin ? ' <span style="opacity:.5">(admin)</span>' : '');
+    const backupItem = _authState.admin
+      ? '<button class="user-dropdown-item" onclick="toggleUserMenu();downloadBackup()">Download backup</button>'
       : '';
-    navAuth.innerHTML = '<span style="color:var(--muted);font-size:11px">' + escapeHtml(_authState.username) + (_authState.admin ? ' (admin)' : '') + '</span>'
-      + adminTools
-      + '<button class="btn btn-ghost" onclick="logout()" style="font-size:11px;padding:4px 10px">Log out</button>';
+    navAuth.innerHTML =
+      '<div class="user-menu" id="user-menu">'
+      + '<button class="user-menu-trigger" onclick="toggleUserMenu()" aria-haspopup="true" aria-expanded="false" id="user-menu-trigger">'
+      + label
+      + '<span class="user-menu-chevron">▾</span>'
+      + '</button>'
+      + '<div class="user-dropdown" id="user-dropdown">'
+      + backupItem
+      + '<button class="user-dropdown-item" onclick="toggleUserMenu();logout()">Log out</button>'
+      + '</div>'
+      + '</div>';
   } else {
     navAuth.innerHTML = '<button class="btn" onclick="openLogin()" style="font-size:12px">Log in</button>';
+  }
+}
+
+function toggleUserMenu(){
+  const dropdown = document.getElementById('user-dropdown');
+  const trigger  = document.getElementById('user-menu-trigger');
+  if(!dropdown) return;
+  const opening = !dropdown.classList.contains('open');
+  dropdown.classList.toggle('open', opening);
+  if(trigger) trigger.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if(opening){
+    function outsideClick(e){
+      const menu = document.getElementById('user-menu');
+      if(menu && !menu.contains(e.target)){
+        dropdown.classList.remove('open');
+        if(trigger) trigger.setAttribute('aria-expanded','false');
+        document.removeEventListener('click', outsideClick, true);
+      }
+    }
+    document.addEventListener('click', outsideClick, true);
   }
 }
 
