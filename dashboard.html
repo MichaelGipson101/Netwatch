@@ -4761,7 +4761,7 @@ function renderInventoryDrawer(rec){
   document.getElementById('drawer').classList.add('open');
   document.getElementById('drawer-backdrop').classList.add('open');
   const dotEl = document.getElementById('d-dot');
-  if(dotEl){ dotEl.className = 'drawer-name-dot idle'; }
+  if(dotEl){ dotEl.className = 'drawer-icon-wrap'; dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:var(--hint)" aria-hidden="true"><use href="#topo-icon-' + (rec.device_type || 'host') + '"/></svg>'; }
   document.getElementById('d-name').textContent = rec.system || 'Inventory record';
   const meta = document.getElementById('d-meta');
   if(meta){
