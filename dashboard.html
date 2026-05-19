@@ -579,6 +579,12 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .modal-title{font-size:16px;font-weight:600;letter-spacing:-.01em}
 .modal-body{padding:20px 22px;max-height:65vh;overflow-y:auto}
 .modal-foot{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--subtle)}
+.fab{position:fixed;bottom:28px;right:28px;z-index:35;display:flex;align-items:center;gap:8px;padding:0 20px;height:52px;border-radius:26px;background:var(--green);color:#fff;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;border:none;cursor:pointer;box-shadow:0 4px 18px rgba(93,187,141,.45);transition:transform .15s,box-shadow .15s;white-space:nowrap}
+.fab:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(93,187,141,.55)}
+.fab:active{transform:translateY(0);box-shadow:0 3px 12px rgba(93,187,141,.4)}
+.fab-icon{font-size:22px;font-weight:300;line-height:1;margin-top:-1px}
+.fab-label{line-height:1}
+@media(max-width:600px){.fab-label{display:none}.fab{padding:0;width:52px;justify-content:center}}
 .edit-row{padding:10px 0;border-bottom:1px solid var(--border-light)}
 .edit-row:last-of-type{border-bottom:none}
 .edit-row.hdr{font-size:10px;font-family:'DM Mono',monospace;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);padding:6px 0;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr 1fr 70px 70px 60px 60px 32px;gap:8px;align-items:center}
@@ -1669,6 +1675,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
     </div>
   </div>
 </div>
+
+<button class="fab" onclick="openAddHostModal()" aria-label="Add host">
+  <span class="fab-icon">+</span>
+  <span class="fab-label">Add host</span>
+</button>
 
 
 
