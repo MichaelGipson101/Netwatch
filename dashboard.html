@@ -536,7 +536,10 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .col-ping{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint)}
 
 /* Events */
-.events-empty{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px 20px;text-align:center;color:var(--hint);font-size:13px}
+.events-empty{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px 20px;text-align:center}
+.events-empty-icon{width:36px;height:36px;border-radius:50%;background:var(--green-bg);color:var(--green-text);display:flex;align-items:center;justify-content:center;font-size:18px;margin:0 auto 12px;line-height:1}
+.events-empty-title{font-weight:600;font-size:14px;color:var(--text);margin-bottom:6px}
+.events-empty-sub{font-size:12px;color:var(--hint);line-height:1.5}
 .events-list{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
 .event{display:grid;grid-template-columns:6px 1fr 110px 110px 100px;gap:14px;padding:13px 18px;border-bottom:1px solid var(--border-light);align-items:center;cursor:pointer}
 .event:hover{background:var(--subtle)}
@@ -1415,7 +1418,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   </div>
 
   <div class="view" id="view-events">
-    <div class="events-empty" id="events-empty">No incidents recorded yet. When a monitored host goes down, it'll appear here.</div>
+    <div class="events-empty" id="events-empty">
+      <div class="events-empty-icon">✓</div>
+      <div class="events-empty-title">All clear</div>
+      <div class="events-empty-sub">No incidents recorded.<br>Down events appear here.</div>
+    </div>
     <div class="events-list" id="events-list" style="display:none"></div>
   </div>
 
