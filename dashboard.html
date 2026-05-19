@@ -447,7 +447,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-tip-ip{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)}
 @keyframes slideIn{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
 .problem-banner-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.problem-banner-icon{width:24px;height:24px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0}
+.problem-banner-icon{font-size:20px;line-height:1;flex-shrink:0;color:var(--red-text)}
 .problem-banner-title{font-weight:600;font-size:15px;color:var(--red-text)}
 .problem-banner-list{display:flex;flex-wrap:wrap;gap:8px}
 .problem-pill{background:var(--surface);border:1px solid var(--red);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
@@ -1306,7 +1306,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   <div class="view" id="view-topology">
     <div class="problem-banner" id="problem-banner">
       <div class="problem-banner-hdr">
-        <div class="problem-banner-icon">!</div>
+        <span class="problem-banner-icon">⚠</span>
         <div class="problem-banner-title" id="problem-banner-title">Hosts offline</div>
       </div>
       <div class="problem-banner-list" id="problem-banner-list"></div>
