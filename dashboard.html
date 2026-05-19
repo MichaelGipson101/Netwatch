@@ -3956,23 +3956,30 @@ function updateAuthUI(){
   }
 }
 
+let _userMenuOutsideClick = null;
+
 function toggleUserMenu(){
   const dropdown = document.getElementById('user-dropdown');
   const trigger  = document.getElementById('user-menu-trigger');
   if(!dropdown) return;
   const opening = !dropdown.classList.contains('open');
+  if(_userMenuOutsideClick){
+    document.removeEventListener('click', _userMenuOutsideClick, true);
+    _userMenuOutsideClick = null;
+  }
   dropdown.classList.toggle('open', opening);
   if(trigger) trigger.setAttribute('aria-expanded', opening ? 'true' : 'false');
   if(opening){
-    function outsideClick(e){
+    _userMenuOutsideClick = function(e){
       const menu = document.getElementById('user-menu');
       if(menu && !menu.contains(e.target)){
         dropdown.classList.remove('open');
         if(trigger) trigger.setAttribute('aria-expanded','false');
-        document.removeEventListener('click', outsideClick, true);
+        document.removeEventListener('click', _userMenuOutsideClick, true);
+        _userMenuOutsideClick = null;
       }
-    }
-    document.addEventListener('click', outsideClick, true);
+    };
+    document.addEventListener('click', _userMenuOutsideClick, true);
   }
 }
 
