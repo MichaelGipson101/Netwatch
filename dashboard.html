@@ -715,6 +715,14 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .inv-search{flex:1;min-width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px}
 .inv-search:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-bg)}
 .inv-toolbar-actions{display:flex;gap:8px}
+.inv-export-split{position:relative;display:flex}
+.inv-export-split .inv-export-main{border-top-right-radius:0;border-bottom-right-radius:0;border-right:none}
+.inv-export-split .inv-export-chevron{border-top-left-radius:0;border-bottom-left-radius:0;padding:0 9px;font-size:11px}
+.inv-export-menu{position:absolute;top:calc(100% + 4px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:160px;z-index:20;display:none;flex-direction:column;overflow:hidden}
+.inv-export-menu.open{display:flex}
+.inv-export-menu button{padding:9px 14px;text-align:left;font-size:13px;font-family:'DM Sans',sans-serif;background:none;border:none;cursor:pointer;color:var(--text);border-bottom:1px solid var(--border-light)}
+.inv-export-menu button:last-child{border-bottom:none}
+.inv-export-menu button:hover{background:var(--subtle)}
 .inv-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
 .inv-metric{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;padding:11px 14px}
 .inv-metric-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:5px}
@@ -1461,7 +1469,14 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
       <div class="inv-toolbar-actions">
         <button class="btn" onclick="openInventoryEditor()">+ Add</button>
         <button class="btn" onclick="openImportModal()">Import XLSX</button>
-        <button class="btn" onclick="downloadInventoryExport(this)">Export XLSX</button>
+        <div class="inv-export-split">
+          <button class="btn inv-export-main" onclick="downloadInventoryExport(this,'hosts')">Export XLSX</button>
+          <button class="btn inv-export-chevron" onclick="toggleExportMenu(event)" aria-label="More export options">˅</button>
+          <div class="inv-export-menu" id="inv-export-menu">
+            <button onclick="downloadInventoryExport(null,'hosts');closeExportMenu()">Export Hosts</button>
+            <button onclick="downloadInventoryExport(null,'all');closeExportMenu()">Export All Types</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="inv-metrics" id="inv-metrics"></div>
@@ -5417,7 +5432,19 @@ function openImportModal(){
 function closeImportModal(){
   document.getElementById('import-overlay').classList.remove('open');
 }
-async function downloadInventoryExport(btn){
+function toggleExportMenu(e){
+  e.stopPropagation();
+  document.getElementById('inv-export-menu').classList.toggle('open');
+}
+function closeExportMenu(){
+  const m = document.getElementById('inv-export-menu');
+  if(m) m.classList.remove('open');
+}
+document.addEventListener('click', function(e){
+  if(!e.target.closest('.inv-export-split')) closeExportMenu();
+});
+async function downloadInventoryExport(btn, scope){
+  scope = scope || 'hosts';
   // Admin-only, so check auth first to give a friendly error
   if(!_authState.logged_in){
     if(_authState.setup_required) openSetup();
@@ -5431,7 +5458,7 @@ async function downloadInventoryExport(btn){
   const origText = btn ? btn.textContent : null;
   if(btn){ btn.disabled = true; btn.textContent = "Building..."; }
   try {
-    const res = await fetch("/api/inventory-export");
+    const res = await fetch("/api/inventory-export?scope=" + scope);
     if(!res.ok){
       let msg = "Export failed (HTTP " + res.status + ")";
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
