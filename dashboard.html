@@ -748,7 +748,6 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .inv-link-pill.down{background:var(--red-bg);color:var(--red-text)}
 .inv-link-pill.idle{background:var(--subtle);color:var(--muted);border:1px solid var(--border-light)}
 .inv-link-pill.degraded{background:var(--amber-bg);color:var(--amber-text)}
-.inv-link-pill.none{color:var(--hint)}
 .inv-empty{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:48px 20px;text-align:center}
 #inv-tables > .inv-table-wrap + .inv-type-heading{margin-top:18px}
 .inv-type-heading{display:flex;align-items:center;gap:9px;padding:0 4px 8px 4px;margin-top:4px}
@@ -3390,7 +3389,8 @@ async function sendWake(ip){
 
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape'){
-    if(document.getElementById('modal-overlay').classList.contains('open')) closeEditor();
+    if(document.getElementById('add-host-overlay').classList.contains('open')) closeAddHostModal();
+    else if(document.getElementById('modal-overlay').classList.contains('open')) closeEditor();
     else if(openDrawerIp) closeDrawer();
   }
 });
@@ -5016,7 +5016,7 @@ function renderInventoryDrawer(rec){
   let linkHtml = '';
   if(rec.linked_host){
     const lh = rec.linked_host;
-    const cls = lh.status === 'DEGRADED' ? 'degraded' : lh.is_up ? 'up' : (lh.status === 'IDLE' ? 'idle' : 'down');
+    const cls = (lh.status === 'DEGRADED' || lh.status === 'WAIT') ? 'degraded' : lh.is_up ? 'up' : (lh.status === 'IDLE' ? 'idle' : 'down');
     // The card itself navigates to the host drawer; the inline buttons
     // below offer common actions (Wake) without requiring tab switch.
     // We use stopPropagation on the buttons so clicking them doesn't
