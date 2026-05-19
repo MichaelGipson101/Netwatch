@@ -2843,12 +2843,16 @@ async function refresh(){
     // Note: pi-health auto-refresh happens inside renderDrawer when h.is_pi
     if(!lastOk){
       document.getElementById('err-banner').style.display = 'none';
-      document.getElementById('pip').classList.remove('stale');
+      const pipEl = document.getElementById('pip');
+      pipEl.classList.remove('stale');
+      pipEl.querySelector('span:last-child').textContent = 'live';
       lastOk = true;
     }
   } catch(e) {
     document.getElementById('err-banner').style.display = 'block';
-    document.getElementById('pip').classList.add('stale');
+    const pipEl = document.getElementById('pip');
+    pipEl.classList.add('stale');
+    pipEl.querySelector('span:last-child').textContent = 'stale';
     lastOk = false;
   }
 }
