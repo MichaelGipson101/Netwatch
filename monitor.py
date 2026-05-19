@@ -1656,12 +1656,15 @@ class InventoryDB:
         return out
 
 
-def export_inventory_to_xlsx(inventory_db):
-    """Build an XLSX file in memory containing all inventory records.
+def export_inventory_to_xlsx(inventory_db, scope='hosts'):
+    """Build an XLSX file in memory containing inventory records.
 
-    Column layout matches the import format so the same file can be
-    re-imported (in 'Replace all' mode) for round-tripping.
+    scope='hosts' (default): exports only host-type records on a single sheet
+      named "Inventory". Filename: netwatch-inventory-hosts-{hostname}-{date}.xlsx
+    scope='all': exports all device types, one sheet per type that has records.
+      Sheet order follows INV_TYPE_ORDER. Filename: netwatch-inventory-all-…xlsx
 
+    Column layout matches the import format for round-tripping host records.
     Returns (bytes, filename) on success, or (None, error_msg) on failure.
     """
     try:
@@ -1674,8 +1677,6 @@ def export_inventory_to_xlsx(inventory_db):
     import socket
     from datetime import datetime as _dt
 
-    # Column layout (header -> field name in inventory record)
-    # Order matches the user's original spreadsheet for familiarity.
     COLUMNS = [
         ("Category",             "category"),
         ("System",               "system"),
@@ -1694,54 +1695,71 @@ def export_inventory_to_xlsx(inventory_db):
         ("Notes",                "notes"),
     ]
 
-    try:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Inventory"
+    SHEET_NAMES = {
+        'host': 'Hosts', 'vm': 'VMs', 'network': 'Network',
+        'ups': 'UPS', 'disk': 'Disks', 'peripheral': 'Peripherals',
+        'tablet': 'Tablets', 'phone': 'Phones', 'printer': 'Printers',
+    }
+    TYPE_ORDER = ['host', 'vm', 'network', 'ups', 'disk', 'peripheral', 'tablet', 'phone', 'printer']
 
-        # Header row
+    def _write_sheet(ws, records):
         for col_idx, (header, _) in enumerate(COLUMNS, start=1):
             cell = ws.cell(row=1, column=col_idx, value=header)
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal="left", vertical="center")
             cell.fill = PatternFill(start_color="EEEEEE", end_color="EEEEEE", fill_type="solid")
-
-        # Data rows
-        # Per spec: export host-type records only. Peripherals are UI-only.
-        records = [r for r in inventory_db.list_all()
-                   if (r.get("device_type") or "host") == "host"]
         for row_idx, rec in enumerate(records, start=2):
             for col_idx, (_, field) in enumerate(COLUMNS, start=1):
-                val = rec.get(field)
-                # openpyxl writes None as an empty cell, which is what we want
-                ws.cell(row=row_idx, column=col_idx, value=val)
-
-        # Auto-fit column widths based on max content length per column.
-        # Cap at 50 chars to avoid runaway widths from long Notes fields.
+                ws.cell(row=row_idx, column=col_idx, value=rec.get(field))
         for col_idx, (header, field) in enumerate(COLUMNS, start=1):
             max_len = len(header)
             for rec in records:
                 val = rec.get(field)
-                if val is not None:
-                    s = str(val)
-                    if len(s) > max_len:
-                        max_len = len(s)
-            # openpyxl column letter
+                if val is not None and len(str(val)) > max_len:
+                    max_len = len(str(val))
             col_letter = openpyxl.utils.get_column_letter(col_idx)
             ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
-
-        # Freeze the header row so it stays visible when scrolling
         ws.freeze_panes = "A2"
 
-        # Write to BytesIO
-        buf = io.BytesIO()
-        wb.save(buf)
-
+    try:
         hostname = socket.gethostname() or "unknown"
         date_str = _dt.now().strftime("%Y-%m-%d")
-        filename = f"netwatch-inventory-{hostname}-{date_str}.xlsx"
 
+        all_records = inventory_db.list_all()
+
+        if scope == 'all':
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)  # remove default blank sheet
+
+            # Group records by device_type
+            by_type = {}
+            for r in all_records:
+                dt = r.get('device_type') or 'host'
+                by_type.setdefault(dt, []).append(r)
+
+            # Write sheets in TYPE_ORDER, then any unrecognised types
+            ordered = [t for t in TYPE_ORDER if t in by_type]
+            extras  = [t for t in by_type if t not in TYPE_ORDER]
+            for dt in ordered + extras:
+                sheet_name = SHEET_NAMES.get(dt, dt.title())
+                ws = wb.create_sheet(title=sheet_name)
+                _write_sheet(ws, by_type[dt])
+
+            filename = f"netwatch-inventory-all-{hostname}-{date_str}.xlsx"
+        else:
+            # scope == 'hosts' (default)
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Inventory"
+            records = [r for r in all_records
+                       if (r.get("device_type") or "host") == "host"]
+            _write_sheet(ws, records)
+            filename = f"netwatch-inventory-hosts-{hostname}-{date_str}.xlsx"
+
+        buf = io.BytesIO()
+        wb.save(buf)
         return buf.getvalue(), filename
+
     except Exception as e:
         return None, f"export failed: {e}"
 

@@ -1,6 +1,8 @@
 import sqlite3
 import os
+import io
 from monitor import _column_exists
+from monitor import export_inventory_to_xlsx
 
 
 def test_column_exists_returns_true_for_existing_column():
@@ -156,3 +158,84 @@ def test_build_api_payload_without_inventory_db():
     hm = _FakeHostManager([_FakeHost("10.0.0.1")])
     payload = build_api_payload(hm, {})
     assert payload["hosts"][0]["device_type"] == "host"
+
+
+def test_export_scope_hosts_filters_to_hosts_only():
+    try:
+        import openpyxl
+    except ImportError:
+        return  # skip if openpyxl not installed
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("Server1", "10.0.0.1", "host", 0, 0)
+            )
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("VM1", "10.0.0.2", "vm", 0, 0)
+            )
+        data, filename = export_inventory_to_xlsx(idb, scope='hosts')
+        assert data is not None, filename
+        assert "hosts" in filename
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        assert wb.sheetnames == ["Inventory"]
+        ws = wb.active
+        # Only 1 data row (host); VM excluded
+        assert ws.max_row == 2  # header + 1 host
+        assert ws.cell(row=2, column=2).value == "Server1"
+        hdb.close()
+
+
+def test_export_scope_all_creates_one_sheet_per_type():
+    try:
+        import openpyxl
+    except ImportError:
+        return
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("Server1", "10.0.0.1", "host", 0, 0)
+            )
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("VM1", "10.0.0.2", "vm", 0, 0)
+            )
+        data, filename = export_inventory_to_xlsx(idb, scope='all')
+        assert data is not None, filename
+        assert "all" in filename
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        assert "Hosts" in wb.sheetnames
+        assert "VMs" in wb.sheetnames
+        assert "Network" not in wb.sheetnames  # no network records → no sheet
+        assert wb["Hosts"].cell(row=2, column=2).value == "Server1"
+        assert wb["VMs"].cell(row=2, column=2).value == "VM1"
+        hdb.close()
+
+
+def test_export_scope_defaults_to_hosts():
+    try:
+        import openpyxl
+    except ImportError:
+        return
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("VM1", "10.0.0.2", "vm", 0, 0)
+            )
+        # No scope arg → defaults to hosts → VM excluded → 0 data rows
+        data, filename = export_inventory_to_xlsx(idb)
+        assert data is not None
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        assert wb.active.max_row == 1  # header only, no host records
+        hdb.close()
