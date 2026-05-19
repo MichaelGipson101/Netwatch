@@ -463,6 +463,8 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .scard-val{font-size:28px;font-weight:600;letter-spacing:-.03em;line-height:1}
 .scard-val sup{font-size:13px;font-weight:400;color:var(--hint);margin-left:2px}
 .scard-sub{font-size:11px;color:var(--hint);margin-top:5px}
+.scard-health-ok{background:var(--green-soft);border-color:var(--green-bg)}
+.scard-health-warn{background:var(--red-soft);border-color:var(--red-bg)}
 
 /* Topology */
 .topo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
@@ -1297,7 +1299,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   </div>
 
   <div class="summary">
-    <div class="scard"><div class="scard-label">Hosts up</div><div class="scard-val" id="s-up">-</div><div class="scard-sub" id="s-up-sub">loading...</div></div>
+    <div class="scard" id="scard-up"><div class="scard-label">Hosts up</div><div class="scard-val" id="s-up">-</div><div class="scard-sub" id="s-up-sub">loading...</div></div>
     <div class="scard"><div class="scard-label">Avg latency</div><div class="scard-val" id="s-lat">-</div><div class="scard-sub">across online hosts</div></div>
     <div class="scard"><div class="scard-label">Avg uptime</div><div class="scard-val" id="s-upt">-</div><div class="scard-sub">100-ping window</div></div>
     <div class="scard"><div class="scard-label">Monitored</div><div class="scard-val" id="s-tot">-</div><div class="scard-sub" id="s-interval">loading...</div></div>
@@ -2790,6 +2792,9 @@ function renderSummary(data){
   const upEl = document.getElementById('s-up');
   upEl.innerHTML = up + ' <sup>/ ' + total + '</sup>';
   upEl.style.color = down > 0 ? 'var(--red)' : (degraded > 0 ? 'var(--amber)' : 'var(--green)');
+  const upCard = document.getElementById('scard-up');
+  upCard.classList.toggle('scard-health-ok',  down === 0 && degraded === 0 && total > 0);
+  upCard.classList.toggle('scard-health-warn', down > 0 || degraded > 0);
   // Mirror to overlay
   const ovUp = document.getElementById('ov-up');
   const ovTot = document.getElementById('ov-tot');
