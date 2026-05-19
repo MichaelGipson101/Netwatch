@@ -502,6 +502,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 /* Hosts */
 .hosts-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
 .toolbar-right{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.hosts-filter-input{flex:1;min-width:160px;max-width:280px;padding:7px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px}
+.hosts-filter-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-bg)}
+.hosts-status-chip{padding:5px 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:var(--muted);font-size:12px;font-family:'DM Sans',sans-serif;cursor:pointer;transition:all .12s;font-weight:500}
+.hosts-status-chip:hover{border-color:var(--hint);color:var(--text)}
+.hosts-status-chip.active{background:var(--text);color:var(--surface);border-color:var(--text)}
 .compact-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;color:var(--muted)}
 .compact-toggle input{margin:0;cursor:pointer}
 
@@ -1421,6 +1426,12 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 
   <div class="view" id="view-hosts">
     <div class="hosts-toolbar">
+      <input type="text" id="hosts-filter" class="hosts-filter-input" placeholder="Filter hosts…" oninput="applyHostFilter()" autocomplete="off">
+      <div style="display:flex;gap:6px">
+        <button class="hosts-status-chip active" data-status="all"   onclick="setHostChip(this)">All</button>
+        <button class="hosts-status-chip"        data-status="down"  onclick="setHostChip(this)">Down</button>
+        <button class="hosts-status-chip"        data-status="degraded" onclick="setHostChip(this)">Degraded</button>
+      </div>
       <div class="toolbar-right">
         <label class="compact-toggle"><input type="checkbox" id="compact-mode"> Compact</label>
       </div>
@@ -1783,6 +1794,27 @@ function renderHost(h){
     + '<div class="uptime-cell"><div class="uptime-track"><div class="uptime-fill" style="width:' + uBarW + '%;background:' + uBarColor + '"></div></div><span class="uptime-pct" style="color:' + uColor + '">' + uLabel + '</span></div>'
     + '<div class="col-ping">' + h.last_checked + '</div>'
     + '</div>';
+}
+
+let _hostStatusChip = 'all';
+
+function setHostChip(btn){
+  _hostStatusChip = btn.dataset.status;
+  document.querySelectorAll('.hosts-status-chip').forEach(b => b.classList.toggle('active', b === btn));
+  applyHostFilter();
+}
+
+function applyHostFilter(){
+  if(!lastData) return;
+  const q = (document.getElementById('hosts-filter').value || '').toLowerCase().trim();
+  const chip = _hostStatusChip;
+  const filtered = lastData.hosts.filter(h => {
+    if(chip === 'down'     && h.status !== 'DOWN')     return false;
+    if(chip === 'degraded' && h.status !== 'DEGRADED') return false;
+    if(q && !h.name.toLowerCase().includes(q) && !h.ip.includes(q)) return false;
+    return true;
+  });
+  renderGroups({...lastData, hosts: filtered});
 }
 
 function renderGroups(data){
@@ -2849,6 +2881,9 @@ async function refresh(){
     renderTopology(data);
     updateTopologyWebStatus(data);
     renderGroups(data);
+    if(_hostStatusChip !== 'all' || (document.getElementById('hosts-filter') && document.getElementById('hosts-filter').value)){
+      applyHostFilter();
+    }
     renderEvents(data);
     if(openDrawerIp){
       const h = data.hosts.find(x => x.ip === openDrawerIp);
