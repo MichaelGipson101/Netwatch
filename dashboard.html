@@ -1725,11 +1725,9 @@ let lastData = null;
 let openDrawerIp = null;
 
 function deviceIcon(type, size){
-  const id = 'icon-' + (type || 'host');
-  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none"'
-    + ' stroke="currentColor" stroke-width="1.75" stroke-linecap="round"'
-    + ' stroke-linejoin="round" style="vertical-align:middle;flex-shrink:0"'
-    + ' aria-hidden="true"><use href="#' + id + '"/></svg>';
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 32 32"'
+    + ' style="vertical-align:middle;flex-shrink:0" aria-hidden="true">'
+    + '<use href="#topo-icon-' + (type || 'host') + '"/></svg>';
 }
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1787,7 +1785,7 @@ function renderHost(h){
   return '<div class="row' + rowCls + '"' + ipAttr + ' onclick="openDrawer(this.dataset.ip)">'
     + '<div><span class="dot ' + dotCls + '"></span></div>'
     + '<div><div class="host-name" ' + nameStyle + '>'
-    + deviceIcon(h.device_type, 13)
+    + deviceIcon(h.device_type, 18)
     + '<span>' + escapeHtml(h.name) + '</span></div><div class="host-ip-sub">' + escapeHtml(h.ip) + '</div></div>'
     + '<div class="col-ip">' + escapeHtml(h.ip) + '</div>'
     + '<div><span class="badge ' + badgeCls + '">' + h.status + '</span></div>'
@@ -4368,7 +4366,7 @@ function renderTypeTable(deviceType, rows, showHeading){
     cols.forEach((c, i) => {
       if(i === 0){
         out += '<td><span style="display:flex;align-items:center;gap:5px">'
-          + deviceIcon(rec.device_type, 14)
+          + deviceIcon(rec.device_type, 18)
           + formatInvCell(rec, c.key)
           + '</span></td>';
       } else {
