@@ -407,6 +407,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-legend-section:last-child{margin-bottom:0}
 .topo-legend-title{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--hint);margin-bottom:6px}
 .topo-legend-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;color:var(--text)}
+.topo-legend-icon{flex-shrink:0;display:block}
 .topo-legend-shape{display:inline-block;width:14px;height:14px;flex-shrink:0;border:1.5px solid var(--muted);background:var(--subtle)}
 .topo-legend-shape.topo-leg-host{border-radius:50%;width:14px;height:14px}
 .topo-legend-shape.topo-leg-vm{border-radius:50%;width:10px;height:10px;background:#1f1a26}
@@ -1346,13 +1347,13 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
           <button class="topo-legend-close" onclick="toggleTopologyLegend()">&times;</button>
         </div>
         <div class="topo-legend-section">
-          <div class="topo-legend-title">Node shapes</div>
-          <div class="topo-legend-row"><span class="topo-legend-shape topo-leg-host"></span>Host</div>
-          <div class="topo-legend-row"><span class="topo-legend-shape topo-leg-vm"></span>VM (smaller circle)</div>
-          <div class="topo-legend-row"><span class="topo-legend-shape topo-leg-network"></span>Network device</div>
-          <div class="topo-legend-row"><span class="topo-legend-shape topo-leg-ups"></span>UPS</div>
-          <div class="topo-legend-row"><span class="topo-legend-shape topo-leg-disk"></span>Disk</div>
-          <div class="topo-legend-row"><span class="topo-legend-shape topo-leg-peripheral"></span>Peripheral</div>
+          <div class="topo-legend-title">Node types</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-host"/></svg>Host</div>
+          <div class="topo-legend-row"><svg width="18" height="18" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-vm"/></svg>VM</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-network"/></svg>Network device</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-ups"/></svg>UPS</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-disk"/></svg>Disk</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-peripheral"/></svg>Peripheral</div>
         </div>
         <div class="topo-legend-section">
           <div class="topo-legend-title">Status border</div>
