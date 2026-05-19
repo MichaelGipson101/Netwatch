@@ -619,6 +619,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .drawer-name-dot.idle{background:var(--hint)}
 .drawer-name-dot.wait{background:var(--amber);box-shadow:0 0 0 3px var(--amber-bg)}
 .drawer-name-dot.degraded{background:var(--amber);box-shadow:0 0 0 3px var(--amber-bg)}
+.drawer-icon-wrap{flex-shrink:0;line-height:0;display:flex;align-items:center}
 .drawer-meta{display:flex;gap:8px;align-items:center;margin-top:4px;font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);flex-wrap:wrap}
 .drawer-close{background:transparent;border:none;color:var(--hint);cursor:pointer;font-size:20px;padding:6px 12px;border-radius:6px;line-height:1;font-family:'DM Sans',sans-serif;min-width:34px;min-height:34px;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .drawer-close:hover{background:var(--subtle);color:var(--text)}
@@ -2933,7 +2934,10 @@ function closeDrawer(){
 
 function renderDrawer(h, data){
   const dotEl = document.getElementById('d-dot');
-  dotEl.className = 'drawer-name-dot ' + (h.status === 'WAIT' ? 'wait' : h.status === 'DEGRADED' ? 'degraded' : h.is_up ? 'up' : (h.status === 'IDLE' ? 'idle' : 'down'));
+  const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
+  const iconType = h.device_type || 'host';
+  dotEl.className = 'drawer-icon-wrap';
+  dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:' + iconColor + '" aria-hidden="true"><use href="#topo-icon-' + iconType + '"/></svg>';
   document.getElementById('d-name').textContent = h.name;
   const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
   document.getElementById('d-meta').innerHTML =
@@ -3115,7 +3119,10 @@ function updateDrawerStats(h, data){
   }
   const dotEl = document.getElementById('d-dot');
   if(dotEl){
-    dotEl.className = 'drawer-name-dot ' + (h.status === 'WAIT' ? 'wait' : h.status === 'DEGRADED' ? 'degraded' : h.is_up ? 'up' : (h.status === 'IDLE' ? 'idle' : 'down'));
+    const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
+    const iconType = h.device_type || 'host';
+    dotEl.className = 'drawer-icon-wrap';
+    dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:' + iconColor + '" aria-hidden="true"><use href="#topo-icon-' + iconType + '"/></svg>';
   }
 
   // If the services section is present, update each row in place so users
