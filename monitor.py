@@ -460,6 +460,7 @@ class HostManager:
                 if ip in current_by_ip:
                     existing = current_by_ip[ip]
                     name_changed = existing.name != name or existing.group != group
+                    monitoring_disabled = existing.always_on and not always_on
                     existing.name = name
                     existing.group = group
                     existing.interval = interval
@@ -475,6 +476,8 @@ class HostManager:
                     existing.alert = alert
                     if name_changed and self.incident_log:
                         self.incident_log.update_host_info(existing)
+                    if monitoring_disabled and self.incident_log:
+                        self.incident_log._close_orphaned_incident(ip)
                     rebuilt.append(existing)
                 else:
                     rebuilt.append(self._spawn(name, ip, group, interval, always_on, specs, notes, links, services, strict, alert))
