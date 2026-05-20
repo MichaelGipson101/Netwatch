@@ -1072,6 +1072,9 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   /* (Just smaller padding; full text "Download backup" is still fine)      */
 
 }
+/* ── Deep Frost: ambient background blobs (dark mode only) ── */
+[data-theme="dark"] body{background-image:radial-gradient(ellipse 640px 420px at 28% -8%,rgba(93,187,141,.052) 0%,transparent 68%),radial-gradient(ellipse 420px 320px at 84% 92%,rgba(93,187,141,.032) 0%,transparent 68%);background-attachment:fixed}
+@media(prefers-color-scheme:dark){[data-theme="auto"] body{background-image:radial-gradient(ellipse 640px 420px at 28% -8%,rgba(93,187,141,.052) 0%,transparent 68%),radial-gradient(ellipse 420px 320px at 84% 92%,rgba(93,187,141,.032) 0%,transparent 68%);background-attachment:fixed}}
 </style>
 <style>
 /* ── Login landing page ─────────────────────────────────────────────────── */
