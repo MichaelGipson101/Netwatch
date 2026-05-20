@@ -1139,6 +1139,17 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 @media(prefers-color-scheme:dark){[data-theme="auto"] .drawer-name-dot.down{box-shadow:0 0 0 3px var(--red-bg),0 0 10px rgba(239,68,68,.45)}}
 [data-theme="dark"] .drawer-name-dot.wait{box-shadow:0 0 0 3px var(--amber-bg),0 0 10px rgba(245,158,11,.45)}
 @media(prefers-color-scheme:dark){[data-theme="auto"] .drawer-name-dot.wait{box-shadow:0 0 0 3px var(--amber-bg),0 0 10px rgba(245,158,11,.45)}}
+/* ── Deep Frost: form inputs inside overlays ── */
+[data-theme="dark"] .inv-edit-form input,
+[data-theme="dark"] .inv-edit-form textarea,
+[data-theme="dark"] .inv-edit-form select{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.10)}
+@media(prefers-color-scheme:dark){
+  [data-theme="auto"] .inv-edit-form input,
+  [data-theme="auto"] .inv-edit-form textarea,
+  [data-theme="auto"] .inv-edit-form select{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.10)}
+}
+[data-theme="dark"] .row-extra{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:8px}
+@media(prefers-color-scheme:dark){[data-theme="auto"] .row-extra{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:8px}}
 </style>
 <style>
 /* ── Login landing page ─────────────────────────────────────────────────── */
