@@ -388,7 +388,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-status-up.topo-pulsing   .topo-node-icon{animation:topo-pulse 1.6s ease-in-out;filter:drop-shadow(0 0 12px #5dbb8d)}
 
 /* Tooltip */
-.topo-tip{position:absolute;pointer-events:none;background:rgba(255,255,255,.80);backdrop-filter:blur(12px) saturate(1.3);-webkit-backdrop-filter:blur(12px) saturate(1.3);border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:8px 11px;box-shadow:0 4px 16px rgba(0,0,0,.25);font-size:12px;z-index:50;max-width:280px}
+.topo-tip{position:absolute;pointer-events:none;background:rgba(255,255,255,.80);backdrop-filter:blur(12px) saturate(1.3);-webkit-backdrop-filter:blur(12px) saturate(1.3);border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:8px 11px;box-shadow:0 4px 16px rgba(0,0,0,.25);font-size:12px;z-index:45;max-width:280px}
 [data-theme="dark"] .topo-tip{background:rgba(26,25,23,.82);border-color:rgba(255,255,255,.08)}
 @media(prefers-color-scheme:dark){[data-theme="auto"] .topo-tip{background:rgba(26,25,23,.82);border-color:rgba(255,255,255,.08)}}
 
@@ -1582,10 +1582,10 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
         <div class="inv-host-fields" style="display:contents">
         <label>CPU<input type="text" class="inv-f-cpu" placeholder="e.g. Ryzen 5 5600X"></label>
         <label>GPU<input type="text" class="inv-f-gpu" placeholder="e.g. RTX 3070 Ti"></label>
-        <label>RAM (GB)<input type="number" step="0.001" class="inv-f-ram_gb" placeholder="16"></label>
+        <label>RAM (GB)<input type="number" step="0.001" min="0" class="inv-f-ram_gb" placeholder="16"></label>
         <label>OS<input type="text" class="inv-f-os" placeholder="e.g. Proxmox VE"></label>
-        <label>CPU score<input type="number" class="inv-f-cpu_score" placeholder="PassMark or similar"></label>
-        <label>Max TDP (W)<input type="number" class="inv-f-tdp_watts" placeholder="65"></label>
+        <label>CPU score<input type="number" min="0" class="inv-f-cpu_score" placeholder="PassMark or similar"></label>
+        <label>Max TDP (W)<input type="number" min="0" class="inv-f-tdp_watts" placeholder="65"></label>
         <label>TPM version<input type="text" class="inv-f-tpm" placeholder="2 / None / etc."></label>
         </div>
         <div class="inv-type-fields" id="inv-type-fields" style="display:contents"></div>
