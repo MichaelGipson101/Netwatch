@@ -2779,6 +2779,18 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                     return
                 self._send_json(200, build_api_payload(host_manager, settings, incident_log, inventory_db))
                 return
+            if self.path == "/api/ai-config":
+                if not self._require_auth():
+                    return
+                api_key = settings.get("openrouter_api_key", "")
+                if not api_key:
+                    self._send_json(404, {"error": "ai_not_configured"})
+                    return
+                self._send_json(200, {
+                    "api_key": api_key,
+                    "model": settings.get("ai_model", "openrouter/free"),
+                })
+                return
             if self.path == "/api/hosts":
                 if not self._require_auth():
                     return

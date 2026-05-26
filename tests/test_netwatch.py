@@ -79,7 +79,7 @@ def test_no_db_path_works_as_before():
 
 # ── device_type in /api/status ──────────────────────────────────────────────
 
-from monitor import HistoryDB, InventoryDB, build_api_payload
+from monitor import HistoryDB, InventoryDB, build_api_payload, make_handler
 
 
 class _FakeHost:
@@ -239,3 +239,48 @@ def test_export_scope_defaults_to_hosts():
         wb = openpyxl.load_workbook(io.BytesIO(data))
         assert wb.active.max_row == 1  # header only, no host records
         hdb.close()
+
+
+import json as _json
+import threading as _threading
+import urllib.request as _urlreq
+import urllib.error as _urlerr
+from http.server import ThreadingHTTPServer as _THTS
+
+
+def _ai_config_server(settings):
+    """Spin up a single-request test server for /api/ai-config. Returns (server, port)."""
+    hm = _FakeHostManager([])
+    handler = make_handler(hm, settings, "/dev/null", auth_manager=None)
+    server = _THTS(("127.0.0.1", 0), handler)
+    return server, server.server_address[1]
+
+
+def test_ai_config_returns_key_and_model():
+    settings = {"openrouter_api_key": "sk-or-test-123", "ai_model": "deepseek/deepseek-v4-flash:free"}
+    server, port = _ai_config_server(settings)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        with _urlreq.urlopen(f"http://127.0.0.1:{port}/api/ai-config") as r:
+            data = _json.loads(r.read())
+        assert data["api_key"] == "sk-or-test-123"
+        assert data["model"] == "deepseek/deepseek-v4-flash:free"
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_ai_config_missing_key_returns_404():
+    server, port = _ai_config_server({})
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        try:
+            _urlreq.urlopen(f"http://127.0.0.1:{port}/api/ai-config")
+            assert False, "Expected 404"
+        except _urlerr.HTTPError as e:
+            assert e.code == 404
+    finally:
+        server.server_close()
+        t.join()
