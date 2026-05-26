@@ -5772,6 +5772,7 @@ clockTick();
 
     _appendMsg('user', text);
     _aiHistory.push({role:'user', content:text});
+    if(_aiHistory.length > 20) _aiHistory.splice(0, _aiHistory.length - 20);
 
     const ctx = _buildContext();
     const systemPrompt = `You are a homelab assistant embedded in Netwatch, a network monitor. The user is the homelab owner and an experienced sysadmin. Be concise and direct.\n\nCurrent page context (${ctx.page}):\n${JSON.stringify(ctx)}`;
@@ -5805,15 +5806,19 @@ clockTick();
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let assistantText = '';
+      let _buf = '';
 
       while(true){
         const {done, value} = await reader.read();
         if(done) break;
-        const chunk = decoder.decode(value, {stream:true});
-        for(const line of chunk.split('\n')){
+        _buf += decoder.decode(value, {stream:true});
+        const lines = _buf.split('\n');
+        _buf = lines.pop();
+        let _finished = false;
+        for(const line of lines){
           if(!line.startsWith('data: ')) continue;
           const raw = line.slice(6).trim();
-          if(raw === '[DONE]') break;
+          if(raw === '[DONE]'){ _finished = true; break; }
           try{
             const parsed = JSON.parse(raw);
             const delta = parsed.choices?.[0]?.delta?.content || '';
@@ -5822,6 +5827,7 @@ clockTick();
             _msgs.scrollTop = _msgs.scrollHeight;
           }catch(e){}
         }
+        if(_finished) break;
       }
 
       _aiHistory.push({role:'assistant', content:assistantText});
