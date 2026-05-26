@@ -1157,11 +1157,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 [data-theme="dark"] .row-extra{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:8px}
 @media(prefers-color-scheme:dark){[data-theme="auto"] .row-extra{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:8px}}
 /* ── AI Chat Bubble ─────────────────────────────────────────────────────── */
-#ai-bubble-btn{position:fixed;bottom:24px;right:24px;z-index:8000;width:48px;height:48px;border-radius:50%;background:var(--text);color:var(--surface);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.18);transition:transform .15s,box-shadow .15s}
+#ai-bubble-btn{position:fixed;bottom:88px;right:24px;z-index:8000;width:48px;height:48px;border-radius:50%;background:var(--text);color:var(--surface);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.18);transition:transform .15s,box-shadow .15s}
 #ai-bubble-btn:hover{transform:scale(1.07);box-shadow:0 4px 20px rgba(0,0,0,.28)}
 #ai-bubble-btn.streaming{animation:ai-pulse 1.2s ease-in-out infinite}
 @keyframes ai-pulse{0%,100%{box-shadow:0 2px 12px rgba(0,0,0,.18)}50%{box-shadow:0 0 0 7px rgba(34,197,94,.22),0 2px 12px rgba(0,0,0,.18)}}
-#ai-panel{position:fixed;bottom:82px;right:24px;z-index:8000;width:380px;max-height:60vh;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:var(--surface);box-shadow:0 8px 32px rgba(0,0,0,.18);transition:opacity .15s,transform .15s}
+#ai-panel{position:fixed;bottom:146px;right:24px;z-index:8000;width:380px;max-height:60vh;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:var(--surface);box-shadow:0 8px 32px rgba(0,0,0,.18);transition:opacity .15s,transform .15s}
 #ai-panel.hidden{display:none}
 [data-theme="dark"] #ai-panel{background:rgba(20,22,26,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:rgba(255,255,255,.10)}
 @media(prefers-color-scheme:dark){[data-theme="auto"] #ai-panel{background:rgba(20,22,26,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:rgba(255,255,255,.10)}}
@@ -5830,7 +5830,7 @@ clockTick();
         if(_finished) break;
       }
 
-      _aiHistory.push({role:'assistant', content:assistantText});
+      if(assistantText) _aiHistory.push({role:'assistant', content:assistantText});
     }catch(e){
       assistantDiv.className = 'ai-msg error';
       assistantDiv.textContent = 'Network error: ' + e.message;
