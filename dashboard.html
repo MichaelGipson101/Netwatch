@@ -1177,6 +1177,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 [data-theme="dark"] .ai-msg.assistant{background:rgba(255,255,255,.06)}
 @media(prefers-color-scheme:dark){[data-theme="auto"] .ai-msg.assistant{background:rgba(255,255,255,.06)}}
 .ai-msg.error{align-self:flex-start;background:var(--red-bg);color:var(--red-text);border:1px solid rgba(220,38,38,.2);border-radius:10px 10px 10px 2px}
+.ai-msg.page-switch{align-self:center;background:none;color:var(--muted);font-size:11px;padding:2px 0;border:none;border-radius:0;max-width:100%;text-align:center}
 .ai-input-row{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--border);flex-shrink:0;align-items:flex-end}
 #ai-input{flex:1;border:1px solid var(--border);border-radius:7px;padding:7px 10px;font-size:13px;background:var(--bg);color:var(--text);outline:none;resize:none;font-family:'DM Sans',sans-serif;line-height:1.4;max-height:100px;overflow-y:auto}
 #ai-input:focus{border-color:var(--text)}
@@ -5752,6 +5753,11 @@ clockTick();
         page: 'inventory',
         items: (typeof _inventoryData !== 'undefined' ? _inventoryData : []).map(i => ({
           name: i.system, ip: i.ip, device_type: i.device_type,
+          category: i.category, role: i.role,
+          cpu: i.cpu, ram_gb: i.ram_gb, gpu: i.gpu,
+          architecture: i.architecture, os: i.os,
+          cpu_score: i.cpu_score, tdp_watts: i.tdp_watts,
+          mac: i.mac, serial: i.serial, tpm: i.tpm,
           specs: i.specs, notes: i.notes
         }))
       };
@@ -5764,7 +5770,8 @@ clockTick();
       page: tab,
       summary: lastData && lastData.summary,
       hosts: hosts.map(h => ({
-        name:h.name, group:h.group, status:h.status, is_up:h.is_up,
+        name:h.name, ip:h.ip, group:h.group, device_type:h.device_type,
+        status:h.status, is_up:h.is_up,
         uptime_pct:h.uptime_pct, latency_ms:h.latency_ms,
         consecutive_down:h.consecutive_down,
         last_seen_up_seconds:h.last_seen_up_seconds,
@@ -5799,7 +5806,7 @@ clockTick();
     if(_aiHistory.length > 20) _aiHistory.splice(0, _aiHistory.length - 20);
 
     const ctx = _buildContext();
-    const systemPrompt = `You are a homelab assistant embedded in Netwatch, a network monitor. The user is the homelab owner and an experienced sysadmin. Be concise and direct.\n\nCurrent page context (${ctx.page}):\n${JSON.stringify(ctx)}`;
+    const systemPrompt = _buildSystemPrompt(ctx);
 
     const messages = [{role:'system', content:systemPrompt}, ..._aiHistory];
     const assistantDiv = _appendMsg('assistant', '');
@@ -5853,8 +5860,23 @@ clockTick();
         }
         if(_finished) break;
       }
+      // Flush any partial line left in the buffer
+      if(_buf.startsWith('data: ')){
+        const raw = _buf.slice(6).trim();
+        if(raw && raw !== '[DONE]'){
+          try{
+            const parsed = JSON.parse(raw);
+            const delta = parsed.choices?.[0]?.delta?.content || '';
+            if(delta){ assistantText += delta; assistantDiv.textContent = assistantText; }
+          }catch(e){}
+        }
+      }
 
-      if(assistantText) _aiHistory.push({role:'assistant', content:assistantText});
+      if(assistantText){
+        _aiHistory.push({role:'assistant', content:assistantText});
+      }else{
+        assistantDiv.remove();
+      }
     }catch(e){
       assistantDiv.className = 'ai-msg error';
       assistantDiv.textContent = 'Network error: ' + e.message;
@@ -5863,6 +5885,53 @@ clockTick();
 
     _setStreaming(false);
   }
+
+  function _buildSystemPrompt(ctx){
+    const base = 'You are a helpful assistant embedded in Netwatch, a homelab network monitor. The user is the homelab owner and an experienced sysadmin. Be concise and direct.\n\n';
+    if(ctx.page === 'inventory'){
+      return base
+        + 'You have the full hardware inventory below. Each item includes:\n'
+        + '- name: device name, ip: IP address, device_type, category, role\n'
+        + '- cpu: processor model, ram_gb: RAM in gigabytes, gpu: graphics card, architecture, os: operating system\n'
+        + '- cpu_score: PassMark CPU score, tdp_watts: power draw in watts, tpm: TPM version\n'
+        + '- mac: MAC address, serial: serial number, specs: additional details, notes: admin notes\n\n'
+        + 'Use this data to answer questions about hardware specs, device counts, CPU models, OS distribution, etc.\n\n'
+        + 'Current page: inventory\nLive data:\n' + JSON.stringify(ctx, null, 2);
+    }
+    if(ctx.page === 'events'){
+      return base
+        + 'You have the recent event log below. Events record host status changes (going up, going down, degraded).\n\n'
+        + 'Current page: events\nLive data:\n' + JSON.stringify(ctx, null, 2);
+    }
+    return base
+      + 'You have real-time data about every monitored host below. Each host includes:\n'
+      + '- name: display name, ip: IP address, group: logical group, device_type: what kind of device it is\n'
+      + '- status: UP / DOWN / DEGRADED / IDLE / WAIT, is_up: boolean\n'
+      + '- uptime_pct: 30-day uptime %, latency_ms: current ping latency\n'
+      + '- consecutive_down: how many consecutive failed checks, last_seen_up_seconds: seconds since last seen online\n'
+      + '- specs: hardware/software details, notes: admin notes, services: monitored TCP ports and their status\n\n'
+      + 'Use this data to answer questions about specific hosts, IP addresses, status, and network topology.\n\n'
+      + 'Current page: ' + ctx.page + '\nLive data:\n' + JSON.stringify(ctx, null, 2);
+  }
+
+  function _clearConversation(newPage){
+    _aiHistory = [];
+    _msgs.innerHTML = '';
+    const note = document.createElement('div');
+    note.className = 'ai-msg page-switch';
+    note.textContent = 'Switched to ' + newPage + ' — conversation cleared.';
+    _msgs.appendChild(note);
+  }
+
+  // Clear conversation when the user switches tabs so stale context doesn't bleed across pages
+  (function(){
+    const _origSetTab = window.setTab;
+    window.setTab = function(tab){
+      const prev = localStorage.getItem('nw-tab');
+      if(_origSetTab) _origSetTab.call(this, tab);
+      if(prev && tab !== prev && _aiHistory.length > 0) _clearConversation(tab);
+    };
+  })();
 
   _btn.addEventListener('click', ()=>{
     _panel.classList.toggle('hidden');
