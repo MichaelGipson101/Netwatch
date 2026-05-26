@@ -5693,6 +5693,159 @@ setInterval(fetchAuthState, 60000);
 setInterval(refresh, REFRESH);
 setInterval(clockTick, 1000);
 clockTick();
+
+// ── AI Chat Bubble ─────────────────────────────────────────────────────────
+(function(){
+  let _aiKey = null;
+  let _aiStreaming = false;
+  let _aiHistory = [];
+
+  const _btn    = document.getElementById('ai-bubble-btn');
+  const _panel  = document.getElementById('ai-panel');
+  const _close  = document.getElementById('ai-close-btn');
+  const _msgs   = document.getElementById('ai-messages');
+  const _input  = document.getElementById('ai-input');
+  const _send   = document.getElementById('ai-send');
+  const _model  = document.getElementById('ai-model-select');
+
+  async function _initAi(){
+    try{
+      const r = await fetch('/api/ai-config');
+      if(!r.ok) return;
+      const cfg = await r.json();
+      _aiKey = cfg.api_key;
+      if(cfg.model && _model.querySelector(`option[value="${cfg.model}"]`)){
+        _model.value = cfg.model;
+      }
+      _btn.style.display = 'flex';
+    }catch(e){}
+  }
+
+  function _buildContext(){
+    const tab = localStorage.getItem('nw-tab') || 'topology';
+    if(tab === 'inventory'){
+      return {
+        page: 'inventory',
+        items: (typeof _inventoryData !== 'undefined' ? _inventoryData : []).map(i => ({
+          name: i.system, ip: i.ip, device_type: i.device_type,
+          specs: i.specs, notes: i.notes
+        }))
+      };
+    }
+    if(tab === 'events'){
+      return {page:'events', events:(lastData && lastData.events)||[]};
+    }
+    const hosts = (lastData && lastData.hosts)||[];
+    return {
+      page: tab,
+      summary: lastData && lastData.summary,
+      hosts: hosts.map(h => ({
+        name:h.name, group:h.group, status:h.status, is_up:h.is_up,
+        uptime_pct:h.uptime_pct, latency_ms:h.latency_ms,
+        consecutive_down:h.consecutive_down,
+        last_seen_up_seconds:h.last_seen_up_seconds,
+        specs:h.specs, notes:h.notes, services:h.services
+      }))
+    };
+  }
+
+  function _appendMsg(role, text){
+    const d = document.createElement('div');
+    d.className = 'ai-msg ' + role;
+    d.textContent = text;
+    _msgs.appendChild(d);
+    _msgs.scrollTop = _msgs.scrollHeight;
+    return d;
+  }
+
+  function _setStreaming(on){
+    _aiStreaming = on;
+    _btn.classList.toggle('streaming', on);
+    _send.disabled = on;
+    _input.disabled = on;
+  }
+
+  async function _sendMessage(){
+    const text = _input.value.trim();
+    if(!text || _aiStreaming || !_aiKey) return;
+    _input.value = '';
+
+    _appendMsg('user', text);
+    _aiHistory.push({role:'user', content:text});
+
+    const ctx = _buildContext();
+    const systemPrompt = `You are a homelab assistant embedded in Netwatch, a network monitor. The user is the homelab owner and an experienced sysadmin. Be concise and direct.\n\nCurrent page context (${ctx.page}):\n${JSON.stringify(ctx)}`;
+
+    const messages = [{role:'system', content:systemPrompt}, ..._aiHistory];
+    const assistantDiv = _appendMsg('assistant', '');
+    _setStreaming(true);
+
+    try{
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions',{
+        method:'POST',
+        headers:{
+          'Authorization':'Bearer '+_aiKey,
+          'Content-Type':'application/json',
+          'HTTP-Referer':window.location.origin,
+          'X-Title':'Netwatch AI'
+        },
+        body:JSON.stringify({model:_model.value, messages, stream:true})
+      });
+
+      if(!resp.ok){
+        let errMsg = `Error ${resp.status}`;
+        try{ const e = await resp.json(); errMsg = e.error?.message || errMsg; }catch(e){}
+        assistantDiv.className = 'ai-msg error';
+        assistantDiv.textContent = errMsg;
+        _aiHistory.pop();
+        _setStreaming(false);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantText = '';
+
+      while(true){
+        const {done, value} = await reader.read();
+        if(done) break;
+        const chunk = decoder.decode(value, {stream:true});
+        for(const line of chunk.split('\n')){
+          if(!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if(raw === '[DONE]') break;
+          try{
+            const parsed = JSON.parse(raw);
+            const delta = parsed.choices?.[0]?.delta?.content || '';
+            assistantText += delta;
+            assistantDiv.textContent = assistantText;
+            _msgs.scrollTop = _msgs.scrollHeight;
+          }catch(e){}
+        }
+      }
+
+      _aiHistory.push({role:'assistant', content:assistantText});
+    }catch(e){
+      assistantDiv.className = 'ai-msg error';
+      assistantDiv.textContent = 'Network error: ' + e.message;
+      _aiHistory.pop();
+    }
+
+    _setStreaming(false);
+  }
+
+  _btn.addEventListener('click', ()=>{
+    _panel.classList.toggle('hidden');
+    if(!_panel.classList.contains('hidden')) _input.focus();
+  });
+  _close.addEventListener('click', ()=> _panel.classList.add('hidden'));
+  _send.addEventListener('click', _sendMessage);
+  _input.addEventListener('keydown', e=>{
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); _sendMessage(); }
+  });
+
+  _initAi();
+})();
 </script>
 <!-- AI Chat Bubble -->
 <button id="ai-bubble-btn" title="Netwatch AI" aria-label="Open AI assistant" style="display:none">
