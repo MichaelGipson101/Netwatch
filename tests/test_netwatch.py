@@ -1,6 +1,11 @@
 import sqlite3
 import os
 import io
+import json as _json
+import threading as _threading
+import urllib.request as _urlreq
+import urllib.error as _urlerr
+from http.server import ThreadingHTTPServer as _THTS
 from monitor import _column_exists
 from monitor import export_inventory_to_xlsx
 
@@ -239,13 +244,6 @@ def test_export_scope_defaults_to_hosts():
         wb = openpyxl.load_workbook(io.BytesIO(data))
         assert wb.active.max_row == 1  # header only, no host records
         hdb.close()
-
-
-import json as _json
-import threading as _threading
-import urllib.request as _urlreq
-import urllib.error as _urlerr
-from http.server import ThreadingHTTPServer as _THTS
 
 
 def _ai_config_server(settings):

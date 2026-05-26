@@ -2783,7 +2783,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth():
                     return
                 api_key = settings.get("openrouter_api_key", "")
-                if not api_key:
+                if not api_key.strip():
                     self._send_json(404, {"error": "ai_not_configured"})
                     return
                 self._send_json(200, {
