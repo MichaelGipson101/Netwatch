@@ -5875,7 +5875,7 @@ clockTick();
           'HTTP-Referer':window.location.origin,
           'X-Title':'Netwatch AI'
         },
-        body:JSON.stringify({model:_model.value, messages, stream:true})
+        body:JSON.stringify({model:_model.value, messages, stream:true, stream_options:{include_usage:true}})
       });
 
       if(!resp.ok){
@@ -5960,7 +5960,7 @@ clockTick();
       totalIn  += stats.prompt_tokens || 0;
       totalOut += stats.completion_tokens || 0;
       rows += '<tr>'
-        + '<td>' + _truncateModelName(modelId) + '</td>'
+        + '<td>' + escapeHtml(_truncateModelName(modelId)) + '</td>'
         + '<td>' + (stats.requests || 0) + '</td>'
         + '<td>' + (stats.prompt_tokens || 0).toLocaleString() + '</td>'
         + '<td>' + (stats.completion_tokens || 0).toLocaleString() + '</td>'
@@ -5993,7 +5993,7 @@ clockTick();
       const d = json.data || {};
       const tier = d.is_free_tier ? 'Free tier' : 'Paid';
       const rl = d.rate_limit || {};
-      const rateStr = (rl.requests && rl.interval) ? (rl.requests + ' req / ' + rl.interval) : '—';
+      const rateStr = (rl.requests && rl.interval) ? (escapeHtml(String(rl.requests)) + ' req / ' + escapeHtml(String(rl.interval))) : '—';
       const used = typeof d.usage === 'number' ? Math.round(d.usage) : '—';
       _renderUsageBody(tier + ' · ' + rateStr + '<br>' + used + ' requests used this period');
     }catch(e){
