@@ -5855,6 +5855,8 @@ clockTick();
       const decoder = new TextDecoder();
       let assistantText = '';
       let _buf = '';
+      let _streamUsage = null;
+      let _streamModel = null;
 
       while(true){
         const {done, value} = await reader.read();
@@ -5873,6 +5875,7 @@ clockTick();
             assistantText += delta;
             assistantDiv.innerHTML = _renderMarkdown(assistantText);
             _msgs.scrollTop = _msgs.scrollHeight;
+            if(parsed.usage){ _streamUsage = parsed.usage; _streamModel = parsed.model; }
           }catch(e){}
         }
         if(_finished) break;
@@ -5885,10 +5888,12 @@ clockTick();
             const parsed = JSON.parse(raw);
             const delta = parsed.choices?.[0]?.delta?.content || '';
             if(delta){ assistantText += delta; assistantDiv.innerHTML = _renderMarkdown(assistantText); }
+            if(parsed.usage){ _streamUsage = parsed.usage; _streamModel = parsed.model; }
           }catch(e){}
         }
       }
 
+      if(_streamUsage && _streamModel) _accumulateUsage(_streamModel, _streamUsage);
       if(assistantText){
         _aiHistory.push({role:'assistant', content:assistantText});
       }else{
@@ -5901,6 +5906,19 @@ clockTick();
     }
 
     _setStreaming(false);
+  }
+
+  function _accumulateUsage(modelId, usage){
+    if(!modelId || !usage) return;
+    try{
+      const stored = JSON.parse(localStorage.getItem('nw-ai-usage') || '{}');
+      const entry = stored[modelId] || {requests:0, prompt_tokens:0, completion_tokens:0};
+      entry.requests += 1;
+      entry.prompt_tokens += usage.prompt_tokens || 0;
+      entry.completion_tokens += usage.completion_tokens || 0;
+      stored[modelId] = entry;
+      localStorage.setItem('nw-ai-usage', JSON.stringify(stored));
+    }catch(e){}
   }
 
   function _renderMarkdown(text){
