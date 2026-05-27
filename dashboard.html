@@ -1198,6 +1198,25 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .ai-msg.assistant a{color:var(--blue);text-decoration:underline}
 .ai-msg.assistant p{margin:0 0 6px}
 .ai-msg.assistant p:last-child{margin-bottom:0}
+.ai-usage-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:2px 4px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:color .12s;touch-action:manipulation}
+.ai-usage-btn:hover{color:var(--text)}
+#ai-usage-modal{position:absolute;inset:0;background:var(--surface);z-index:10;display:flex;flex-direction:column;border-radius:14px}
+[data-theme="dark"] #ai-usage-modal{background:rgba(20,22,26,.97)}
+@media(prefers-color-scheme:dark){[data-theme="auto"] #ai-usage-modal{background:rgba(20,22,26,.97)}}
+#ai-usage-modal.hidden{display:none}
+.ai-usage-modal-header{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.ai-usage-modal-title{font-size:13px;font-weight:600;flex:1;color:var(--text)}
+.ai-usage-modal-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.ai-usage-section-label{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.ai-usage-account{font-size:12px;color:var(--text);line-height:1.7}
+.ai-usage-table{width:100%;border-collapse:collapse;font-size:12px;font-family:'DM Mono',monospace}
+.ai-usage-table th{text-align:left;color:var(--muted);font-weight:500;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.ai-usage-table th:not(:first-child),.ai-usage-table td:not(:first-child){text-align:right}
+.ai-usage-table td{padding:3px 0;color:var(--text)}
+.ai-usage-table tr.ai-total-row td{border-top:1px solid var(--border);padding-top:5px;font-weight:600}
+.ai-usage-modal-footer{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-top:1px solid var(--border);flex-shrink:0;gap:8px}
+.ai-usage-empty{color:var(--muted);font-size:12px;text-align:center;padding:16px 0}
+.ai-usage-error{color:var(--red-text);font-size:12px}
 </style>
 <style>
 /* ── Login landing page ─────────────────────────────────────────────────── */
@@ -1900,6 +1919,9 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
       <option value="google/gemma-4-31b-it:free">Gemma 4 31B</option>
       <option value="nvidia/nemotron-3-super-120b-a12b:free">Nemotron 3 Super 120B</option>
     </select>
+    <button class="ai-usage-btn" id="ai-usage-btn" title="Usage">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    </button>
     <button class="ai-close-btn" id="ai-close-btn" title="Close" aria-label="Close">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
@@ -1908,6 +1930,19 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   <div class="ai-input-row">
     <textarea id="ai-input" rows="1" placeholder="Ask about your homelab…"></textarea>
     <button class="btn btn-primary" id="ai-send">Send</button>
+  </div>
+  <div id="ai-usage-modal" class="hidden" role="dialog" aria-label="AI usage">
+    <div class="ai-usage-modal-header">
+      <span class="ai-usage-modal-title">AI Usage</span>
+      <button class="ai-close-btn" id="ai-usage-close-btn" title="Close" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="ai-usage-modal-body" id="ai-usage-body"></div>
+    <div class="ai-usage-modal-footer">
+      <button class="btn" id="ai-usage-refresh-btn">↺ Refresh</button>
+      <button class="btn" id="ai-usage-clear-btn">Clear data</button>
+    </div>
   </div>
 </div>
 
