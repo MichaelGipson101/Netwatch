@@ -5783,6 +5783,8 @@ clockTick();
   const _input  = document.getElementById('ai-input');
   const _send   = document.getElementById('ai-send');
   const _model  = document.getElementById('ai-model-select');
+  const _usageBtn   = document.getElementById('ai-usage-btn');
+  const _usageModal = document.getElementById('ai-usage-modal');
 
   async function _initAi(){
     try{
@@ -5943,6 +5945,61 @@ clockTick();
     _setStreaming(false);
   }
 
+  function _truncateModelName(id){
+    return id.replace(/:[^/]+$/, '').replace(/-\d{8}$/, '').split('/').pop();
+  }
+
+  function _renderUsageBody(accountHtml){
+    const stored = JSON.parse(localStorage.getItem('nw-ai-usage') || '{}');
+    const entries = Object.entries(stored);
+    let totalReq = 0, totalIn = 0, totalOut = 0;
+    let rows = '';
+    for(const [modelId, stats] of entries){
+      totalReq += stats.requests || 0;
+      totalIn  += stats.prompt_tokens || 0;
+      totalOut += stats.completion_tokens || 0;
+      rows += '<tr>'
+        + '<td>' + _truncateModelName(modelId) + '</td>'
+        + '<td>' + (stats.requests || 0) + '</td>'
+        + '<td>' + (stats.prompt_tokens || 0).toLocaleString() + '</td>'
+        + '<td>' + (stats.completion_tokens || 0).toLocaleString() + '</td>'
+        + '</tr>';
+    }
+    const sessionHtml = entries.length === 0
+      ? '<div class="ai-usage-empty">No requests this session</div>'
+      : '<table class="ai-usage-table">'
+        + '<thead><tr><th>Model</th><th>Req</th><th>In</th><th>Out</th></tr></thead>'
+        + '<tbody>' + rows
+        + '<tr class="ai-total-row">'
+        + '<td>Total</td><td>' + totalReq + '</td>'
+        + '<td>' + totalIn.toLocaleString() + '</td>'
+        + '<td>' + totalOut.toLocaleString() + '</td>'
+        + '</tr></tbody></table>';
+    document.getElementById('ai-usage-body').innerHTML =
+      '<div><div class="ai-usage-section-label">Account</div>'
+      + '<div class="ai-usage-account">' + accountHtml + '</div></div>'
+      + '<div><div class="ai-usage-section-label">Session</div>' + sessionHtml + '</div>';
+  }
+
+  async function _openUsageModal(){
+    _usageModal.classList.remove('hidden');
+    _renderUsageBody('Loading…');
+    try{
+      const resp = await fetch('https://openrouter.ai/api/v1/auth/key', {
+        headers:{'Authorization':'Bearer ' + _aiKey}
+      });
+      const json = await resp.json();
+      const d = json.data || {};
+      const tier = d.is_free_tier ? 'Free tier' : 'Paid';
+      const rl = d.rate_limit || {};
+      const rateStr = rl.requests ? (rl.requests + ' req / ' + rl.interval) : '—';
+      const used = typeof d.usage === 'number' ? Math.round(d.usage) : '—';
+      _renderUsageBody(tier + ' · ' + rateStr + '<br>' + used + ' requests used this period');
+    }catch(e){
+      _renderUsageBody('<span class="ai-usage-error">Failed to load account info</span>');
+    }
+  }
+
   function _accumulateUsage(modelId, usage){
     if(!modelId || !usage) return;
     try{
@@ -6067,6 +6124,13 @@ clockTick();
   _send.addEventListener('click', _sendMessage);
   _input.addEventListener('keydown', e=>{
     if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); _sendMessage(); }
+  });
+  _usageBtn.addEventListener('click', _openUsageModal);
+  document.getElementById('ai-usage-close-btn').addEventListener('click', ()=> _usageModal.classList.add('hidden'));
+  document.getElementById('ai-usage-refresh-btn').addEventListener('click', _openUsageModal);
+  document.getElementById('ai-usage-clear-btn').addEventListener('click', ()=>{
+    localStorage.removeItem('nw-ai-usage');
+    _renderUsageBody(document.querySelector('.ai-usage-account')?.innerHTML || 'Loading…');
   });
 
   _initAi();
