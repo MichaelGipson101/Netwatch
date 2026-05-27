@@ -5950,7 +5950,8 @@ clockTick();
   }
 
   function _renderUsageBody(accountHtml){
-    const stored = JSON.parse(localStorage.getItem('nw-ai-usage') || '{}');
+    let stored = {};
+    try{ stored = JSON.parse(localStorage.getItem('nw-ai-usage') || '{}'); }catch(e){}
     const entries = Object.entries(stored);
     let totalReq = 0, totalIn = 0, totalOut = 0;
     let rows = '';
@@ -5992,7 +5993,7 @@ clockTick();
       const d = json.data || {};
       const tier = d.is_free_tier ? 'Free tier' : 'Paid';
       const rl = d.rate_limit || {};
-      const rateStr = rl.requests ? (rl.requests + ' req / ' + rl.interval) : '—';
+      const rateStr = (rl.requests && rl.interval) ? (rl.requests + ' req / ' + rl.interval) : '—';
       const used = typeof d.usage === 'number' ? Math.round(d.usage) : '—';
       _renderUsageBody(tier + ' · ' + rateStr + '<br>' + used + ' requests used this period');
     }catch(e){
