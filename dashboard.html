@@ -5994,8 +5994,8 @@ clockTick();
       const tier = d.is_free_tier ? 'Free tier' : 'Paid';
       const rl = d.rate_limit || {};
       const rateStr = (rl.requests && rl.interval) ? (escapeHtml(String(rl.requests)) + ' req / ' + escapeHtml(String(rl.interval))) : '—';
-      const used = typeof d.usage === 'number' ? Math.round(d.usage) : '—';
-      _renderUsageBody(tier + ' · ' + rateStr + '<br>' + used + ' requests used this period');
+      const used = typeof d.usage === 'number' ? '$' + d.usage.toFixed(4) : '—';
+      _renderUsageBody(tier + ' · ' + rateStr + '<br>' + used + ' credits used this period');
     }catch(e){
       _renderUsageBody('<span class="ai-usage-error">Failed to load account info</span>');
     }
