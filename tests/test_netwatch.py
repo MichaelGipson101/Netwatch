@@ -8,6 +8,13 @@ import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
 from monitor import _column_exists
 from monitor import export_inventory_to_xlsx
+from monitor import (
+    _h_get_ai_config, _h_get_hosts,
+    _h_get_auth_status, _h_get_auth_users,
+    _h_get_inventory, _h_get_inventory_record,
+    _h_get_topology, _h_get_connections, _h_get_connections_for_device,
+    _h_get_discover,
+)
 
 
 def test_column_exists_returns_true_for_existing_column():
@@ -282,3 +289,170 @@ def test_ai_config_missing_key_returns_404():
     finally:
         server.server_close()
         t.join()
+
+
+# ── _h_get_ai_config ─────────────────────────────────────────────────────────
+
+def test_h_get_ai_config_returns_key_and_model():
+    code, body = _h_get_ai_config({"openrouter_api_key": "sk-test", "ai_model": "gpt-4"})
+    assert code == 200
+    assert body["api_key"] == "sk-test"
+    assert body["model"] == "gpt-4"
+
+
+def test_h_get_ai_config_missing_key_returns_404():
+    code, body = _h_get_ai_config({})
+    assert code == 404
+    assert body["error"] == "ai_not_configured"
+
+
+def test_h_get_ai_config_blank_key_returns_404():
+    code, body = _h_get_ai_config({"openrouter_api_key": "   "})
+    assert code == 404
+
+
+def test_h_get_ai_config_default_model():
+    code, body = _h_get_ai_config({"openrouter_api_key": "sk-x"})
+    assert code == 200
+    assert body["model"] == "openrouter/free"
+
+
+# ── _h_get_hosts ─────────────────────────────────────────────────────────────
+
+def test_h_get_hosts_returns_host_list():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cfg_path = os.path.join(tmpdir, "hosts.yaml")
+        with open(cfg_path, "w") as f:
+            f.write("hosts:\n  - name: router\n    ip: 192.168.1.1\n    group: Lab\n")
+        code, body = _h_get_hosts(cfg_path)
+        assert code == 200
+        assert body["hosts"][0]["name"] == "router"
+
+
+def test_h_get_hosts_missing_file_returns_500():
+    code, body = _h_get_hosts("/nonexistent/path/hosts.yaml")
+    assert code == 500
+    assert "error" in body
+
+
+# ── _h_get_auth_status ───────────────────────────────────────────────────────
+
+def test_h_get_auth_status_no_auth_manager():
+    code, body = _h_get_auth_status(None, lambda: (None, False))
+    assert code == 200
+    assert body["logged_in"] is False
+    assert body["setup_required"] is False
+
+
+def test_h_get_auth_status_logged_in():
+    class FakeAM:
+        has_users = True
+    code, body = _h_get_auth_status(FakeAM(), lambda: ("alice", True))
+    assert code == 200
+    assert body["logged_in"] is True
+    assert body["username"] == "alice"
+    assert body["admin"] is True
+
+
+def test_h_get_auth_status_setup_required():
+    class FakeAM:
+        has_users = False
+    code, body = _h_get_auth_status(FakeAM(), lambda: (None, False))
+    assert code == 200
+    assert body["setup_required"] is True
+
+
+# ── _h_get_auth_users ────────────────────────────────────────────────────────
+
+def test_h_get_auth_users_returns_list():
+    class FakeAM:
+        def list_users(self): return [{"username": "alice", "admin": True}]
+    code, body = _h_get_auth_users(FakeAM())
+    assert code == 200
+    assert body["users"][0]["username"] == "alice"
+
+
+def test_h_get_auth_users_no_auth_manager():
+    code, body = _h_get_auth_users(None)
+    assert code == 404
+    assert "error" in body
+
+
+# ── _h_get_inventory ─────────────────────────────────────────────────────────
+
+def test_h_get_inventory_no_db_returns_empty():
+    code, body = _h_get_inventory(None, None)
+    assert code == 200
+    assert body["items"] == []
+
+
+def test_h_get_inventory_returns_items():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        with hdb.lock:
+            hdb.conn.execute(
+                "INSERT INTO inventory (system, ip, device_type, created_at, updated_at)"
+                " VALUES (?,?,?,?,?)", ("Switch1", "10.0.0.5", "network", 0, 0)
+            )
+            hdb.conn.commit()
+        code, body = _h_get_inventory(idb, None)
+        assert code == 200
+        assert any(i["system"] == "Switch1" for i in body["items"])
+        hdb.close()
+
+
+# ── _h_get_inventory_record ──────────────────────────────────────────────────
+
+def test_h_get_inventory_record_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_get_inventory_record("/api/inventory/9999", idb, None)
+        assert code == 404
+        hdb.close()
+
+
+def test_h_get_inventory_record_bad_id():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_get_inventory_record("/api/inventory/notanint", idb, None)
+        assert code == 400
+        hdb.close()
+
+
+def test_h_get_inventory_record_no_db():
+    code, body = _h_get_inventory_record("/api/inventory/1", None, None)
+    assert code == 500
+
+
+# ── _h_get_topology ──────────────────────────────────────────────────────────
+
+def test_h_get_topology_no_db():
+    code, body = _h_get_topology(None, None)
+    assert code == 500
+    assert "error" in body
+
+
+# ── _h_get_connections ───────────────────────────────────────────────────────
+
+def test_h_get_connections_no_db():
+    code, body = _h_get_connections(None)
+    assert code == 500
+
+
+def test_h_get_connections_returns_list():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_get_connections(idb)
+        assert code == 200
+        assert "items" in body
+        hdb.close()
+
+
+# ── _h_get_connections_for_device ────────────────────────────────────────────
+
+def test_h_get_connections_for_device_bad_path():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_get_connections_for_device("/api/inventory/notanint/connections", idb)
+        assert code == 400
+        hdb.close()
