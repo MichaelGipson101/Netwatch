@@ -14,6 +14,10 @@ from monitor import (
     _h_get_inventory, _h_get_inventory_record,
     _h_get_topology, _h_get_connections, _h_get_connections_for_device,
     _h_get_discover,
+    _h_post_inventory_create, _h_post_inventory_update, _h_post_inventory_delete,
+    _h_post_connection_create, _h_post_connection_update, _h_post_connection_delete,
+    _h_post_detect_mac, _h_post_wake, _h_post_hosts,
+    _h_post_auth_users, _h_post_auth_password, _h_post_auth_user_delete,
 )
 
 
@@ -461,3 +465,171 @@ def test_h_get_connections_for_device_bad_path():
         code, body = _h_get_connections_for_device("/api/inventory/notanint/connections", idb)
         assert code == 400
         hdb.close()
+
+
+# ── _h_post_wake ─────────────────────────────────────────────────────────────
+
+class _FakeHostWithMac:
+    def __init__(self, ip, mac=None):
+        self.ip = ip
+        self.specs = {"mac": mac} if mac else {}
+    def to_dict(self): return {"ip": self.ip}
+
+
+class _FakeHMWake:
+    def __init__(self, hosts): self._hosts = hosts
+    def list_hosts(self): return self._hosts
+
+
+def test_h_post_wake_missing_ip():
+    hm = _FakeHMWake([])
+    code, body = _h_post_wake({}, hm, None)
+    assert code == 400
+    assert body["error"] == "ip is required"
+
+
+def test_h_post_wake_host_not_found():
+    hm = _FakeHMWake([_FakeHostWithMac("10.0.0.1")])
+    code, body = _h_post_wake({"ip": "10.0.0.99"}, hm, None)
+    assert code == 404
+
+
+def test_h_post_wake_no_mac():
+    hm = _FakeHMWake([_FakeHostWithMac("10.0.0.1")])
+    code, body = _h_post_wake({"ip": "10.0.0.1"}, hm, None)
+    assert code == 400
+    assert "MAC" in body["error"]
+
+
+# ── _h_post_detect_mac ───────────────────────────────────────────────────────
+
+def test_h_post_detect_mac_missing_ip():
+    code, body = _h_post_detect_mac({})
+    assert code == 400
+    assert body["error"] == "ip required"
+
+
+def test_h_post_detect_mac_blank_ip():
+    code, body = _h_post_detect_mac({"ip": "  "})
+    assert code == 400
+    assert body["error"] == "ip required"
+
+
+# ── _h_post_inventory_create ─────────────────────────────────────────────────
+
+def test_h_post_inventory_create_no_db():
+    code, body = _h_post_inventory_create({}, None)
+    assert code == 500
+    assert "error" in body
+
+
+def test_h_post_inventory_create_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_post_inventory_create(
+            {"system": "TestBox", "device_type": "host"}, idb
+        )
+        assert code == 200
+        assert body["ok"] is True
+        assert isinstance(body["id"], int)
+        hdb.close()
+
+
+# ── _h_post_inventory_delete ─────────────────────────────────────────────────
+
+def test_h_post_inventory_delete_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_post_inventory_delete("/api/inventory/9999/delete", idb)
+        assert code == 404
+        hdb.close()
+
+
+def test_h_post_inventory_delete_bad_id():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, idb = _make_idb(tmpdir)
+        code, body = _h_post_inventory_delete("/api/inventory/abc/delete", idb)
+        assert code == 400
+        hdb.close()
+
+
+# ── _h_post_hosts ────────────────────────────────────────────────────────────
+
+def test_h_post_hosts_not_a_list():
+    hm = _FakeHostManager([])
+    code, body = _h_post_hosts({"hosts": "not-a-list"}, "/dev/null", hm, {})
+    assert code == 400
+    assert "'hosts' must be a list" in body["error"]
+
+
+def test_h_post_hosts_invalid_host():
+    hm = _FakeHostManager([])
+    code, body = _h_post_hosts(
+        {"hosts": [{"name": "noip", "group": "Lab"}]}, "/dev/null", hm, {}
+    )
+    assert code == 400
+    assert "error" in body
+
+
+# ── _h_post_auth_users ───────────────────────────────────────────────────────
+
+def test_h_post_auth_users_creates_user():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir)
+        code, body = _h_post_auth_users(
+            {"username": "bob", "password": "Str0ng!pass", "admin": False}, am
+        )
+        assert code == 200
+        assert body["ok"] is True
+        assert any(u["username"] == "bob" for u in am.list_users())
+
+
+def test_h_post_auth_users_duplicate():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir)
+        am.create_user("alice", "Str0ng!pass", admin=True)
+        code, body = _h_post_auth_users({"username": "alice", "password": "other"}, am)
+        assert code == 400
+        assert "error" in body
+
+
+# ── _h_post_auth_password ────────────────────────────────────────────────────
+
+def test_h_post_auth_password_wrong_current():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir)
+        am.create_user("carol", "Str0ng!pass", admin=False)
+        code, body = _h_post_auth_password(
+            {"current": "wrongpassword", "new": "newpass"}, "carol", am
+        )
+        assert code == 401
+        assert "error" in body
+
+
+def test_h_post_auth_password_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir)
+        am.create_user("dave", "Str0ng!pass", admin=False)
+        code, body = _h_post_auth_password(
+            {"current": "Str0ng!pass", "new": "NewStr0ng!pass"}, "dave", am
+        )
+        assert code == 200
+        assert body["ok"] is True
+
+
+# ── _h_post_auth_user_delete ─────────────────────────────────────────────────
+
+def test_h_post_auth_user_delete_empty_username():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir)
+        code, body = _h_post_auth_user_delete("/api/auth/users/", am)
+        assert code == 400
+        assert "error" in body
+
+
+def test_h_post_auth_user_delete_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        am = _make_auth(tmpdir)
+        code, body = _h_post_auth_user_delete("/api/auth/users/nobody", am)
+        assert code == 400
+        assert "error" in body
