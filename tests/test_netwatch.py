@@ -309,6 +309,7 @@ def test_h_get_ai_config_missing_key_returns_404():
 def test_h_get_ai_config_blank_key_returns_404():
     code, body = _h_get_ai_config({"openrouter_api_key": "   "})
     assert code == 404
+    assert body["error"] == "ai_not_configured"
 
 
 def test_h_get_ai_config_default_model():
@@ -397,7 +398,10 @@ def test_h_get_inventory_returns_items():
             hdb.conn.commit()
         code, body = _h_get_inventory(idb, None)
         assert code == 200
+        assert isinstance(body["items"], list)
+        assert len(body["items"]) > 0
         assert any(i["system"] == "Switch1" for i in body["items"])
+        assert "id" in body["items"][0]
         hdb.close()
 
 
@@ -437,6 +441,7 @@ def test_h_get_topology_no_db():
 def test_h_get_connections_no_db():
     code, body = _h_get_connections(None)
     assert code == 500
+    assert "error" in body
 
 
 def test_h_get_connections_returns_list():
