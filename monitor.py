@@ -2692,6 +2692,164 @@ def build_api_payload(host_manager, settings, incident_log=None, inventory_db=No
     }
 
 
+_STATIC_FILES = {
+    'main.css':    'text/css; charset=utf-8',
+    'utils.js':    'application/javascript; charset=utf-8',
+    'core.js':     'application/javascript; charset=utf-8',
+    'topology.js': 'application/javascript; charset=utf-8',
+    'inventory.js':'application/javascript; charset=utf-8',
+    'auth.js':     'application/javascript; charset=utf-8',
+    'ai-panel.js': 'application/javascript; charset=utf-8',
+}
+
+# ── Route handler functions (module-level; testable without HTTP) ─────────────
+
+def _h_get_status(host_manager, settings, incident_log, inventory_db) -> tuple:
+    return 200, build_api_payload(host_manager, settings, incident_log, inventory_db)
+
+
+def _h_get_ai_config(settings: dict) -> tuple:
+    api_key = settings.get("openrouter_api_key", "")
+    if not api_key.strip():
+        return 404, {"error": "ai_not_configured"}
+    return 200, {
+        "api_key": api_key,
+        "model": settings.get("ai_model", "openrouter/free"),
+    }
+
+
+def _h_get_hosts(config_path: str) -> tuple:
+    try:
+        cfg = load_yaml(config_path) or {}
+        return 200, {"hosts": cfg.get("hosts", [])}
+    except Exception as e:
+        return 500, {"error": f"Could not read config: {e}"}
+
+
+def _h_get_pi_health() -> tuple:
+    try:
+        return 200, read_pi_health()
+    except Exception as e:
+        logging.exception("Error reading Pi health")
+        return 500, {"error": str(e)}
+
+
+def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
+    user, is_admin = current_user_fn() if auth_manager else (None, False)
+    return 200, {
+        "logged_in":      bool(user),
+        "username":       user,
+        "admin":          is_admin,
+        "setup_required": bool(auth_manager and not auth_manager.has_users),
+    }
+
+
+def _h_get_auth_users(auth_manager) -> tuple:
+    return 200, {"users": auth_manager.list_users()}
+
+
+def _h_get_inventory(inventory_db, host_manager) -> tuple:
+    try:
+        items = inventory_db.list_all() if inventory_db else []
+        host_map = {}
+        if host_manager:
+            for h in [h.to_dict() for h in host_manager.list_hosts()]:
+                mac = (h.get("specs", {}) or {}).get("mac")
+                if mac:
+                    key = InventoryDB.normalize_mac(mac)
+                    if key:
+                        host_map[key] = {
+                            "name":       h.get("name"),
+                            "ip":         h.get("ip"),
+                            "is_up":      h.get("is_up"),
+                            "status":     h.get("status"),
+                            "uptime_pct": h.get("uptime_pct"),
+                        }
+        for item in items:
+            m = InventoryDB.normalize_mac(item.get("mac"))
+            item["linked_host"] = host_map.get(m) if m else None
+        return 200, {"items": items}
+    except Exception as e:
+        logging.exception("inventory list error")
+        return 500, {"error": str(e)}
+
+
+def _h_get_inventory_record(path: str, inventory_db, host_manager) -> tuple:
+    try:
+        inv_id = int(path.split("/")[-1])
+    except ValueError:
+        return 400, {"error": "invalid id"}
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    rec = inventory_db.get(inv_id)
+    if not rec:
+        return 404, {"error": "not found"}
+    m = InventoryDB.normalize_mac(rec.get("mac"))
+    rec["linked_host"] = None
+    if m and host_manager:
+        for h in [hh.to_dict() for hh in host_manager.list_hosts()]:
+            h_mac = (h.get("specs", {}) or {}).get("mac")
+            if InventoryDB.normalize_mac(h_mac) == m:
+                rec["linked_host"] = {
+                    "name":       h.get("name"),
+                    "ip":         h.get("ip"),
+                    "is_up":      h.get("is_up"),
+                    "status":     h.get("status"),
+                    "uptime_pct": h.get("uptime_pct"),
+                }
+                break
+    return 200, rec
+
+
+def _h_get_topology(inventory_db, host_manager) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        return 200, build_topology_payload(inventory_db, host_manager)
+    except Exception as e:
+        logging.exception("topology fetch error")
+        return 500, {"error": str(e)}
+
+
+def _h_get_connections(inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        return 200, {"items": inventory_db.list_all_connections()}
+    except Exception as e:
+        logging.exception("connections list error")
+        return 500, {"error": str(e)}
+
+
+def _h_get_connections_for_device(path: str, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        inv_id = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    try:
+        return 200, {"items": inventory_db.list_connections_for_device(inv_id)}
+    except Exception as e:
+        logging.exception("connections fetch error")
+        return 500, {"error": str(e)}
+
+
+def _h_get_discover(config_path: str) -> tuple:
+    try:
+        state = get_discovery_state()
+        cfg = load_yaml(config_path) or {}
+        known_ips = {h.get("ip") for h in cfg.get("hosts", []) if isinstance(h, dict)}
+        state["results"] = [
+            {**r, "already_monitored": r["ip"] in known_ips}
+            for r in state.get("results", [])
+        ]
+        return 200, state
+    except Exception as e:
+        logging.exception("Error reading discovery state")
+        return 500, {"error": str(e)}
+
+
 def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html=""):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
@@ -2774,67 +2932,51 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if self.path == "/api/status":
-                if not self._require_auth():
+            if self.path.startswith('/static/'):
+                fname = self.path[8:]
+                if fname not in _STATIC_FILES:
+                    self._send_json(404, {'error': 'not found'})
                     return
-                self._send_json(200, build_api_payload(host_manager, settings, incident_log, inventory_db))
+                base_dir = os.path.dirname(os.path.abspath(config_path))
+                fpath = os.path.join(base_dir, 'static', fname)
+                try:
+                    with open(fpath, 'rb') as f:
+                        body = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', _STATIC_FILES[fname])
+                    self.send_header('Content-Length', len(body))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except FileNotFoundError:
+                    self._send_json(404, {'error': f'static file not found: {fname}'})
+                return
+            if self.path == "/api/status":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_status(host_manager, settings, incident_log, inventory_db))
                 return
             if self.path == "/api/ai-config":
-                if not self._require_auth():
-                    return
-                api_key = settings.get("openrouter_api_key", "")
-                if not api_key.strip():
-                    self._send_json(404, {"error": "ai_not_configured"})
-                    return
-                self._send_json(200, {
-                    "api_key": api_key,
-                    "model": settings.get("ai_model", "openrouter/free"),
-                })
+                if not self._require_auth(): return
+                self._send_json(*_h_get_ai_config(settings))
                 return
             if self.path == "/api/hosts":
-                if not self._require_auth():
-                    return
-                try:
-                    cfg = load_yaml(config_path) or {}
-                    self._send_json(200, {"hosts": cfg.get("hosts", [])})
-                except Exception as e:
-                    self._send_json(500, {"error": f"Could not read config: {e}"})
+                if not self._require_auth(): return
+                self._send_json(*_h_get_hosts(config_path))
                 return
-
             if self.path == "/api/pi-health":
-                if not self._require_auth():
-                    return
-                try:
-                    self._send_json(200, read_pi_health())
-                except Exception as e:
-                    logging.exception("Error reading Pi health")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                self._send_json(*_h_get_pi_health())
                 return
-
             if self.path == "/api/auth/status":
-                user, is_admin = self._current_user() if auth_manager else (None, False)
-                self._send_json(200, {
-                    "logged_in":      bool(user),
-                    "username":       user,
-                    "admin":          is_admin,
-                    "setup_required": bool(auth_manager and not auth_manager.has_users),
-                })
+                self._send_json(*_h_get_auth_status(auth_manager, self._current_user))
                 return
-
             if self.path == "/api/auth/users":
-                if not self._require_auth(admin_only=True):
-                    return
-                self._send_json(200, {"users": auth_manager.list_users()})
+                if not self._require_auth(admin_only=True): return
+                self._send_json(*_h_get_auth_users(auth_manager))
                 return
-
             if self.path == "/api/inventory-export" or self.path.startswith("/api/inventory-export?"):
-                # Build XLSX in memory and stream it back as a download.
-                # Admin-only because inventory contains hardware identifiers.
-                if not self._require_auth(admin_only=True):
-                    return
+                if not self._require_auth(admin_only=True): return
                 if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
+                    self._send_json(500, {"error": "inventory not available"}); return
                 try:
                     from urllib.parse import urlparse as _up, parse_qs as _pqs
                     _scope = _pqs(_up(self.path).query).get('scope', ['hosts'])[0]
@@ -2842,158 +2984,43 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                         _scope = 'hosts'
                     data, result = export_inventory_to_xlsx(inventory_db, scope=_scope)
                     if data is None:
-                        self._send_json(500, {"error": result})
-                        return
-                    filename = result
+                        self._send_json(500, {"error": result}); return
                     self.send_response(200)
                     self.send_header("Content-Type",
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                     self.send_header("Content-Length", str(len(data)))
-                    self.send_header("Content-Disposition",
-                                     f'attachment; filename="{filename}"')
+                    self.send_header("Content-Disposition", f'attachment; filename="{result}"')
                     self.end_headers()
                     self.wfile.write(data)
-                    logging.info(f"Inventory export: {filename} ({len(data)} bytes)")
+                    logging.info(f"Inventory export: {result} ({len(data)} bytes)")
                 except Exception as e:
                     logging.exception("inventory export error")
                     self._send_json(500, {"error": str(e)})
                 return
-
             if self.path == "/api/inventory":
-                # Inventory list now requires auth (was open prior to v3.37)
-                if not self._require_auth():
-                    return
-                try:
-                    items = inventory_db.list_all() if inventory_db else []
-                    # Annotate each with linked monitored host info if MAC matches
-                    host_map = {}
-                    if host_manager:
-                        for h in [h.to_dict() for h in host_manager.list_hosts()]:
-                            mac = (h.get("specs", {}) or {}).get("mac")
-                            if mac:
-                                key = InventoryDB.normalize_mac(mac)
-                                if key:
-                                    host_map[key] = {
-                                        "name":       h.get("name"),
-                                        "ip":         h.get("ip"),
-                                        "is_up":      h.get("is_up"),
-                                        "status":     h.get("status"),
-                                        "uptime_pct": h.get("uptime_pct"),
-                                    }
-                    for item in items:
-                        m = InventoryDB.normalize_mac(item.get("mac"))
-                        item["linked_host"] = host_map.get(m) if m else None
-                    self._send_json(200, {"items": items})
-                except Exception as e:
-                    logging.exception("inventory list error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                self._send_json(*_h_get_inventory(inventory_db, host_manager))
                 return
-
             if self.path == "/api/topology":
-                # Bundled inventory + connections + linked-host status,
-                # for the topology web view. Now requires auth.
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    payload = build_topology_payload(inventory_db, host_manager)
-                    self._send_json(200, payload)
-                except Exception as e:
-                    logging.exception("topology fetch error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                self._send_json(*_h_get_topology(inventory_db, host_manager))
                 return
-
             if self.path == "/api/connections":
-                # All-connections list (used by the topology viz). Auth required.
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    self._send_json(200, {"items": inventory_db.list_all_connections()})
-                except Exception as e:
-                    logging.exception("connections list error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                self._send_json(*_h_get_connections(inventory_db))
                 return
-
-            if (self.path.startswith("/api/inventory/")
-                    and self.path.endswith("/connections")):
-                # /api/inventory/<id>/connections - per-device. Auth required.
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    parts = self.path.split("/")
-                    inv_id = int(parts[-2])
-                except (ValueError, IndexError):
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                try:
-                    items = inventory_db.list_connections_for_device(inv_id)
-                    self._send_json(200, {"items": items})
-                except Exception as e:
-                    logging.exception("connections fetch error")
-                    self._send_json(500, {"error": str(e)})
+            if (self.path.startswith("/api/inventory/") and self.path.endswith("/connections")):
+                if not self._require_auth(): return
+                self._send_json(*_h_get_connections_for_device(self.path, inventory_db))
                 return
-
             if self.path.startswith("/api/inventory/") and self.path != "/api/inventory/":
-                # Single inventory record. Auth required.
-                if not self._require_auth():
-                    return
-                try:
-                    inv_id = int(self.path.split("/")[-1])
-                except ValueError:
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                rec = inventory_db.get(inv_id)
-                if not rec:
-                    self._send_json(404, {"error": "not found"})
-                    return
-                # Annotate linked host
-                m = InventoryDB.normalize_mac(rec.get("mac"))
-                rec["linked_host"] = None
-                if m and host_manager:
-                    for h in [h.to_dict() for h in host_manager.list_hosts()]:
-                        h_mac = (h.get("specs", {}) or {}).get("mac")
-                        if InventoryDB.normalize_mac(h_mac) == m:
-                            rec["linked_host"] = {
-                                "name":       h.get("name"),
-                                "ip":         h.get("ip"),
-                                "is_up":      h.get("is_up"),
-                                "status":     h.get("status"),
-                                "uptime_pct": h.get("uptime_pct"),
-                            }
-                            break
-                self._send_json(200, rec)
+                if not self._require_auth(): return
+                self._send_json(*_h_get_inventory_record(self.path, inventory_db, host_manager))
                 return
-
             if self.path == "/api/discover":
-                # Return current scan state. Auth required.
-                if not self._require_auth():
-                    return
-                try:
-                    state = get_discovery_state()
-                    # Annotate each result with whether the IP is already in hosts.yaml
-                    cfg = load_yaml(config_path) or {}
-                    known_ips = {h.get("ip") for h in cfg.get("hosts", []) if isinstance(h, dict)}
-                    annotated = []
-                    for r in state.get("results", []):
-                        annotated.append({**r, "already_monitored": r["ip"] in known_ips})
-                    state["results"] = annotated
-                    self._send_json(200, state)
-                except Exception as e:
-                    logging.exception("Error reading discovery state")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                self._send_json(*_h_get_discover(config_path))
                 return
-
             self.send_response(404)
             self.end_headers()
 
