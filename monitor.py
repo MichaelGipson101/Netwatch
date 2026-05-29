@@ -2745,6 +2745,8 @@ def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
 
 
 def _h_get_auth_users(auth_manager) -> tuple:
+    if not auth_manager:
+        return 404, {"error": "auth disabled"}
     return 200, {"users": auth_manager.list_users()}
 
 
@@ -2933,7 +2935,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self.wfile.write(body)
                 return
             if self.path.startswith('/static/'):
-                fname = self.path[8:]
+                fname = self.path[8:].split('?')[0]
                 if fname not in _STATIC_FILES:
                     self._send_json(404, {'error': 'not found'})
                     return
