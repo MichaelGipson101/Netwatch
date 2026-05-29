@@ -2852,6 +2852,181 @@ def _h_get_discover(config_path: str) -> tuple:
         return 500, {"error": str(e)}
 
 
+def _h_post_inventory_create(body: dict, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    inv_id, err = inventory_db.create(body)
+    if err:
+        return 400, {"error": err}
+    return 200, {"ok": True, "id": inv_id}
+
+
+def _h_post_inventory_update(path: str, body: dict, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        inv_id = int(path.split("/")[-1])
+    except ValueError:
+        return 400, {"error": "invalid id"}
+    ok, err = inventory_db.update(inv_id, body)
+    if not ok:
+        return 400, {"error": err}
+    return 200, {"ok": True}
+
+
+def _h_post_inventory_delete(path: str, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        inv_id = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    ok, err = inventory_db.delete(inv_id)
+    if not ok:
+        return 404, {"error": err}
+    return 200, {"ok": True}
+
+
+def _h_post_connection_create(path: str, body: dict, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        inv_id = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    body = dict(body)
+    body["from_device_id"] = inv_id
+    new_id, err = inventory_db.create_connection(body)
+    if err:
+        return 400, {"error": err}
+    return 200, {"ok": True, "id": new_id}
+
+
+def _h_post_connection_update(path: str, body: dict, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        conn_id = int(path.split("/")[-1])
+    except ValueError:
+        return 400, {"error": "invalid id"}
+    ok, err = inventory_db.update_connection(conn_id, body)
+    if not ok:
+        return 400, {"error": err}
+    return 200, {"ok": True}
+
+
+def _h_post_connection_delete(path: str, inventory_db) -> tuple:
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    try:
+        conn_id = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    ok, err = inventory_db.delete_connection(conn_id)
+    if not ok:
+        return 404, {"error": err}
+    return 200, {"ok": True}
+
+
+def _h_post_discover() -> tuple:
+    try:
+        started, msg = start_discovery_scan()
+        if started:
+            return 200, {"ok": True, "message": msg}
+        return 400, {"error": msg}
+    except Exception as e:
+        logging.exception("Error starting discovery scan")
+        return 500, {"error": str(e)}
+
+
+def _h_post_detect_mac(body: dict) -> tuple:
+    ip = (body.get("ip") or "").strip()
+    if not ip:
+        return 400, {"error": "ip required"}
+    try:
+        mac = _detect_mac_for_ip(ip)
+        if mac:
+            return 200, {"ok": True, "mac": mac}
+        return 404, {"error": "not in ARP cache (host may be offline or not yet pinged)"}
+    except Exception as e:
+        logging.exception("detect-mac error")
+        return 500, {"error": str(e)}
+
+
+def _h_post_wake(body: dict, host_manager, inventory_db) -> tuple:
+    target_ip = body.get("ip", "").strip()
+    if not target_ip:
+        return 400, {"error": "ip is required"}
+    target_host = next((h for h in host_manager.list_hosts() if h.ip == target_ip), None)
+    if not target_host:
+        return 404, {"error": "Host not found"}
+    mac = (target_host.specs or {}).get("mac", "")
+    if not mac and inventory_db:
+        try:
+            for rec in inventory_db.list_all():
+                if rec.get("ip") == target_ip and rec.get("mac"):
+                    mac = rec["mac"]
+                    logging.info("WoL: using MAC from inventory record %s for %s",
+                                 rec.get("id"), target_ip)
+                    break
+        except Exception as e:
+            logging.warning("WoL inventory MAC lookup failed: %s", e)
+    if not mac:
+        return 400, {"error": "No MAC address configured for this host (in hosts.yaml or inventory)"}
+    ok, err = send_wol_packet(mac)
+    if ok:
+        return 200, {"ok": True, "message": f"Magic packet sent to {mac}"}
+    return 500, {"error": err or "Failed to send magic packet"}
+
+
+def _h_post_hosts(body: dict, config_path: str, host_manager, settings: dict) -> tuple:
+    new_hosts = body.get("hosts", [])
+    if not isinstance(new_hosts, list):
+        return 400, {"error": "'hosts' must be a list"}
+    ok, err = validate_hosts_config({"hosts": new_hosts})
+    if not ok:
+        return 400, {"error": err}
+    try:
+        save_hosts_config(config_path, new_hosts)
+        logging.info(f"hosts.yaml updated via web: {len(new_hosts)} hosts")
+        host_manager.reload_from_config(new_hosts, settings.get("default_interval", 30))
+        return 200, {"ok": True, "count": len(new_hosts)}
+    except Exception as e:
+        logging.exception("Error saving hosts")
+        return 500, {"error": str(e)}
+
+
+def _h_post_auth_users(body: dict, auth_manager) -> tuple:
+    username = body.get("username", "")
+    password = body.get("password", "")
+    is_admin = bool(body.get("admin", False))
+    ok, err = auth_manager.create_user(username, password, admin=is_admin)
+    if not ok:
+        return 400, {"error": err}
+    return 200, {"ok": True}
+
+
+def _h_post_auth_password(body: dict, user: str, auth_manager) -> tuple:
+    current = body.get("current", "")
+    new_pw = body.get("new", "")
+    if not auth_manager.verify_password(user, current):
+        return 401, {"error": "current password is incorrect"}
+    ok, err = auth_manager.change_password(user, new_pw)
+    if not ok:
+        return 400, {"error": err}
+    return 200, {"ok": True}
+
+
+def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
+    username = path[len("/api/auth/users/"):]
+    if not username:
+        return 400, {"error": "username required"}
+    ok, err = auth_manager.delete_user(username)
+    if not ok:
+        return 400, {"error": err}
+    return 200, {"ok": True}
+
+
 def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html=""):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
@@ -3027,25 +3202,18 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             self.end_headers()
 
         def do_POST(self):
-            # ── Auth routes (always available; no _require_auth) ──────────
+            # Auth routes that set/clear cookies stay inline
             if self.path == "/api/auth/setup":
-                # First-run: create the first admin user. Allowed only when
-                # no users exist yet AND the request comes from localhost.
-                # The localhost requirement prevents anyone-on-the-network
-                # from claiming admin before you do.
                 if not auth_manager:
-                    self._send_json(400, {"error": "auth disabled"})
-                    return
+                    self._send_json(400, {"error": "auth disabled"}); return
                 client_ip = self._client_ip()
                 if client_ip not in ("127.0.0.1", "::1", "localhost"):
                     self._send_json(403, {
                         "error": "setup must be performed from localhost",
-                        "message": "First-run admin setup is restricted to localhost. SSH to the Pi and run: curl -X POST http://localhost:8080/api/auth/setup -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"...\"}'"
-                    })
-                    return
+                        "message": "SSH to the Pi and run: curl -X POST http://localhost:8080/api/auth/setup -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"...\"}'"
+                    }); return
                 if auth_manager.has_users:
-                    self._send_json(400, {"error": "setup already complete"})
-                    return
+                    self._send_json(400, {"error": "setup already complete"}); return
                 try:
                     length = int(self.headers.get("Content-Length", 0))
                     body = self.rfile.read(length).decode()
@@ -3054,9 +3222,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                     password = data.get("password", "")
                     ok, err = auth_manager.create_user(username, password, admin=True)
                     if not ok:
-                        self._send_json(400, {"error": err})
-                        return
-                    # Auto-login the new admin
+                        self._send_json(400, {"error": err}); return
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self._set_session_cookie(username)
@@ -3071,12 +3237,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
 
             if self.path == "/api/auth/login":
                 if not auth_manager:
-                    self._send_json(400, {"error": "auth disabled"})
-                    return
+                    self._send_json(400, {"error": "auth disabled"}); return
                 ip = self._client_ip()
                 if auth_manager.is_locked_out(ip):
-                    self._send_json(429, {"error": "too many failed attempts, try again in 15 minutes"})
-                    return
+                    self._send_json(429, {"error": "too many failed attempts, try again in 15 minutes"}); return
                 try:
                     length = int(self.headers.get("Content-Length", 0))
                     body = self.rfile.read(length).decode()
@@ -3114,199 +3278,74 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
 
             if self.path == "/api/inventory":
-                # Create a new inventory record (auth required)
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    inv_id, err = inventory_db.create(data)
-                    if err:
-                        self._send_json(400, {"error": err})
-                        return
-                    self._send_json(200, {"ok": True, "id": inv_id})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
-                except Exception as e:
-                    logging.exception("inventory create error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_inventory_create(data, inventory_db))
                 return
 
             if self.path.startswith("/api/inventory/") and self.path.endswith("/delete"):
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    parts = self.path.split("/")
-                    inv_id = int(parts[-2])
-                except (ValueError, IndexError):
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                ok, err = inventory_db.delete(inv_id)
-                if not ok:
-                    self._send_json(404, {"error": err})
-                    return
-                self._send_json(200, {"ok": True})
+                if not self._require_auth(): return
+                self._send_json(*_h_post_inventory_delete(self.path, inventory_db))
                 return
 
-            if (self.path.startswith("/api/inventory/")
-                    and self.path.endswith("/connections")):
-                # POST /api/inventory/<id>/connections - create
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    parts = self.path.split("/")
-                    inv_id = int(parts[-2])
-                except (ValueError, IndexError):
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    # Force the from_device_id to match the URL's inv_id so
-                    # clients can't spoof the source device.
-                    data["from_device_id"] = inv_id
-                    new_id, err = inventory_db.create_connection(data)
-                    if err:
-                        self._send_json(400, {"error": err})
-                        return
-                    self._send_json(200, {"ok": True, "id": new_id})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
-                except Exception as e:
-                    logging.exception("connection create error")
-                    self._send_json(500, {"error": str(e)})
+            if (self.path.startswith("/api/inventory/") and self.path.endswith("/connections")):
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_connection_create(self.path, data, inventory_db))
                 return
 
-            if (self.path.startswith("/api/connections/")
-                    and self.path.endswith("/delete")):
-                # DELETE-via-POST /api/connections/<id>/delete
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    parts = self.path.split("/")
-                    conn_id = int(parts[-2])
-                except (ValueError, IndexError):
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                ok, err = inventory_db.delete_connection(conn_id)
-                if not ok:
-                    self._send_json(404, {"error": err})
-                    return
-                self._send_json(200, {"ok": True})
+            if (self.path.startswith("/api/connections/") and self.path.endswith("/delete")):
+                if not self._require_auth(): return
+                self._send_json(*_h_post_connection_delete(self.path, inventory_db))
                 return
 
             if self.path.startswith("/api/connections/"):
-                # POST /api/connections/<id> - update fields
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    conn_id = int(self.path.split("/")[-1])
-                except ValueError:
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    ok, err = inventory_db.update_connection(conn_id, data)
-                    if not ok:
-                        self._send_json(400, {"error": err})
-                        return
-                    self._send_json(200, {"ok": True})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
-                except Exception as e:
-                    logging.exception("connection update error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_connection_update(self.path, data, inventory_db))
                 return
 
             if self.path.startswith("/api/inventory/"):
-                # Update existing record - POST /api/inventory/<id>
-                if not self._require_auth():
-                    return
-                if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
-                try:
-                    inv_id = int(self.path.split("/")[-1])
-                except ValueError:
-                    self._send_json(400, {"error": "invalid id"})
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    ok, err = inventory_db.update(inv_id, data)
-                    if not ok:
-                        self._send_json(400, {"error": err})
-                        return
-                    self._send_json(200, {"ok": True})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
-                except Exception as e:
-                    logging.exception("inventory update error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_inventory_update(self.path, data, inventory_db))
                 return
 
             if self.path == "/api/inventory-import":
-                # Multipart upload of an xlsx
-                if not self._require_auth():
-                    return
+                if not self._require_auth(): return
                 if not inventory_db:
-                    self._send_json(500, {"error": "inventory not available"})
-                    return
+                    self._send_json(500, {"error": "inventory not available"}); return
                 try:
                     ctype = self.headers.get("Content-Type", "")
                     length = int(self.headers.get("Content-Length", 0))
                     if length > 10 * 1024 * 1024:
-                        self._send_json(400, {"error": "file too large (10MB max)"})
-                        return
+                        self._send_json(400, {"error": "file too large (10MB max)"}); return
                     body = self.rfile.read(length)
-                    # Parse multipart manually - we expect ONE file part named "file"
                     if "multipart/form-data" not in ctype:
-                        self._send_json(400, {"error": "expected multipart/form-data"})
-                        return
+                        self._send_json(400, {"error": "expected multipart/form-data"}); return
                     boundary = None
                     for part in ctype.split(";"):
                         part = part.strip()
                         if part.startswith("boundary="):
                             boundary = part[9:].strip('"')
                     if not boundary:
-                        self._send_json(400, {"error": "missing boundary"})
-                        return
+                        self._send_json(400, {"error": "missing boundary"}); return
                     delimiter = ("--" + boundary).encode()
                     parts = body.split(delimiter)
                     file_bytes = None
                     mode = "add"
                     for p in parts:
-                        if not p or p == b"--" or p.strip() == b"--\r\n" or p.strip() == b"":
+                        if not p or p == b"--" or p.strip() in (b"--\r\n", b""):
                             continue
-                        # Each part: headers + \r\n\r\n + content + trailing \r\n
                         sep = p.find(b"\r\n\r\n")
-                        if sep < 0:
-                            continue
+                        if sep < 0: continue
                         headers_blob = p[:sep].decode("latin-1", errors="replace")
                         content = p[sep + 4:]
-                        if content.endswith(b"\r\n"):
-                            content = content[:-2]
-                        # Parse Content-Disposition to get name
+                        if content.endswith(b"\r\n"): content = content[:-2]
                         name = None
                         for hline in headers_blob.split("\r\n"):
                             if hline.lower().startswith("content-disposition"):
@@ -3314,44 +3353,31 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                                     piece = piece.strip()
                                     if piece.startswith("name="):
                                         name = piece[5:].strip('"')
-                        if name == "file":
-                            file_bytes = content
+                        if name == "file": file_bytes = content
                         elif name == "mode":
                             try:
                                 mode = content.decode().strip()
-                                if mode not in ("add", "replace"):
-                                    mode = "add"
-                            except Exception:
-                                mode = "add"
+                                if mode not in ("add", "replace"): mode = "add"
+                            except Exception: mode = "add"
                     if file_bytes is None:
-                        self._send_json(400, {"error": "no file uploaded"})
-                        return
+                        self._send_json(400, {"error": "no file uploaded"}); return
                     added, skipped, errors = import_inventory_from_xlsx(inventory_db, file_bytes, mode=mode)
-                    self._send_json(200, {
-                        "ok":      True,
-                        "added":   added,
-                        "skipped": skipped,
-                        "errors":  errors[:20],  # cap to 20
-                        "mode":    mode,
-                    })
+                    self._send_json(200, {"ok": True, "added": added, "skipped": skipped,
+                                          "errors": errors[:20], "mode": mode})
                 except Exception as e:
                     logging.exception("inventory import error")
                     self._send_json(500, {"error": str(e)})
                 return
 
             if self.path == "/api/backup":
-                # Bundle entire netwatch state into a tar.gz and stream it back.
-                # Admin-only because the bundle contains auth.json (password hashes).
-                if not self._require_auth(admin_only=True):
-                    return
+                if not self._require_auth(admin_only=True): return
                 try:
                     auth_path_local = auth_manager.path if auth_manager else None
                     data, filename, manifest = create_backup_tarball(config_path, auth_path_local)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/gzip")
                     self.send_header("Content-Length", str(len(data)))
-                    self.send_header("Content-Disposition",
-                                     f'attachment; filename="{filename}"')
+                    self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
                     self.send_header("X-Netwatch-Backup-Version", str(manifest["manifest_version"]))
                     self.send_header("X-Netwatch-Source", manifest["source_hostname"])
                     self.end_headers()
@@ -3363,173 +3389,51 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
 
             if self.path == "/api/auth/users":
-                # Create a new user (admin only)
-                if not self._require_auth(admin_only=True):
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    username = data.get("username", "")
-                    password = data.get("password", "")
-                    is_admin = bool(data.get("admin", False))
-                    ok, err = auth_manager.create_user(username, password, admin=is_admin)
-                    if not ok:
-                        self._send_json(400, {"error": err})
-                        return
-                    self._send_json(200, {"ok": True})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_auth_users(data, auth_manager))
                 return
 
             if self.path == "/api/auth/password":
-                # Change current user's password
-                if not self._require_auth():
-                    return
+                if not self._require_auth(): return
                 user, _ = self._current_user()
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    current = data.get("current", "")
-                    new_pw = data.get("new", "")
-                    if not auth_manager.verify_password(user, current):
-                        self._send_json(401, {"error": "current password is incorrect"})
-                        return
-                    ok, err = auth_manager.change_password(user, new_pw)
-                    if not ok:
-                        self._send_json(400, {"error": err})
-                        return
-                    self._send_json(200, {"ok": True})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_auth_password(data, user, auth_manager))
                 return
 
             if self.path.startswith("/api/auth/users/"):
-                # DELETE /api/auth/users/<username>  (admin only)
-                # We accept POST with method=delete since BaseHTTPRequestHandler
-                # is awkward with DELETE; simpler is fine for a homelab.
-                if not self._require_auth(admin_only=True):
-                    return
-                username = self.path[len("/api/auth/users/"):]
-                if not username:
-                    self._send_json(400, {"error": "username required"})
-                    return
-                ok, err = auth_manager.delete_user(username)
-                if not ok:
-                    self._send_json(400, {"error": err})
-                    return
-                self._send_json(200, {"ok": True})
+                if not self._require_auth(admin_only=True): return
+                self._send_json(*_h_post_auth_user_delete(self.path, auth_manager))
                 return
 
             if self.path == "/api/discover":
-                if not self._require_auth():
-                    return
-                try:
-                    started, msg = start_discovery_scan()
-                    if started:
-                        self._send_json(200, {"ok": True, "message": msg})
-                    else:
-                        self._send_json(400, {"error": msg})
-                except Exception as e:
-                    logging.exception("Error starting discovery scan")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                self._send_json(*_h_post_discover())
                 return
 
             if self.path == "/api/detect-mac":
-                # On-demand ARP lookup for an IP. Used by the "Detect" button
-                # in the host editor. Auth required since this is editor-side.
-                if not self._require_auth():
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    ip = (data.get("ip") or "").strip()
-                    if not ip:
-                        self._send_json(400, {"error": "ip required"})
-                        return
-                    mac = _detect_mac_for_ip(ip)
-                    if mac:
-                        self._send_json(200, {"ok": True, "mac": mac})
-                    else:
-                        self._send_json(404, {"error": "not in ARP cache (host may be offline or not yet pinged)"})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
-                except Exception as e:
-                    logging.exception("detect-mac error")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_detect_mac(data))
                 return
 
             if self.path == "/api/wake":
-                if not self._require_auth():
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    target_ip = data.get("ip", "").strip()
-                    if not target_ip:
-                        self._send_json(400, {"error": "ip is required"})
-                        return
-                    target_host = next((h for h in host_manager.list_hosts() if h.ip == target_ip), None)
-                    if not target_host:
-                        self._send_json(404, {"error": "Host not found"})
-                        return
-                    mac = (target_host.specs or {}).get("mac", "")
-                    if not mac and inventory_db:
-                        # Fallback: the monitored host has no MAC, but the
-                        # matching inventory record might. Look it up by IP.
-                        try:
-                            inv_records = inventory_db.list_all()
-                            for rec in inv_records:
-                                if rec.get("ip") == target_ip and rec.get("mac"):
-                                    mac = rec["mac"]
-                                    logging.info("WoL: using MAC from inventory record %s for %s",
-                                                 rec.get("id"), target_ip)
-                                    break
-                        except Exception as e:
-                            logging.warning("WoL inventory MAC lookup failed: %s", e)
-                    if not mac:
-                        self._send_json(400, {"error": "No MAC address configured for this host (in hosts.yaml or inventory)"})
-                        return
-                    ok, err = send_wol_packet(mac)
-                    if ok:
-                        self._send_json(200, {"ok": True, "message": f"Magic packet sent to {mac}"})
-                    else:
-                        self._send_json(500, {"error": err or "Failed to send magic packet"})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "Invalid JSON"})
-                except Exception as e:
-                    logging.exception("Error in /api/wake")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_wake(data, host_manager, inventory_db))
                 return
 
             if self.path == "/api/hosts":
-                if not self._require_auth():
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
-                    new_hosts = data.get("hosts", [])
-                    if not isinstance(new_hosts, list):
-                        self._send_json(400, {"error": "'hosts' must be a list"})
-                        return
-                    ok, err = validate_hosts_config({"hosts": new_hosts})
-                    if not ok:
-                        self._send_json(400, {"error": err})
-                        return
-                    save_hosts_config(config_path, new_hosts)
-                    logging.info(f"hosts.yaml updated via web: {len(new_hosts)} hosts")
-                    host_manager.reload_from_config(new_hosts, settings.get("default_interval", 30))
-                    self._send_json(200, {"ok": True, "count": len(new_hosts)})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "Invalid JSON"})
-                except Exception as e:
-                    logging.exception("Error saving hosts")
-                    self._send_json(500, {"error": str(e)})
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_hosts(data, config_path, host_manager, settings))
                 return
+
             self.send_response(404)
             self.end_headers()
 
