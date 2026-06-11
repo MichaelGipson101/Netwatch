@@ -7,6 +7,9 @@ netwatch.db
 netwatch.db-shm
 netwatch.db-wal
 
+# Rotating app log (monitor.log, monitor.log.1, ...)
+monitor.log*
+
 # Backup files from the patch chain
 *.bak
 *.bak_*
