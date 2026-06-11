@@ -700,6 +700,7 @@ def save_hosts_config(path, new_hosts):
     tmp_path = path + ".tmp"
     with open(tmp_path, "w") as f:
         yaml.safe_dump(new_config, f, sort_keys=False, default_flow_style=False)
+    os.chmod(tmp_path, 0o600)  # hosts.yaml carries the OpenRouter key + ntfy topic
     os.replace(tmp_path, path)
 
 
@@ -2175,6 +2176,7 @@ def _save_detected_mac(config_path, host_ip, detected_mac):
             import yaml
             with open(tmp, "w") as f:
                 yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+            os.chmod(tmp, 0o600)  # hosts.yaml carries the OpenRouter key + ntfy topic
             os.replace(tmp, config_path)
             logging.info(f"ARP detect: saved MAC {detected_mac} for {host_ip}")
             return True
@@ -3161,19 +3163,27 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             On success: (parsed_dict, None).
             On error: (None, True) and an HTTP error response has been written.
             """
-            length = int(self.headers.get("Content-Length", 0))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "invalid Content-Length"})
+                return None, True
             if length > max_bytes:
                 self._send_json(413, {"error": f"request body too large (max {max_bytes} bytes)"})
                 return None, True
             try:
                 body = self.rfile.read(length).decode()
-                return json.loads(body), None
+                data = json.loads(body)
             except json.JSONDecodeError:
                 self._send_json(400, {"error": "invalid JSON"})
                 return None, True
             except (UnicodeDecodeError, ValueError):
                 self._send_json(400, {"error": "invalid request body"})
                 return None, True
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "expected a JSON object"})
+                return None, True
+            return data, None
 
         def _send_json(self, code, obj):
             body = json.dumps(obj).encode()
@@ -3511,7 +3521,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
 
             if self.path == "/api/hosts":
-                if not self._require_auth(): return
+                if not self._require_auth(admin_only=True): return
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_hosts(data, config_path, host_manager, settings))

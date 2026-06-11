@@ -775,3 +775,58 @@ def test_api_payload_settings_allowlist():
     payload = build_api_payload(_FakeHM(), settings)
     assert payload["settings"] == {"default_interval": 15, "refresh_rate": 5}
     assert "openrouter_api_key" not in payload["settings"]
+
+
+# ── Config write hardening ───────────────────────────────────────────────────
+
+def test_save_hosts_config_sets_0600(tmp_path):
+    from monitor import save_hosts_config
+    path = str(tmp_path / "hosts.yaml")
+    save_hosts_config(path, [{"name": "a", "ip": "10.0.0.1"}])
+    assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def _auth_test_server(auth):
+    """One-request test server with auth enabled. Returns (server, port, thread)."""
+    handler = make_handler(None, {}, "/dev/null", auth_manager=auth)
+    server = _THTS(("127.0.0.1", 0), handler)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    return server, server.server_address[1], t
+
+
+def test_post_hosts_requires_admin(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    auth.create_user("bob", "password123")
+    server, port, t = _auth_test_server(auth)
+    try:
+        cookie = auth.make_session_cookie("bob")
+        req = _urlreq.Request(f"http://127.0.0.1:{port}/api/hosts", data=b'{"hosts": []}',
+                              method="POST", headers={"Cookie": f"nw_session={cookie}"})
+        try:
+            _urlreq.urlopen(req)
+            assert False, "expected 403"
+        except _urlerr.HTTPError as e:
+            assert e.code == 403
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_non_dict_json_body_rejected(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    server, port, t = _auth_test_server(auth)
+    try:
+        cookie = auth.make_session_cookie("root")
+        req = _urlreq.Request(f"http://127.0.0.1:{port}/api/hosts", data=b'[1,2,3]',
+                              method="POST", headers={"Cookie": f"nw_session={cookie}"})
+        try:
+            _urlreq.urlopen(req)
+            assert False, "expected 400"
+        except _urlerr.HTTPError as e:
+            assert e.code == 400
+    finally:
+        server.server_close()
+        t.join()
