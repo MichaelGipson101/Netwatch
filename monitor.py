@@ -1027,6 +1027,17 @@ class HistoryDB:
     CREATE INDEX IF NOT EXISTS idx_incidents_host ON incidents(host_ip);
     CREATE INDEX IF NOT EXISTS idx_incidents_started ON incidents(started);
     CREATE INDEX IF NOT EXISTS idx_incidents_ended ON incidents(ended);
+
+    CREATE TABLE IF NOT EXISTS ping_daily (
+        day          TEXT NOT NULL,
+        host_ip      TEXT NOT NULL,
+        total        INTEGER NOT NULL,
+        up           INTEGER NOT NULL,
+        latency_avg  REAL,
+        latency_min  REAL,
+        latency_max  REAL,
+        PRIMARY KEY (day, host_ip)
+    );
     """
 
     FLUSH_MAX = 200          # safety flush if the 30s flusher falls behind
@@ -1157,6 +1168,49 @@ class HistoryDB:
             for r in rows
         ]
         return {"bucket_seconds": bucket, "points": points}
+
+    # ── Daily rollups ───────────────────────────────────────────────────────
+
+    def rollup_days(self):
+        """Aggregate complete (past, local-time) days into ping_daily.
+        Idempotent (INSERT OR REPLACE re-rolls partial days). Runs daily
+        from _prune_loop, BEFORE prune deletes the raw rows. ~29 rows/day,
+        kept forever — months of uptime trends for pennies of storage."""
+        with self.lock:
+            self._flush_pings_locked()
+            cur = self.conn.execute(
+                "INSERT OR REPLACE INTO ping_daily "
+                "(day, host_ip, total, up, latency_avg, latency_min, latency_max) "
+                "SELECT date(timestamp, 'unixepoch', 'localtime'), host_ip, "
+                "COUNT(*), SUM(is_up), AVG(latency_ms), MIN(latency_ms), MAX(latency_ms) "
+                "FROM pings "
+                "WHERE date(timestamp, 'unixepoch', 'localtime') < date('now', 'localtime') "
+                "GROUP BY date(timestamp, 'unixepoch', 'localtime'), host_ip"
+            )
+            n = cur.rowcount
+        if n:
+            logging.info(f"HistoryDB: rolled up {n} host-day row(s)")
+        return n
+
+    def daily_history(self, host_ip, days=60):
+        """Daily uptime/latency rollups for a host, oldest first."""
+        days = max(1, min(int(days), 365))
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT day, total, up, latency_avg, latency_min, latency_max "
+                "FROM ping_daily WHERE host_ip = ? AND day >= date('now', 'localtime', ?) "
+                "ORDER BY day",
+                (host_ip, f"-{days} days"),
+            )
+            rows = cur.fetchall()
+        return [
+            {"day": r[0], "total": r[1], "up": r[2],
+             "uptime_pct": round(r[2] / r[1] * 100, 2) if r[1] else None,
+             "latency_avg": round(r[3], 2) if r[3] is not None else None,
+             "latency_min": round(r[4], 2) if r[4] is not None else None,
+             "latency_max": round(r[5], 2) if r[5] is not None else None}
+            for r in rows
+        ]
 
     # ── Incidents ───────────────────────────────────────────────────────────
 
@@ -1316,6 +1370,10 @@ def _prune_loop(history_db, stop_event):
     elapsed = SECONDS_PER_DAY - 60
     while not stop_event.is_set():
         if elapsed >= SECONDS_PER_DAY:
+            try:
+                history_db.rollup_days()
+            except Exception as e:
+                logging.warning(f"HistoryDB rollup failed: {e}")
             try:
                 history_db.prune()
             except Exception as e:
@@ -2981,11 +3039,16 @@ def _h_get_history(path: str, history_db) -> tuple:
     except ValueError:
         return 400, {"error": "hours must be an integer"}
     try:
+        days = max(1, min(int(qs.get("days", ["60"])[0]), 365))
+    except ValueError:
+        return 400, {"error": "days must be an integer"}
+    try:
         series = history_db.history_series(ip, hours=hours)
+        daily = history_db.daily_history(ip, days=days)
     except Exception as e:
         logging.exception("history fetch error")
         return 500, {"error": str(e)}
-    return 200, {"ip": ip, "hours": hours, **series}
+    return 200, {"ip": ip, "hours": hours, **series, "daily": daily}
 
 
 def _h_post_inventory_create(body: dict, inventory_db) -> tuple:

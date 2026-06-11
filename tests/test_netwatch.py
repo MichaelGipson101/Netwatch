@@ -875,3 +875,46 @@ def test_h_get_history_returns_points(tmp_path):
     assert body["ip"] == "10.0.0.1"
     assert sum(p["n"] for p in body["points"]) == 1
     hdb.close()
+
+
+# ── Daily uptime rollups ─────────────────────────────────────────────────────
+
+def _insert_ping(hdb, ip, ts, up, lat):
+    hdb.conn.execute("INSERT INTO pings (host_ip, timestamp, is_up, latency_ms) VALUES (?,?,?,?)",
+                     (ip, ts, 1 if up else 0, lat))
+
+
+def test_rollup_aggregates_complete_days_only(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    now = int(time.time())
+    _insert_ping(hdb, "10.0.0.1", now - 86400, True, 10.0)   # yesterday
+    _insert_ping(hdb, "10.0.0.1", now - 86400 + 60, False, None)
+    _insert_ping(hdb, "10.0.0.1", now, True, 5.0)            # today: excluded
+    hdb.rollup_days()
+    rows = hdb.conn.execute("SELECT day, total, up, latency_avg FROM ping_daily").fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == 2 and rows[0][2] == 1 and rows[0][3] == 10.0
+    hdb.close()
+
+
+def test_rollup_is_idempotent(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    _insert_ping(hdb, "10.0.0.1", int(time.time()) - 86400, True, 10.0)
+    hdb.rollup_days(); hdb.rollup_days()
+    assert hdb.conn.execute("SELECT COUNT(*) FROM ping_daily").fetchone()[0] == 1
+    hdb.close()
+
+
+def test_daily_history_survives_prune(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
+    old = int(time.time()) - 8 * 86400
+    _insert_ping(hdb, "10.0.0.1", old, True, 10.0)
+    hdb.rollup_days()
+    hdb.prune()  # deletes the raw ping
+    assert hdb.conn.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 0
+    daily = hdb.daily_history("10.0.0.1", days=30)
+    assert len(daily) == 1 and daily[0]["uptime_pct"] == 100.0
+    hdb.close()
