@@ -918,3 +918,13 @@ def test_daily_history_survives_prune(tmp_path):
     daily = hdb.daily_history("10.0.0.1", days=30)
     assert len(daily) == 1 and daily[0]["uptime_pct"] == 100.0
     hdb.close()
+
+
+# ── Static asset cache busting ───────────────────────────────────────────────
+
+def test_dashboard_html_version_substitution(tmp_path):
+    from monitor import _load_dashboard_html, VERSION
+    (tmp_path / "dashboard.html").write_text('<script src="/static/core.js?v={{VERSION}}"></script>')
+    out = _load_dashboard_html(str(tmp_path))
+    assert "{{VERSION}}" not in out
+    assert f"?v={VERSION}" in out

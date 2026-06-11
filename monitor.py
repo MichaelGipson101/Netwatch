@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.37"
+VERSION = "3.38"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -2774,7 +2774,8 @@ def get_discovery_state():
 def _load_dashboard_html(base_dir):
     path = os.path.join(base_dir, "dashboard.html")
     with open(path, encoding="utf-8") as f:
-        return f.read()
+        # {{VERSION}} markers cache-bust the /static/ asset URLs on upgrades
+        return f.read().replace("{{VERSION}}", VERSION)
 
 
 
@@ -3313,6 +3314,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", len(body))
+                self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -3329,6 +3331,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                     self.send_response(200)
                     self.send_header('Content-Type', _STATIC_FILES[fname])
                     self.send_header('Content-Length', len(body))
+                    # URLs carry ?v={VERSION}, so a day of caching is safe
+                    self.send_header('Cache-Control', 'public, max-age=86400')
                     self.end_headers()
                     self.wfile.write(body)
                 except FileNotFoundError:
