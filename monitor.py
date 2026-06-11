@@ -1127,6 +1127,37 @@ class HistoryDB:
             return None
         return (bool(row[0]), row[1], row[2])
 
+    def history_series(self, host_ip, hours=24, target_points=180):
+        """Bucketed latency/uptime series for charting, oldest first.
+
+        Buckets are aligned absolute-time windows of span/target_points
+        (min 60s). avg/min/max ignore down pings (NULL latency); up_pct is
+        the fraction of up pings in the bucket."""
+        hours = max(1, min(int(hours), 168))
+        span = hours * 3600
+        bucket = max(60, span // target_points)
+        since = int(time.time()) - span
+        with self.lock:
+            self._flush_pings_locked()
+            cur = self.conn.execute(
+                "SELECT (timestamp / ?) * ? AS bucket_ts, "
+                "AVG(latency_ms), MIN(latency_ms), MAX(latency_ms), AVG(is_up), COUNT(*) "
+                "FROM pings WHERE host_ip = ? AND timestamp >= ? "
+                "GROUP BY bucket_ts ORDER BY bucket_ts",
+                (bucket, bucket, host_ip, since),
+            )
+            rows = cur.fetchall()
+        points = [
+            {"t": r[0],
+             "avg": round(r[1], 2) if r[1] is not None else None,
+             "min": round(r[2], 2) if r[2] is not None else None,
+             "max": round(r[3], 2) if r[3] is not None else None,
+             "up_pct": round((r[4] or 0) * 100, 1),
+             "n": r[5]}
+            for r in rows
+        ]
+        return {"bucket_seconds": bucket, "points": points}
+
     # ── Incidents ───────────────────────────────────────────────────────────
 
     def open_incident(self, host_ip, host_name, host_group):
@@ -2937,6 +2968,26 @@ def _h_get_discover(config_path: str) -> tuple:
         return 500, {"error": str(e)}
 
 
+def _h_get_history(path: str, history_db) -> tuple:
+    if history_db is None:
+        return 500, {"error": "history not available"}
+    from urllib.parse import urlparse, parse_qs
+    qs = parse_qs(urlparse(path).query)
+    ip = (qs.get("ip", [""])[0] or "").strip()
+    if not ip:
+        return 400, {"error": "ip required"}
+    try:
+        hours = max(1, min(int(qs.get("hours", ["24"])[0]), 168))
+    except ValueError:
+        return 400, {"error": "hours must be an integer"}
+    try:
+        series = history_db.history_series(ip, hours=hours)
+    except Exception as e:
+        logging.exception("history fetch error")
+        return 500, {"error": str(e)}
+    return 200, {"ip": ip, "hours": hours, **series}
+
+
 def _h_post_inventory_create(body: dict, inventory_db) -> tuple:
     if not inventory_db:
         return 500, {"error": "inventory not available"}
@@ -3112,7 +3163,7 @@ def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
     return 200, {"ok": True}
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html=""):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -3290,6 +3341,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/discover":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_discover(config_path))
+                return
+            if self.path.startswith("/api/history"):
+                if not self._require_auth(): return
+                self._send_json(*_h_get_history(self.path, history_db))
                 return
             self.send_response(404)
             self.end_headers()
@@ -3533,8 +3588,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html=""):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
@@ -3820,7 +3875,7 @@ def main():
         web_settings = {**settings, "default_interval": default_interval}
         wt = threading.Thread(
             target=start_web_server,
-            args=(host_manager, web_settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html),
+            args=(host_manager, web_settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
             daemon=True
         )
         wt.start()

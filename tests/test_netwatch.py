@@ -830,3 +830,48 @@ def test_non_dict_json_body_rejected(tmp_path):
     finally:
         server.server_close()
         t.join()
+
+
+# ── /api/history: bucketed latency series ────────────────────────────────────
+
+def test_history_series_buckets_and_aggregates(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    now = int(time.time())
+    rows = [("10.0.0.1", now - 30, 1, 10.0), ("10.0.0.1", now - 20, 1, 20.0),
+            ("10.0.0.1", now - 10, 0, None), ("10.0.0.2", now - 10, 1, 99.0)]
+    hdb.conn.executemany("INSERT INTO pings (host_ip, timestamp, is_up, latency_ms) VALUES (?,?,?,?)", rows)
+    res = hdb.history_series("10.0.0.1", hours=1)
+    assert res["bucket_seconds"] == 60  # 3600s / 180 points -> min clamp 60
+    assert sum(p["n"] for p in res["points"]) == 3
+    assert max(p["max"] for p in res["points"] if p["max"] is not None) == 20.0
+    assert min(p["min"] for p in res["points"] if p["min"] is not None) == 10.0
+    hdb.close()
+
+
+def test_history_series_clamps_hours(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    assert hdb.history_series("10.0.0.1", hours=9999)["points"] == []
+    hdb.close()
+
+
+def test_h_get_history_requires_ip(tmp_path):
+    from monitor import HistoryDB, _h_get_history
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    code, body = _h_get_history("/api/history", hdb)
+    assert code == 400
+    code, body = _h_get_history("/api/history?ip=10.0.0.1&hours=abc", hdb)
+    assert code == 400
+    hdb.close()
+
+
+def test_h_get_history_returns_points(tmp_path):
+    from monitor import HistoryDB, _h_get_history
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hdb.record_ping("10.0.0.1", True, 12.0)
+    code, body = _h_get_history("/api/history?ip=10.0.0.1&hours=1", hdb)
+    assert code == 200
+    assert body["ip"] == "10.0.0.1"
+    assert sum(p["n"] for p in body["points"]) == 1
+    hdb.close()
