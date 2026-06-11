@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-netwatch v2.2 - Homelab ping monitor with btop-style TUI, web dashboard,
-and web-based hosts.yaml editor.
+netwatch - Homelab ping monitor with btop-style TUI, web dashboard,
+and web-based hosts.yaml editor. (Version: see VERSION below.)
 
 Usage:
     python monitor.py                  # TUI + web server

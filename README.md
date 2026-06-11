@@ -21,6 +21,7 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, and ser
 - Continuous ICMP ping with configurable intervals and timeouts
 - Up / Down / Idle / Degraded / Pending status per host
 - Uptime percentage tracked with sparkbar visualization
+- Latency history charts (1h-7d) and 60-day daily uptime strip per host
 - Incident log with timestamps and duration
 - Push alerts via [ntfy](https://ntfy.sh)
 
@@ -61,8 +62,9 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, and ser
 
 **Security**
 - Session-based auth (login required for all routes and API)
+- Sessions invalidated on user deletion and password change
 - Brute-force lockout — persists across restarts via SQLite
-- HTTP access logging to `monitor.log`
+- Rotating `monitor.log` (10MB × 3) records status transitions and warnings
 
 ---
 
@@ -136,15 +138,17 @@ HTTP access log: `tail -f monitor.log`
 ## Files
 
 ```
-monitor.py          — entire application (~8,600 lines)
-dashboard.html      — frontend (served inline by the Python server)
+monitor.py          — application core (~3,900 lines)
+dashboard.html      — frontend shell (served by the Python server)
+static/             — dashboard CSS/JS (main.css, core.js, topology.js, ...)
 hosts.yaml          — host list (ping targets)
 hosts.yaml.example  — template
 tests/              — pytest suite
 docs/               — design specs and implementation plans
 ```
 
-Data is stored in `~/.config/netwatch/` (SQLite: ping history, inventory, auth).
+Data is stored next to `monitor.py`: `netwatch.db` (ping history, daily rollups,
+inventory, login lockouts), `auth.json` (users), `monitor.log` (rotating).
 
 ---
 
