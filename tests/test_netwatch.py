@@ -759,3 +759,19 @@ def test_legacy_two_part_cookie_rejected():
         sig = _hmac.new(secret, payload.encode(), _hashlib.sha256).hexdigest()
         token = _b64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
         assert auth.verify_session_cookie(f"{token}.{sig}") == (None, False)
+
+
+# ── /api/status settings allowlist ───────────────────────────────────────────
+
+def test_api_payload_settings_allowlist():
+    from monitor import build_api_payload
+
+    class _FakeHM:
+        def list_hosts(self):
+            return []
+
+    settings = {"default_interval": 15, "openrouter_api_key": "sk-secret",
+                "ntfy_topic": "secret-topic", "refresh_rate": 5}
+    payload = build_api_payload(_FakeHM(), settings)
+    assert payload["settings"] == {"default_interval": 15, "refresh_rate": 5}
+    assert "openrouter_api_key" not in payload["settings"]

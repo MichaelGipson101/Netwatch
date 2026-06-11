@@ -2747,13 +2747,19 @@ def build_topology_payload(inventory_db, host_manager):
     return {"nodes": nodes, "edges": edges}
 
 
+# Settings keys safe to expose via /api/status. Everything else (API keys,
+# ntfy topic) stays server-side; the AI panel uses /api/ai-config instead.
+SETTINGS_PUBLIC_KEYS = ("default_interval", "ping_timeout", "history_window",
+                        "refresh_rate", "history_days")
+
+
 def build_api_payload(host_manager, settings, incident_log=None, inventory_db=None):
     hosts = host_manager.list_hosts()
     events = incident_log.list_incidents() if incident_log else []
     device_types = inventory_db.get_device_type_map() if inventory_db else {}
     return {
         "generated": datetime.now().isoformat(),
-        "settings":  settings,
+        "settings":  {k: settings[k] for k in SETTINGS_PUBLIC_KEYS if k in settings},
         "summary": {
             "total":   len(hosts),
             "up":      sum(1 for h in hosts if h.is_up),
