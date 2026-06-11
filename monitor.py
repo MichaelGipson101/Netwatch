@@ -867,6 +867,7 @@ class AuthManager:
             salt, pwhash = self._hash_password(new_password)
             user["salt"] = salt
             user["hash"] = pwhash
+            user["session_gen"] = int(user.get("session_gen", 0)) + 1
             self._save()
         return True, None
 
@@ -937,22 +938,29 @@ class AuthManager:
 
     def make_session_cookie(self, username):
         expiry = int(time.time()) + self.SESSION_DAYS * 86400
-        payload = f"{username}|{expiry}"
+        with self.lock:
+            user = self.data["users"].get(username, {})
+            gen = int(user.get("session_gen", 0))
+        payload = f"{username}|{expiry}|{gen}"
         secret = self.data["secret_key"].encode()
         sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
         token = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
         return f"{token}.{sig}"
 
     def verify_session_cookie(self, cookie_value):
-        """Return (username, admin_bool) if valid, or (None, False)."""
+        """Return (username, admin_bool) if valid, or (None, False).
+
+        The payload carries a per-user session generation; bumping it on
+        password change (or deleting the user) invalidates old cookies."""
         if not cookie_value or "." not in cookie_value:
             return None, False
         try:
             token, sig = cookie_value.rsplit(".", 1)
             padded = token + "=" * (-len(token) % 4)
             payload = base64.urlsafe_b64decode(padded.encode()).decode()
-            username, expiry_s = payload.rsplit("|", 1)
+            username, expiry_s, gen_s = payload.split("|")
             expiry = int(expiry_s)
+            gen = int(gen_s)
         except (ValueError, UnicodeDecodeError, base64.binascii.Error):
             return None, False
         if expiry < time.time():
@@ -961,7 +969,11 @@ class AuthManager:
         expected = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, sig):
             return None, False
-        return username, self.is_admin(username)
+        with self.lock:
+            user = self.data["users"].get(username)
+            if not user or int(user.get("session_gen", 0)) != gen:
+                return None, False
+            return username, bool(user.get("admin"))
 
 
 def parse_cookies(cookie_header):

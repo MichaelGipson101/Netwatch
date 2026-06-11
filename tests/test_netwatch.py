@@ -722,3 +722,40 @@ def test_close_flushes_buffer(tmp_path):
     other = sqlite3.connect(db_path)
     assert other.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 1
     other.close()
+
+
+# ── Session invalidation ─────────────────────────────────────────────────────
+
+def test_deleted_user_cookie_rejected():
+    with tempfile.TemporaryDirectory() as td:
+        auth = _make_auth(td)
+        auth.create_user("alice", "password123", admin=True)
+        auth.create_user("bob", "password123")
+        cookie = auth.make_session_cookie("bob")
+        assert auth.verify_session_cookie(cookie)[0] == "bob"
+        auth.delete_user("bob")
+        assert auth.verify_session_cookie(cookie) == (None, False)
+
+
+def test_password_change_invalidates_old_sessions():
+    with tempfile.TemporaryDirectory() as td:
+        auth = _make_auth(td)
+        auth.create_user("alice", "password123", admin=True)
+        old_cookie = auth.make_session_cookie("alice")
+        assert auth.verify_session_cookie(old_cookie)[0] == "alice"
+        auth.change_password("alice", "newpassword456")
+        assert auth.verify_session_cookie(old_cookie) == (None, False)
+        new_cookie = auth.make_session_cookie("alice")
+        assert auth.verify_session_cookie(new_cookie) == ("alice", True)
+
+
+def test_legacy_two_part_cookie_rejected():
+    import hmac as _hmac, hashlib as _hashlib, base64 as _b64
+    with tempfile.TemporaryDirectory() as td:
+        auth = _make_auth(td)
+        auth.create_user("alice", "password123", admin=True)
+        payload = f"alice|{int(time.time()) + 3600}"  # old format: no generation
+        secret = auth.data["secret_key"].encode()
+        sig = _hmac.new(secret, payload.encode(), _hashlib.sha256).hexdigest()
+        token = _b64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+        assert auth.verify_session_cookie(f"{token}.{sig}") == (None, False)
