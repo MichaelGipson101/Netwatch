@@ -1026,6 +1026,9 @@ class HistoryDB:
         self.conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        # Cap the WAL file: without this SQLite never shrinks the -wal file
+        # below its high-water mark (it hit 226MB via daily VACUUM).
+        self.conn.execute("PRAGMA journal_size_limit=16777216")  # 16MB
         self.conn.executescript(self.SCHEMA)
         if not _column_exists(self.conn, "incidents", "alert_sent"):
             self.conn.execute("ALTER TABLE incidents ADD COLUMN alert_sent INTEGER DEFAULT 0")
@@ -1201,7 +1204,11 @@ class HistoryDB:
                 "DELETE FROM incidents WHERE ended IS NOT NULL AND ended < ?", (cutoff,)
             )
             incidents_deleted = r2.rowcount
-            self.conn.execute("VACUUM")
+            # No VACUUM: with fixed retention the DB is steady-state and
+            # freed pages get reused. Daily VACUUM rewrote the whole DB
+            # through the WAL (~300MB/day of SD writes) for nothing.
+            # Manual reclaim if ever needed: sqlite3 netwatch.db VACUUM.
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         if pings_deleted or incidents_deleted:
             logging.info(
                 f"HistoryDB: pruned {pings_deleted} pings, "

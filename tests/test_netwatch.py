@@ -653,3 +653,26 @@ def test_should_log_transition_steady_state():
     from monitor import _should_log_transition
     assert _should_log_transition(True, True) is False
     assert _should_log_transition(False, False) is False
+
+
+# ── WAL cap + prune without VACUUM ───────────────────────────────────────────
+
+def test_journal_size_limit_pragma_set(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    assert hdb.conn.execute("PRAGMA journal_size_limit").fetchone()[0] == 16777216
+    hdb.close()
+
+
+def test_prune_deletes_old_keeps_recent_no_vacuum(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
+    now = int(time.time())
+    hdb.conn.execute("INSERT INTO pings (host_ip, timestamp, is_up, latency_ms) VALUES (?,?,?,?)",
+                     ("10.0.0.1", now - 8 * 86400, 1, 1.0))
+    hdb.conn.execute("INSERT INTO pings (host_ip, timestamp, is_up, latency_ms) VALUES (?,?,?,?)",
+                     ("10.0.0.1", now, 1, 1.0))
+    deleted, _ = hdb.prune()
+    assert deleted == 1
+    assert hdb.conn.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 1
+    hdb.close()
