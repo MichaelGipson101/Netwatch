@@ -222,6 +222,12 @@ def ping_host(ip, timeout):
         return False, None
 
 
+def _should_log_transition(was_up, is_up):
+    """INFO-log only state changes (and the first ping). Steady-state pings
+    go to DEBUG so monitor.log doesn't grow ~12MB/day."""
+    return was_up is None or bool(is_up) != bool(was_up)
+
+
 def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, config_path_for_arp=None, alert_settings=None, alert_port=8080):
     while not global_stop.is_set() and not host.stop_event.is_set():
         was_up = host.is_up if host.history else None
@@ -340,10 +346,14 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
                         on_success=lambda: history_db.mark_incident_alerted(host_ip_for_cb)
                     )
 
-        logging.info(
+        line = (
             f"{'UP  ' if is_up else 'DOWN'} | {host.name:<20} | {host.ip:<16} | "
             f"{f'{latency:.1f}ms' if latency else '-':>8}"
         )
+        if _should_log_transition(was_up, is_up):
+            logging.info(line)
+        else:
+            logging.debug(line)
         elapsed = 0
         while elapsed < host.interval and not global_stop.is_set() and not host.stop_event.is_set():
             time.sleep(0.5)
@@ -3665,10 +3675,10 @@ def main():
     parser.add_argument("--log",    default="monitor.log")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        filename=args.log, level=logging.INFO,
-        format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    )
+    from logging.handlers import RotatingFileHandler
+    _log_handler = RotatingFileHandler(args.log, maxBytes=10 * 1024 * 1024, backupCount=3)
+    _log_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), args.config)
     base_dir = os.path.dirname(os.path.abspath(__file__))

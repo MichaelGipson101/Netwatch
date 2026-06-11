@@ -633,3 +633,23 @@ def test_h_post_auth_user_delete_not_found():
         code, body = _h_post_auth_user_delete("/api/auth/users/nobody", am)
         assert code == 400
         assert "error" in body
+
+
+# ── Transition-only logging ──────────────────────────────────────────────────
+
+def test_should_log_transition_first_ping():
+    from monitor import _should_log_transition
+    assert _should_log_transition(None, True) is True
+    assert _should_log_transition(None, False) is True
+
+
+def test_should_log_transition_state_change():
+    from monitor import _should_log_transition
+    assert _should_log_transition(True, False) is True
+    assert _should_log_transition(False, True) is True
+
+
+def test_should_log_transition_steady_state():
+    from monitor import _should_log_transition
+    assert _should_log_transition(True, True) is False
+    assert _should_log_transition(False, False) is False
