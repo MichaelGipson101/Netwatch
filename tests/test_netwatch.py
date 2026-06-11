@@ -676,3 +676,49 @@ def test_prune_deletes_old_keeps_recent_no_vacuum(tmp_path):
     assert deleted == 1
     assert hdb.conn.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 1
     hdb.close()
+
+
+# ── Batched ping inserts ─────────────────────────────────────────────────────
+
+def test_record_ping_buffers_until_flush(tmp_path):
+    from monitor import HistoryDB
+    db_path = str(tmp_path / "t.db")
+    hdb = HistoryDB(db_path)
+    hdb.record_ping("10.0.0.1", True, 5.0)
+    other = sqlite3.connect(db_path)
+    assert other.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 0
+    hdb.flush_pings()
+    assert other.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 1
+    other.close(); hdb.close()
+
+
+def test_buffer_threshold_autoflush(tmp_path):
+    from monitor import HistoryDB
+    db_path = str(tmp_path / "t.db")
+    hdb = HistoryDB(db_path)
+    hdb.FLUSH_MAX = 3
+    for _ in range(3):
+        hdb.record_ping("10.0.0.1", True, 1.0)
+    other = sqlite3.connect(db_path)
+    assert other.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 3
+    other.close(); hdb.close()
+
+
+def test_recent_pings_sees_buffered_rows(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hdb.record_ping("10.0.0.1", True, 5.0)
+    hdb.record_ping("10.0.0.1", False, None)
+    assert hdb.recent_pings("10.0.0.1", limit=10) == [(True, 5.0), (False, None)]
+    hdb.close()
+
+
+def test_close_flushes_buffer(tmp_path):
+    from monitor import HistoryDB
+    db_path = str(tmp_path / "t.db")
+    hdb = HistoryDB(db_path)
+    hdb.record_ping("10.0.0.1", True, 5.0)
+    hdb.close()
+    other = sqlite3.connect(db_path)
+    assert other.execute("SELECT COUNT(*) FROM pings").fetchone()[0] == 1
+    other.close()

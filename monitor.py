@@ -1016,11 +1016,15 @@ class HistoryDB:
     CREATE INDEX IF NOT EXISTS idx_incidents_ended ON incidents(ended);
     """
 
+    FLUSH_MAX = 200          # safety flush if the 30s flusher falls behind
+    BUFFER_HARD_CAP = 5000   # drop oldest beyond this if SQLite is wedged
+
     def __init__(self, db_path, retention_days=30):
         import sqlite3
         self.db_path = db_path
         self.retention_days = retention_days
         self.lock = threading.Lock()
+        self._ping_buffer = []
         # check_same_thread=False because we share the connection across threads,
         # and we serialize writes with self.lock.
         self.conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
@@ -1038,6 +1042,10 @@ class HistoryDB:
     def close(self):
         with self.lock:
             try:
+                self._flush_pings_locked()
+            except Exception:
+                pass
+            try:
                 self.conn.close()
             except Exception:
                 pass
@@ -1047,15 +1055,41 @@ class HistoryDB:
     def record_ping(self, host_ip, is_up, latency_ms):
         ts = int(time.time())
         with self.lock:
-            self.conn.execute(
+            self._ping_buffer.append((host_ip, ts, 1 if is_up else 0, latency_ms))
+            if len(self._ping_buffer) >= self.FLUSH_MAX:
+                self._flush_pings_locked()
+
+    def _flush_pings_locked(self):
+        """Write all buffered pings in one transaction. Caller holds self.lock.
+        Batching cuts WAL write amplification ~10-30x vs per-ping commits."""
+        if not self._ping_buffer:
+            return
+        if len(self._ping_buffer) > self.BUFFER_HARD_CAP:
+            dropped = len(self._ping_buffer) - self.BUFFER_HARD_CAP
+            del self._ping_buffer[:dropped]
+            logging.warning(f"HistoryDB: dropped {dropped} buffered pings (DB unavailable?)")
+        self.conn.execute("BEGIN")
+        try:
+            self.conn.executemany(
                 "INSERT INTO pings (host_ip, timestamp, is_up, latency_ms) VALUES (?, ?, ?, ?)",
-                (host_ip, ts, 1 if is_up else 0, latency_ms),
+                self._ping_buffer,
             )
+            self.conn.execute("COMMIT")
+        except Exception:
+            try: self.conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
+        self._ping_buffer.clear()
+
+    def flush_pings(self):
+        with self.lock:
+            self._flush_pings_locked()
 
     def recent_pings(self, host_ip, limit=100):
         """Return up to `limit` most-recent pings for a host, oldest first.
         Used to repopulate the in-memory history deque on startup."""
         with self.lock:
+            self._flush_pings_locked()
             cur = self.conn.execute(
                 "SELECT is_up, latency_ms FROM pings "
                 "WHERE host_ip = ? ORDER BY timestamp DESC LIMIT ?",
@@ -1069,6 +1103,7 @@ class HistoryDB:
         """Return (is_up, latency_ms, timestamp) of the most recent ping for
         the host, or None if no pings recorded."""
         with self.lock:
+            self._flush_pings_locked()
             cur = self.conn.execute(
                 "SELECT is_up, latency_ms, timestamp FROM pings "
                 "WHERE host_ip = ? ORDER BY timestamp DESC LIMIT 1",
@@ -1215,6 +1250,19 @@ class HistoryDB:
                 f"{incidents_deleted} incidents older than {self.retention_days}d"
             )
         return pings_deleted, incidents_deleted
+
+
+def _flush_loop(history_db, stop_event):
+    """Flush buffered pings every 30s; final flush on shutdown."""
+    while not stop_event.wait(30):
+        try:
+            history_db.flush_pings()
+        except Exception as e:
+            logging.warning(f"HistoryDB flush failed: {e}")
+    try:
+        history_db.flush_pings()
+    except Exception:
+        pass
 
 
 def _prune_loop(history_db, stop_event):
@@ -3721,6 +3769,17 @@ def main():
     pt = threading.Thread(target=_prune_loop, args=(history_db, stop_event), daemon=True, name="prune")
     pt.start()
 
+    # Ping flush task (batched inserts land every 30s)
+    ft = threading.Thread(target=_flush_loop, args=(history_db, stop_event), daemon=True, name="ping-flush")
+    ft.start()
+
+    # systemd sends SIGTERM on stop; route it through the KeyboardInterrupt
+    # path so buffered pings get flushed and the WAL is checkpointed.
+    import signal
+    def _sigterm(_sig, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _sigterm)
+
     incident_log = IncidentLog(history_db=history_db)
     host_manager = HostManager(
         config_path, ping_timeout, history_window, stop_event,
@@ -3757,6 +3816,7 @@ def main():
                 print("\n[netwatch] Stopped.")
     finally:
         auth_manager.close()
+        history_db.close()
 
 
 if __name__ == "__main__":
