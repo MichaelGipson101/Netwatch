@@ -46,6 +46,8 @@ const REFRESH = 5000;
 let lastOk = true;
 let lastData = null;
 let openDrawerIp = null;
+let drawerHistRange = 24;  // hours; persists across drawer opens this session
+const HIST_RANGES = [['1h', 1], ['6h', 6], ['24h', 24], ['7d', 168]];
 
 
 
@@ -385,6 +387,9 @@ function renderDrawer(h, data){
       + '</div><div class="d-spark-axis"><span>oldest</span><span>now</span></div></div></div>';
   }
 
+  // Latency history (filled async by loadDrawerHistory after the body builds)
+  const histHtml = '<div class="d-section" id="d-hist-section"></div>';
+
   // Specs
   const specs = h.specs || {};
   const specEntries = [
@@ -474,8 +479,9 @@ function renderDrawer(h, data){
   const drawerBody = document.getElementById('drawer-body');
   if(drawerBody.dataset.hostIp !== h.ip){
     drawerBody.dataset.hostIp = h.ip;
-    drawerBody.innerHTML = statsHtml + linksHtml + '<div id="d-inv-section"></div>' + svcHtml + piHtml + sparkHtml + specsHtml + notesHtml + incHtml + actionsHtml;
+    drawerBody.innerHTML = statsHtml + linksHtml + '<div id="d-inv-section"></div>' + svcHtml + piHtml + sparkHtml + histHtml + specsHtml + notesHtml + incHtml + actionsHtml;
     fetchHostInventoryLink(h);
+    loadDrawerHistory(h.ip);
     const wakeBtn = document.getElementById('d-wake-btn');
     if(wakeBtn) wakeBtn.addEventListener('click', () => sendWake(wakeBtn.dataset.ip));
   } else {
@@ -486,6 +492,98 @@ function renderDrawer(h, data){
   if(h.is_pi){
     updatePiHealth();
   }
+}
+
+// ── Latency history chart + daily uptime strip ──────────────────────────────
+
+async function loadDrawerHistory(ip){
+  const el = document.getElementById('d-hist-section');
+  if(!el) return;
+  el.innerHTML = '<div class="d-section-hdr"><span>Latency history</span><span style="color:var(--muted)">loading…</span></div>';
+  try{
+    const res = await fetch('/api/history?ip=' + encodeURIComponent(ip) + '&hours=' + drawerHistRange + '&days=60');
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    renderDrawerHistory(el, ip, await res.json());
+  }catch(e){
+    el.innerHTML = '<div class="d-section-hdr"><span>Latency history</span></div>'
+      + '<div class="d-hist-empty">history unavailable</div>';
+  }
+}
+
+function setHistRange(btn){
+  drawerHistRange = parseInt(btn.dataset.hours, 10) || 24;
+  loadDrawerHistory(btn.dataset.ip);
+}
+
+function renderDrawerHistory(el, ip, data){
+  const btns = HIST_RANGES.map(([label, hrs]) =>
+    '<button class="d-range-btn' + (hrs === drawerHistRange ? ' active' : '') + '" data-hours="' + hrs
+    + '" data-ip="' + escapeHtml(ip) + '" onclick="setHistRange(this)">' + label + '</button>'
+  ).join('');
+  const hdr = '<div class="d-section-hdr"><span>Latency history</span><span class="d-range-group">' + btns + '</span></div>';
+  const chart = '<div class="d-spark-wrap">' + latencyChartSvg(data.points || [], data.bucket_seconds || 60) + '</div>';
+  let daysHtml = '';
+  if(data.daily && data.daily.length){
+    daysHtml = '<div class="d-section-hdr" style="margin-top:10px"><span>Daily uptime</span>'
+      + '<span style="color:var(--muted)">last ' + data.daily.length + ' day' + (data.daily.length > 1 ? 's' : '') + '</span></div>'
+      + '<div class="d-spark-wrap">' + dayStripHtml(data.daily) + '</div>';
+  }
+  el.innerHTML = hdr + chart + daysHtml;
+}
+
+function fmtChartTime(ts, rangeHours){
+  const d = new Date(ts * 1000);
+  if(rangeHours <= 48) return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+
+function latencyChartSvg(points, bucketSeconds){
+  const pts = points.filter(p => p.avg !== null && p.avg !== undefined);
+  if(pts.length < 2) return '<div class="d-hist-empty">not enough data for this range yet</div>';
+  const W = 560, H = 130, L = 38, R = 6, T = 8, B = 18;
+  const t0 = points[0].t, t1 = points[points.length - 1].t + bucketSeconds;
+  const maxLat = Math.max(...pts.map(p => (p.max !== null && p.max !== undefined) ? p.max : p.avg));
+  const yMax = Math.max(1, maxLat * 1.12);
+  const x = t => L + (t - t0) / Math.max(1, t1 - t0) * (W - L - R);
+  const y = v => T + (1 - v / yMax) * (H - T - B);
+  const band = pts.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ',' + y(p.min ?? p.avg).toFixed(1)).join('')
+    + pts.slice().reverse().map(p => 'L' + x(p.t).toFixed(1) + ',' + y(p.max ?? p.avg).toFixed(1)).join('') + 'Z';
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ',' + y(p.avg).toFixed(1)).join('');
+  const tickW = Math.max(2, (W - L - R) / Math.max(1, points.length));
+  const downs = points.filter(p => p.up_pct < 100).map(p =>
+    '<rect class="d-lat-down" x="' + x(p.t).toFixed(1) + '" y="' + (H - B + 4) + '" width="' + tickW.toFixed(1) + '" height="4" rx="1"/>'
+  ).join('');
+  const grid = [0.5, 1].map(f =>
+    '<line class="d-lat-grid" x1="' + L + '" y1="' + y(yMax * f).toFixed(1) + '" x2="' + (W - R) + '" y2="' + y(yMax * f).toFixed(1) + '"/>'
+  ).join('');
+  const rangeHours = (t1 - t0) / 3600;
+  // fmtLatency returns an HTML span — SVG <text> needs plain strings
+  const fmtMs = v => (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + ' ms';
+  return '<svg class="d-lat-chart" viewBox="0 0 ' + W + ' ' + H + '">'
+    + grid
+    + '<path class="d-lat-band" d="' + band + '"/>'
+    + '<path class="d-lat-line" d="' + line + '"/>'
+    + downs
+    + '<text class="d-lat-label" x="' + (L - 5) + '" y="' + (y(yMax) + 3) + '" text-anchor="end">' + fmtMs(yMax) + '</text>'
+    + '<text class="d-lat-label" x="' + (L - 5) + '" y="' + (y(yMax * 0.5) + 3) + '" text-anchor="end">' + fmtMs(yMax * 0.5) + '</text>'
+    + '<text class="d-lat-label" x="' + L + '" y="' + (H - 4) + '">' + fmtChartTime(t0, rangeHours) + '</text>'
+    + '<text class="d-lat-label" x="' + (W - R) + '" y="' + (H - 4) + '" text-anchor="end">' + fmtChartTime(t1, rangeHours) + '</text>'
+    + '</svg>';
+}
+
+function dayStripHtml(daily){
+  const cells = daily.map(d => {
+    const pct = d.uptime_pct;
+    let cls = 'nodata';
+    if(pct !== null && pct !== undefined){
+      cls = pct >= 99 ? 'ok' : (pct >= 80 ? 'warn' : 'bad');
+    }
+    const tip = d.day + ' — ' + (pct === null ? 'no data' : pct + '% up')
+      + (d.latency_avg !== null && d.latency_avg !== undefined ? ' · ' + d.latency_avg + ' ms avg' : '');
+    return '<div class="d-day ' + cls + '" title="' + escapeHtml(tip) + '"></div>';
+  }).join('');
+  return '<div class="d-days">' + cells + '</div>'
+    + '<div class="d-spark-axis"><span>' + escapeHtml(daily[0].day) + '</span><span>' + escapeHtml(daily[daily.length - 1].day) + '</span></div>';
 }
 
 function updateDrawerStats(h, data){

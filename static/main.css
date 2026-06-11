@@ -651,6 +651,22 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .d-spark-bar{flex:1;background:var(--green);border-radius:1px;min-height:3px;opacity:.85}
 .d-spark-bar.dn{background:var(--red);height:3px!important}
 .d-spark-axis{display:flex;justify-content:space-between;margin-top:6px;font-family:'DM Mono',monospace;font-size:10px;color:var(--hint)}
+.d-range-group{display:flex;gap:4px}
+.d-range-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer}
+.d-range-btn:hover{color:var(--text);border-color:var(--muted)}
+.d-range-btn.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+.d-lat-chart{display:block;width:100%;height:auto}
+.d-lat-band{fill:var(--green);opacity:.14}
+.d-lat-line{stroke:var(--green);stroke-width:1.8;fill:none;stroke-linejoin:round}
+.d-lat-grid{stroke:var(--border-light);stroke-width:1}
+.d-lat-down{fill:var(--red)}
+.d-lat-label{font-family:'DM Mono',monospace;font-size:9px;fill:var(--hint)}
+.d-hist-empty{font-size:12px;color:var(--hint);padding:10px 2px}
+.d-days{display:flex;gap:2px;align-items:stretch}
+.d-day{flex:1;height:20px;border-radius:2px;background:var(--green);opacity:.85;min-width:3px}
+.d-day.warn{background:var(--amber)}
+.d-day.bad{background:var(--red)}
+.d-day.nodata{background:var(--border);opacity:.6}
 .d-specs{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;overflow:hidden}
 .d-spec-row{display:grid;grid-template-columns:90px 1fr;padding:9px 12px;border-bottom:1px solid var(--border-light);font-size:13px;align-items:center;gap:10px}
 .d-spec-row:last-child{border-bottom:none}
