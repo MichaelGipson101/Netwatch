@@ -17,7 +17,7 @@
 **Files:**
 - Create: `/tmp/nw-uplift/shotgen.sh` (outside repo, used by later tasks' verify steps)
 
-- [ ] **Step 1: Write the harness script**
+- [x] **Step 1: Write the harness script**
 
 ```bash
 mkdir -p /tmp/nw-uplift && cat > /tmp/nw-uplift/shotgen.sh <<'HARNESS'
@@ -79,7 +79,7 @@ HARNESS
 chmod +x /tmp/nw-uplift/shotgen.sh
 ```
 
-- [ ] **Step 2: Verify harness against the unmodified tree**
+- [x] **Step 2: Verify harness against the unmodified tree**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix baseline`
 Expected: 12 PNGs in `/tmp/nw-uplift/shots/baseline/`, "started"/"stopped" printed, no curl failure. These are the BEFORE images for later comparison. Do not commit anything.
@@ -93,7 +93,7 @@ Expected: 12 PNGs in `/tmp/nw-uplift/shots/baseline/`, "started"/"stopped" print
 - Modify: `monitor.py:2870-2878` (`_STATIC_FILES`), `dashboard.html:7-8`, `static/topology.js:32-44`
 - Test: `tests/test_netwatch.py` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_netwatch.py`:
 
@@ -121,12 +121,12 @@ def test_vendored_asset_files_exist_on_disk():
 
 First check the test file's imports (`grep -n "^import\|^from" tests/test_netwatch.py | head`) and add `import os, re, time` to the top if any are missing (Task 3's tests need `re` and `time` too).
 
-- [ ] **Step 2: Run tests, verify they fail**
+- [x] **Step 2: Run tests, verify they fail**
 
 Run: `python3 -m pytest tests/test_netwatch.py -k "vendored or whitelist_includes" -v`
 Expected: 2 FAILED (KeyError/assert on `d3.v7.min.js`).
 
-- [ ] **Step 3: Download D3 and fonts**
+- [x] **Step 3: Download D3 and fonts**
 
 ```bash
 cd /home/mgipson/netwatch
@@ -151,7 +151,7 @@ EOF
 ls -la static/*.woff2   # expect 6 files, each > 10KB
 ```
 
-- [ ] **Step 4: Create `static/fonts.css`**
+- [x] **Step 4: Create `static/fonts.css`**
 
 ```css
 /* Self-hosted DM Sans + DM Mono (latin subset). No WAN dependency. */
@@ -163,7 +163,7 @@ ls -la static/*.woff2   # expect 6 files, each > 10KB
 @font-face{font-family:'DM Mono';font-style:normal;font-weight:500;font-display:swap;src:url(/static/dmmono-500.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 ```
 
-- [ ] **Step 5: Update `_STATIC_FILES` in monitor.py**
+- [x] **Step 5: Update `_STATIC_FILES` in monitor.py**
 
 Replace the dict at `monitor.py:2870` with:
 
@@ -184,7 +184,7 @@ _STATIC_FILES = {
 }
 ```
 
-- [ ] **Step 6: Swap the font link in dashboard.html**
+- [x] **Step 6: Swap the font link in dashboard.html**
 
 Replace lines 7-8 (`<link rel="preconnect"...>` and the Google `<link href=...>`) with:
 
@@ -192,7 +192,7 @@ Replace lines 7-8 (`<link rel="preconnect"...>` and the Google `<link href=...>`
 <link rel="stylesheet" href="/static/fonts.css?v={{VERSION}}">
 ```
 
-- [ ] **Step 7: Point ensureD3 at the local file**
+- [x] **Step 7: Point ensureD3 at the local file**
 
 In `static/topology.js` replace `s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js';` with:
 
@@ -204,13 +204,13 @@ In `static/topology.js` replace `s.src = 'https://cdnjs.cloudflare.com/ajax/libs
 
 Also change both user-facing error strings `'Could not load D3 from CDN: '` → `'Could not load the graph library: '` and `'Failed to load D3 from CDN'` → `'failed to load /static/d3.v7.min.js'`.
 
-- [ ] **Step 8: Run tests + smoke**
+- [x] **Step 8: Run tests + smoke**
 
 Run: `python3 -m pytest tests/test_netwatch.py -v` → all PASS.
 Run: `/tmp/nw-uplift/shotgen.sh matrix t2 && grep -c "fonts.googleapis\|cdnjs" /tmp/nw-uplift/sandbox/dashboard.html /tmp/nw-uplift/sandbox/static/topology.js`
 Expected: matrix renders identically to baseline (fonts/graph still working — eyeball `t2/dark-topo-web.png`), grep prints `0` for both files.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add static/ monitor.py dashboard.html tests/test_netwatch.py
@@ -225,7 +225,7 @@ git commit -m "feat: vendor D3 and self-host DM Sans/Mono fonts (zero-WAN UI)"
 - Modify: `monitor.py:1264-1277` (`HistoryDB.list_incidents`)
 - Test: `tests/test_netwatch.py` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # ── incident timestamp payload ───────────────────────────────────────────
@@ -265,12 +265,12 @@ def test_started_str_includes_date_for_older_events(tmp_path):
 
 Add `import re, time` at the top of the test file if not already imported (check first: `grep -n "^import\|^from" tests/test_netwatch.py | head`).
 
-- [ ] **Step 2: Run tests, verify failure**
+- [x] **Step 2: Run tests, verify failure**
 
 Run: `python3 -m pytest tests/test_netwatch.py -k "incident" -v`
 Expected: `test_list_incidents_includes_epoch_ts` FAILS with KeyError `'started_ts'`; the older-events test FAILS on format.
 
-- [ ] **Step 3: Implement in `list_incidents`**
+- [x] **Step 3: Implement in `list_incidents`**
 
 Replace the `result.append({...})` block (`monitor.py:1268-1277`) with:
 
@@ -295,12 +295,12 @@ Replace the `result.append({...})` block (`monitor.py:1268-1277`) with:
             })
 ```
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `python3 -m pytest tests/test_netwatch.py -v`
 Expected: all PASS (existing tests unaffected — additive field, same `started_str` shape for today's events).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add monitor.py tests/test_netwatch.py
@@ -314,7 +314,7 @@ git commit -m "feat: add started_ts to incidents payload, date-aware started_str
 **Files:**
 - Modify: `dashboard.html` (head), `static/core.js:1-17`, `static/main.css` (delete ~45 dup blocks; add color-scheme + scrollbars)
 
-- [ ] **Step 1: Add the inline resolver to dashboard.html**
+- [x] **Step 1: Add the inline resolver to dashboard.html**
 
 Insert directly BEFORE the `<link rel="stylesheet" href="/static/fonts.css...">` line:
 
@@ -336,7 +336,7 @@ Insert directly BEFORE the `<link rel="stylesheet" href="/static/fonts.css...">`
 
 Note: keep the literal `localStorage.getItem('nw-theme') || 'auto'` — the screenshot harness seds that exact pattern.
 
-- [ ] **Step 2: Rewrite the theme code at the top of core.js**
+- [x] **Step 2: Rewrite the theme code at the top of core.js**
 
 Replace `core.js:1-11` (the `initTheme` IIFE + `setTheme`) with:
 
@@ -357,7 +357,7 @@ function setTheme(mode){
 
 In the DOMContentLoaded handler just below, keep the existing button wiring but add `b.setAttribute('aria-pressed', b.dataset.themeBtn === current ? 'true' : 'false');` next to the `classList.toggle('active', ...)` line.
 
-- [ ] **Step 3: Delete the duplicated auto-theme CSS**
+- [x] **Step 3: Delete the duplicated auto-theme CSS**
 
 ```bash
 python3 - <<'EOF'
@@ -386,7 +386,7 @@ Expected: script prints `removed 47 auto blocks` (±2 is fine — count them fir
 
 Expected output: `0`. If not 0, inspect the survivors with `grep -n 'data-theme="auto"' static/main.css` and delete those blocks by hand (they are all duplicates of an adjacent `[data-theme="dark"]` rule — never delete the dark twin).
 
-- [ ] **Step 4: Add color-scheme + scrollbar styling**
+- [x] **Step 4: Add color-scheme + scrollbar styling**
 
 In `:root{...}` (main.css:2) add `color-scheme:light;` as the first declaration. In `[data-theme="dark"]{...}` add `color-scheme:dark;`. Then append after the `.landing-setup-desc` rule at the end of the file:
 
@@ -398,12 +398,12 @@ In `:root{...}` (main.css:2) add `color-scheme:light;` as the first declaration.
 .drawer-body::-webkit-scrollbar-thumb:hover,.modal-body::-webkit-scrollbar-thumb:hover,.ai-messages::-webkit-scrollbar-thumb:hover{background:var(--hint)}
 ```
 
-- [ ] **Step 5: Verify both themes via harness**
+- [x] **Step 5: Verify both themes via harness**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t4`
 Expected: `t4/dark-*` identical in look to baseline darks (frost intact — proves dedup deleted only duplicates); `t4/light-*` identical to baseline lights; dark checkboxes now render dark ("Include unconnected" box in `dark-topo-web.png`). View the four topo shots to confirm.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add dashboard.html static/core.js static/main.css
@@ -417,7 +417,7 @@ git commit -m "refactor: resolve theme in JS, single-source dark CSS, add color-
 **Files:**
 - Modify: `static/main.css` (`:root`, `[data-theme="dark"]`, scards/tables/err-banner/fab, append utilities)
 
-- [ ] **Step 1: Extend the variable blocks**
+- [x] **Step 1: Extend the variable blocks**
 
 In `:root{}` adjust/add (keep existing vars, change `--hint`, add new ones):
 
@@ -441,7 +441,7 @@ In `[data-theme="dark"]{}` adjust/add:
   --amber-border:rgba(245,158,11,.35);
 ```
 
-- [ ] **Step 2: Apply tokens**
+- [x] **Step 2: Apply tokens**
 
 - `.err-banner` (main.css:90): `border:1px solid #fde68a` → `border:1px solid var(--amber-border)`.
 - `.fab` (main.css:581): both `box-shadow` colors `rgba(93,187,141,...)` → `var(--green-glow)`; in `.fab:hover`/`.fab:active` likewise.
@@ -455,7 +455,7 @@ In `[data-theme="dark"]{}` adjust/add:
 [data-theme="light"] body{background-image:radial-gradient(ellipse 720px 460px at 30% -10%,rgba(22,163,74,.045) 0%,transparent 65%),radial-gradient(ellipse 460px 340px at 85% 100%,rgba(22,163,74,.03) 0%,transparent 65%);background-attachment:fixed}
 ```
 
-- [ ] **Step 3: Tabular numerals**
+- [x] **Step 3: Tabular numerals**
 
 Append:
 
@@ -463,7 +463,7 @@ Append:
 #clock,.scard-val,.d-stat-val,.lat,.uptime-pct,.topo-overlay-num,.inv-metric-val,.event-dur,.d-pi-val{font-variant-numeric:tabular-nums}
 ```
 
-- [ ] **Step 4: Verify + commit**
+- [x] **Step 4: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t5` — check `light-hosts.png` (COMPUTERS label readable, cards have depth), `dark-hosts.png` (unchanged feel, err-banner not applicable).
 
@@ -479,7 +479,7 @@ git commit -m "feat: design tokens, light-mode elevation + contrast, tabular num
 **Files:**
 - Modify: `static/main.css` (topo furniture rules), `static/topology.js` (vignette defs), `dashboard.html` (legend swatch classes)
 
-- [ ] **Step 1: Scoped glass variables**
+- [x] **Step 1: Scoped glass variables**
 
 Append to main.css (after the topo section is fine — variables cascade):
 
@@ -499,7 +499,7 @@ Append to main.css (after the topo section is fine — variables cascade):
 }
 ```
 
-- [ ] **Step 2: Re-point the furniture at the variables**
+- [x] **Step 2: Re-point the furniture at the variables**
 
 Rewrite these existing rules (find each by selector) so colors come from the vars; structure/spacing unchanged:
 
@@ -529,7 +529,7 @@ body.topo-fullscreen-active .topo-fs-fit:hover{color:var(--glass-text)}
 
 Keep each rule's non-color declarations (dash patterns, opacities, blur) exactly as they are — edit color values only. Delete the now-redundant `[data-theme="dark"] .topo-web-overlay` and `[data-theme="dark"] .topo-legend` Deep Frost rules.
 
-- [ ] **Step 3: Dual vignette gradients**
+- [x] **Step 3: Dual vignette gradients**
 
 In `topology.js`, replace the single vignette gradient block (the `defs.append('radialGradient')...` lines) with:
 
@@ -550,7 +550,7 @@ And remove the `.attr('fill', 'url(#topo-vignette)')` from the vignette rect (ke
 [data-theme="dark"] .topo-vignette-rect{fill:url(#topo-vignette-dark)}
 ```
 
-- [ ] **Step 4: Legend swatch lines follow the palette**
+- [x] **Step 4: Legend swatch lines follow the palette**
 
 In `dashboard.html` legend rows (lines ~318-323), replace each hardcoded `stroke="#5b8eff"` etc. with `class="leg-eth"` (and `leg-wifi`, `leg-fiber`, `leg-power`, `leg-virtual`, `leg-dead`) on the `<line>` elements, then add:
 
@@ -563,7 +563,7 @@ In `dashboard.html` legend rows (lines ~318-323), replace each hardcoded `stroke
 .topo-legend-svg-line .leg-dead{stroke:var(--edge-dead)}
 ```
 
-- [ ] **Step 5: Verify + commit**
+- [x] **Step 5: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t6`. Check `light-topo-web.png`: overlays readable (dark text on white glass), no smudge-ring vignette, edges visible on white, legend `?` visible bottom-left. Check `dark-topo-web.png` unchanged vs baseline. Crop overlays at full res if needed (PIL crop as in audit).
 
