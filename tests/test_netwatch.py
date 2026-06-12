@@ -984,6 +984,7 @@ def test_started_str_time_only_for_today(tmp_path):
     now = int(time.time())
     _insert_incident(hdb, now - 60, now, 60)
     inc = hdb.list_incidents()[0]
+    # NOTE: flakes if run within 60s of local midnight (incident lands on yesterday)
     assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", inc["started_str"])
 
 def test_started_str_includes_date_for_older_events(tmp_path):

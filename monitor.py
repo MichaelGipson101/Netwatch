@@ -1268,6 +1268,8 @@ class HistoryDB:
             st = _dt.fromtimestamp(started)
             # Time-only for today's events; month+day prefix once a midnight
             # has passed so the list never shows ambiguous bare times.
+            # NOTE: started_str is SERVER-local; clients grouping by started_ts
+            # (browser-local) should derive display labels from started_ts.
             fmt = "%H:%M:%S" if st.date() == _dt.now().date() else "%b %d %H:%M"
             result.append({
                 "host_ip":          host_ip,
