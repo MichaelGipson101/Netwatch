@@ -959,3 +959,38 @@ def test_dmsans_weights_are_distinct():
         with open(os.path.join(base, f'dmsans-{w}.woff2'), 'rb') as f:
             digests[w] = hashlib.md5(f.read()).hexdigest()
     assert len(set(digests.values())) == 4, f'duplicate DM Sans weights: {digests}'
+
+
+# ── incident timestamp payload ───────────────────────────────────────────
+
+def _insert_incident(hdb, started, ended=None, dur=None):
+    with hdb.lock:
+        hdb.conn.execute(
+            "INSERT INTO incidents (host_ip, host_name, host_group, started, ended, duration_seconds) "
+            "VALUES (?,?,?,?,?,?)",
+            ("10.0.0.9", "TestHost", "G", started, ended, dur))
+
+def test_list_incidents_includes_epoch_ts(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    now = int(time.time())
+    _insert_incident(hdb, now - 30, now, 30)
+    inc = hdb.list_incidents()[0]
+    assert inc["started_ts"] == now - 30
+
+def test_started_str_time_only_for_today(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    now = int(time.time())
+    _insert_incident(hdb, now - 60, now, 60)
+    inc = hdb.list_incidents()[0]
+    assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", inc["started_str"])
+
+def test_started_str_includes_date_for_older_events(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    old = int(time.time()) - 3 * 86400
+    _insert_incident(hdb, old, old + 60, 60)
+    inc = hdb.list_incidents()[0]
+    # e.g. "Jun 08 17:39" — month abbrev + day + HH:MM
+    assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{2}:\d{2}", inc["started_str"])

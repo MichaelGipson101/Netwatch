@@ -1265,12 +1265,17 @@ class HistoryDB:
         for inc_id, host_ip, host_name, host_group, started, ended, duration in rows:
             ongoing = ended is None
             dur = (now - started) if ongoing else (duration or 0)
+            st = _dt.fromtimestamp(started)
+            # Time-only for today's events; month+day prefix once a midnight
+            # has passed so the list never shows ambiguous bare times.
+            fmt = "%H:%M:%S" if st.date() == _dt.now().date() else "%b %d %H:%M"
             result.append({
                 "host_ip":          host_ip,
                 "host_name":        host_name,
                 "host_group":       host_group,
-                "started_str":      _dt.fromtimestamp(started).strftime("%H:%M:%S"),
-                "started_iso":      _dt.fromtimestamp(started).isoformat(),
+                "started_ts":       started,
+                "started_str":      st.strftime(fmt),
+                "started_iso":      st.isoformat(),
                 "ended_iso":        _dt.fromtimestamp(ended).isoformat() if ended else None,
                 "duration_seconds": dur,
                 "ongoing":          ongoing,
