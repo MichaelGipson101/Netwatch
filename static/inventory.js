@@ -433,7 +433,7 @@ function renderTypeTable(deviceType, rows, showHeading){
     cols.forEach((c, i) => {
       if(i === 0){
         out += '<td><span style="display:flex;align-items:center;gap:5px">'
-          + deviceIcon(rec.device_type, 18)
+          + deviceIcon(rec.device_type, 22)
           + formatInvCell(rec, c.key)
           + '</span></td>';
       } else {

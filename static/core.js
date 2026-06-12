@@ -87,7 +87,7 @@ function renderHost(h){
   return '<div class="row' + rowCls + '"' + ipAttr + ' onclick="openDrawer(this.dataset.ip)">'
     + '<div><span class="dot ' + dotCls + '"></span></div>'
     + '<div><div class="host-name" ' + nameStyle + '>'
-    + deviceIcon(h.device_type, 18)
+    + deviceIcon(h.device_type, 22)
     + '<span>' + escapeHtml(h.name) + '</span></div><div class="host-ip-sub">' + escapeHtml(h.ip) + '</div></div>'
     + '<div class="col-ip">' + escapeHtml(h.ip) + '</div>'
     + '<div><span class="badge ' + badgeCls + '">' + h.status + '</span></div>'
@@ -119,6 +119,13 @@ function applyHostFilter(){
 }
 
 function renderGroups(data){
+  if(!data.hosts.length){
+    document.getElementById('groups').innerHTML =
+      '<div class="events-empty"><div class="events-empty-icon" style="background:var(--subtle);color:var(--hint)">⊘</div>'
+      + '<div class="events-empty-title">No hosts match</div>'
+      + '<div class="events-empty-sub">Try clearing the filter or status chips.</div></div>';
+    return;
+  }
   const groups = {};
   data.hosts.forEach(h => {
     if(!groups[h.group]) groups[h.group] = [];
@@ -147,7 +154,7 @@ function renderTopologyNode(h){
   else if(isDegraded) lat = 'degraded';
   else if(h.is_up && h.latency_ms !== null) lat = h.latency_ms.toFixed(1) + 'ms';
   else lat = 'offline';
-  return '<div class="node ' + cls + '" data-ip="' + escapeHtml(h.ip) + '" onclick="openDrawer(this.dataset.ip)" title="Click for details">'
+  return '<div class="node ' + cls + '" data-ip="' + escapeHtml(h.ip) + '" onclick="openDrawer(this.dataset.ip)">'
     + '<span class="node-dot"></span>'
     + '<span class="node-name">' + escapeHtml(h.name) + '</span>'
     + '<span class="node-lat">' + lat + '</span>'
@@ -360,13 +367,14 @@ function renderDrawer(h, data){
   const totalPings = (h.history || []).length;
   let avgLat = null;
   if(h.latency_ms !== null) avgLat = h.latency_ms;
-  const labelLat = h.is_up && h.latency_ms !== null ? h.latency_ms.toFixed(1) + ' <sup>ms</sup>' : (h.is_up ? 'up' : 'offline');
   const availLabel = h.uptime_pct !== null ? h.uptime_pct.toFixed(1) + ' <sup>%</sup>' : '-';
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(h.uptime_pct);
+  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' ? 'var(--amber-text)'
+    : h.is_up ? 'var(--green-text)' : (isIdle ? 'var(--hint)' : 'var(--red-text)');
 
   let statsHtml = '<div class="d-statgrid">'
-    + '<div class="d-stat"><div class="d-stat-label">CURRENT</div><div class="d-stat-val ' + (h.is_up ? 'green' : (isIdle ? '' : 'red')) + '">' + labelLat + '</div></div>'
-    + '<div class="d-stat"><div class="d-stat-label">CURRENT LATENCY</div><div class="d-stat-val blue">' + (h.latency_ms !== null ? h.latency_ms.toFixed(1) + ' <sup>ms</sup>' : '-') + '</div></div>'
+    + '<div class="d-stat"><div class="d-stat-label">STATUS</div><div class="d-stat-val" style="color:' + statusColor + '">' + h.status + '</div></div>'
+    + '<div class="d-stat"><div class="d-stat-label">LATENCY</div><div class="d-stat-val blue">' + (h.latency_ms !== null ? h.latency_ms.toFixed(1) + ' <sup>ms</sup>' : '-') + '</div></div>'
     + '<div class="d-stat"><div class="d-stat-label">' + (isIdle ? 'AVAILABILITY' : 'UPTIME') + '</div><div class="d-stat-val" style="color:' + uColor + '">' + availLabel + '</div></div>'
     + '<div class="d-stat"><div class="d-stat-label">LAST SEEN</div><div class="d-stat-val" style="font-size:14px">' + lastSeenStr(h.last_seen_up_seconds) + '</div></div>'
     + '</div>';
@@ -446,7 +454,7 @@ function renderDrawer(h, data){
   if(h.always_on === false && specs.mac && String(specs.mac).trim()){
     actionsHtml = '<div class="d-section"><div class="d-section-hdr"><span>Actions</span></div>'
       + '<div class="d-actions">'
-      + '<button class="d-action-btn" id="d-wake-btn" data-ip="' + escapeHtml(h.ip) + '"><span>Wake this device</span><span class="arrow">-></span></button>'
+      + '<button class="d-action-btn" id="d-wake-btn" data-ip="' + escapeHtml(h.ip) + '"><span>Wake this device</span><span class="arrow">→</span></button>'
       + '</div>'
       + '<div class="d-action-hint">Sends a Wake-on-LAN magic packet to ' + escapeHtml(specs.mac) + ' on your local network. Requires WoL to be enabled in the host\'s BIOS/UEFI and OS.</div>'
       + '<div class="d-action-status" id="d-wake-status"></div>'
@@ -601,14 +609,16 @@ function updateDrawerStats(h, data){
   // Update the stats grid in place. We just replace the four stat values
   // with new innerHTML. The structure stays put so there's no flicker.
   const isIdle = h.status === 'IDLE';
-  const labelLat = h.is_up && h.latency_ms !== null ? h.latency_ms.toFixed(1) + ' <sup>ms</sup>' : (h.is_up ? 'up' : 'offline');
   const availLabel = h.uptime_pct !== null ? h.uptime_pct.toFixed(1) + ' <sup>%</sup>' : '-';
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(h.uptime_pct);
+  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' ? 'var(--amber-text)'
+    : h.is_up ? 'var(--green-text)' : (isIdle ? 'var(--hint)' : 'var(--red-text)');
 
   const stats = document.querySelectorAll('#drawer-body .d-statgrid .d-stat-val');
   if(stats.length >= 4){
-    stats[0].className = 'd-stat-val ' + (h.is_up ? 'green' : (isIdle ? '' : 'red'));
-    stats[0].innerHTML = labelLat;
+    stats[0].className = 'd-stat-val';
+    stats[0].style.color = statusColor;
+    stats[0].textContent = h.status;
     stats[1].innerHTML = (h.latency_ms !== null ? h.latency_ms.toFixed(1) + ' <sup>ms</sup>' : '-');
     stats[2].style.color = uColor;
     stats[2].innerHTML = availLabel;

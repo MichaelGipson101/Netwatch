@@ -514,6 +514,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .dot-idle{background:var(--hint);box-shadow:0 0 0 3px var(--subtle)}
 .host-name{font-weight:500;font-size:13px}
 .host-ip-sub{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);margin-top:1px}
+@media(min-width:769px){.host-ip-sub{display:none}}
 .badge{font-size:10px;font-family:'DM Mono',monospace;font-weight:500;padding:3px 8px;border-radius:4px;display:inline-block;letter-spacing:.04em}
 .badge-up{background:var(--green-bg);color:var(--green-text)}
 .badge-dn{background:var(--red-bg);color:var(--red-text)}
@@ -1190,6 +1191,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 
 /* Light theme ambient wash (mirrors dark's radial blobs) */
 [data-theme="light"] body{background-image:radial-gradient(ellipse 720px 460px at 30% -10%,rgba(22,163,74,.045) 0%,transparent 65%),radial-gradient(ellipse 460px 340px at 85% 100%,rgba(22,163,74,.03) 0%,transparent 65%);background-attachment:fixed}
+[data-theme="light"] .dev-icon{filter:brightness(1.30) saturate(1.12) contrast(1.05)}
 
 #clock,.scard-val,.d-stat-val,.lat,.uptime-pct,.topo-overlay-num,.inv-metric-val,.event-dur,.d-pi-val{font-variant-numeric:tabular-nums}
 

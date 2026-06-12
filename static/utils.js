@@ -1,5 +1,5 @@
 function deviceIcon(type, size){
-  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 32 32"'
+  return '<svg class="dev-icon" width="' + size + '" height="' + size + '" viewBox="0 0 32 32"'
     + ' style="vertical-align:middle;flex-shrink:0" aria-hidden="true">'
     + '<use href="#topo-icon-' + (type || 'host') + '"/></svg>';
 }
@@ -10,7 +10,7 @@ function escapeHtml(s){
 
 function fmtLatency(ms){
   if(ms === null) return '<span style="color:var(--hint)">- ms</span>';
-  const c = ms < 20 ? 'var(--green-text)' : ms < 100 ? 'var(--amber-text)' : 'var(--red-text)';
+  const c = ms < 50 ? 'var(--green-text)' : ms < 150 ? 'var(--amber-text)' : 'var(--red-text)';
   return '<span style="color:' + c + '">' + ms.toFixed(1) + ' ms</span>';
 }
 
