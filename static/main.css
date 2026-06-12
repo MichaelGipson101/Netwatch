@@ -546,6 +546,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .event-dur{font-family:'DM Mono',monospace;font-size:12px;font-weight:500}
 .event.ongoing .event-dur{color:var(--red-text)}
 .event-status{justify-self:end}
+.events-day-hdr{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--hint);padding:12px 18px 6px;border-bottom:1px solid var(--border-light);background:var(--subtle)}
 
 .footer{margin-top:28px;display:flex;justify-content:space-between;align-items:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);padding-top:16px;border-top:1px solid var(--border)}
 
