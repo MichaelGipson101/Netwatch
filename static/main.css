@@ -888,11 +888,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   /* ── Shell padding tighter ─────────────────────────────────────────────── */
   .shell{padding:14px 12px}
 
-  /* ── Header: tighter, allow wrap ──────────────────────────────────────── */
-  .topbar{flex-wrap:wrap;gap:8px;row-gap:10px}
-  .topbar .live-pip{display:none}              /* Hide "live" indicator pill */
-  .topbar .clock{font-size:11px}
-  .theme-toggle .theme-label{display:none}     /* Hide "auto/light/dark" word */
+  /* ── Nav: single compact row ─────────────────────────────────────────── */
+  nav{padding:8px 12px;margin-left:-12px;margin-right:-12px;gap:8px}
+  .nw-logo{height:22px}
+  #pip{display:none}
+  .nav-right{gap:8px}
   #nav-auth{font-size:10px;gap:6px}
   #nav-auth button{padding:5px 8px}
 
@@ -903,18 +903,35 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 
   /* ── Topology grid: smaller minimum so 2 cards fit on narrow phones ──── */
   .topo-grid{grid-template-columns:1fr;gap:10px}
-  .group-card{padding:14px}
 
-  /* ── Hosts table: drop more columns on mobile ─────────────────────────── */
-  .row{grid-template-columns:24px 1fr 70px 70px;gap:6px;padding:10px 12px}
-  .col-ip,.col-ping,.col-group{display:none}    /* hide IP, ping, group cols */
-  .row-hdr{display:none}                          /* hide header row entirely */
-  .compact .row{grid-template-columns:24px 1fr 70px 70px}
+  /* ── Hosts table: header hidden, rows become a deliberate 2-line grid ── */
+  .row.hdr{display:none}
+  .row{grid-template-columns:20px 1fr 76px;grid-template-rows:auto auto;gap:4px 8px;padding:10px 12px}
+  .row > div:nth-child(1){grid-row:1;grid-column:1;align-self:center}
+  .row > div:nth-child(2){grid-row:1;grid-column:2}              /* name + ip sub */
+  .row > div:nth-child(4){grid-row:1;grid-column:3;justify-self:end}  /* badge */
+  .row > .lat{grid-row:2;grid-column:2;font-size:11px}
+  .row > .uptime-cell{grid-row:2;grid-column:3}
+  .col-ip,.col-ping{display:none}
+  .compact .row{grid-template-columns:20px 1fr 76px}
 
-  /* ── Events table: condense ───────────────────────────────────────────── */
-  .event{grid-template-columns:6px 1fr 80px;gap:8px;padding:11px 12px}
-  .event .col-started,.event .col-ended{display:none}
-  .events-hdr{display:none}
+  /* ── Events: bar / host / duration / badge ───────────────────────────── */
+  .event{grid-template-columns:6px 1fr auto auto;gap:8px;padding:11px 12px}
+  .event-time{display:none}
+
+  /* ── Hosts toolbar: stack vertically ─────────────────────────────────── */
+  .hosts-toolbar{flex-direction:column;align-items:stretch}
+  .hosts-filter-input{max-width:none;width:100%}
+  .hosts-toolbar > div{display:flex;flex-wrap:wrap;gap:6px}
+  .toolbar-right{justify-content:flex-end}
+
+  /* ── Topology toolbar + overlays ─────────────────────────────────────── */
+  .topo-web-controls{flex-wrap:wrap;row-gap:8px}
+  .topo-web-overlay{padding:6px 10px}
+  .topo-overlay-num{font-size:14px}
+  .topo-overlay-lbl{font-size:8px}
+  .topo-web-overlay-tl{top:10px;left:10px}
+  .topo-web-overlay-tr{top:10px;right:10px;max-width:46%}
 
   /* ── Modals: nearly full-screen on mobile ─────────────────────────────── */
   .modal-overlay{padding:0;align-items:flex-end}
@@ -959,49 +976,27 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   /* ── Inventory tab ────────────────────────────────────────────────────── */
   .inv-toolbar{flex-direction:column;align-items:stretch;gap:8px}
   .inv-search{width:100%;font-size:14px;padding:10px 12px}
-  .inv-toolbar-actions{display:flex;gap:8px}
-  .inv-toolbar-actions .btn{flex:1}
+  .inv-toolbar-actions{flex-wrap:wrap}
+  .inv-toolbar-actions .btn{flex:1 1 auto}
+  .inv-export-split{flex:1 1 auto;display:flex}
+  .inv-export-split .inv-export-main{flex:1}
+  .inv-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .inv-metrics{grid-template-columns:repeat(2,1fr);gap:8px}
   .inv-metric{padding:10px 12px}
   .inv-metric-val{font-size:18px}
 
-  /* Inventory table -> stacked cards. We hide the table chrome and turn each
-     row into a self-contained card with name+role on top, badges below. */
+  /* Inventory table -> stacked cards. Built on first/last cells so 6- and
+     7-column tables both work.                                              */
   .inv-table thead{display:none}                          /* hide column headers */
   .inv-table-wrap{background:transparent;border:none;overflow:visible}
   .inv-table,.inv-table tbody,.inv-table tr,.inv-table td{display:block}
   .inv-table tbody{display:flex;flex-direction:column;gap:8px}
-  .inv-row{
-    background:var(--surface);
-    border:1px solid var(--border-light);
-    border-radius:10px;
-    padding:12px 14px;
-    display:grid;
-    grid-template-columns:1fr auto;
-    grid-template-areas:
-      "name   status"
-      "meta   status"
-      "specs  specs";
-    gap:6px 10px;
-    align-items:start;
-  }
-  .inv-row td{padding:0;border:none}
-  .inv-row td:nth-child(1){grid-area:name}                        /* System+role */
-  .inv-row td:nth-child(2){grid-area:meta;font-size:11px}         /* Category */
-  .inv-row td:nth-child(3){grid-area:specs;font-size:11px;color:var(--muted)}
-  .inv-row td:nth-child(4){grid-area:specs;text-align:right;
-                           font-size:11px;color:var(--muted)}
-  .inv-row td:nth-child(5){display:none}                           /* hide OS col */
-  .inv-row td:nth-child(6){grid-area:status;justify-self:end}     /* status pill */
-  /* CPU and RAM tds (3 and 4) need to share the specs row */
-  .inv-row td:nth-child(3),.inv-row td:nth-child(4){
-    display:inline-block;
-    grid-area:specs;
-    width:auto;
-  }
-  .inv-row td:nth-child(3){padding-right:8px}
-  .inv-row td:nth-child(3)::after{content:" • ";color:var(--hint);
-                                 margin-left:5px}
+  .inv-row{background:var(--surface);border:1px solid var(--border-light);border-radius:10px;
+           padding:12px 14px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+  .inv-row td{padding:0;border:none;display:inline-block;font-size:11px;color:var(--muted)}
+  .inv-row td:first-child{flex:1 1 100%;font-size:13px;color:var(--text);order:-2}
+  .inv-row td:last-child{order:-1;margin-left:auto;flex:0 0 auto;align-self:center}
+  .inv-row td:not(:first-child):not(:last-child){margin-right:8px}
 
   /* Inventory editor: stack form to 1 column */
   .inv-edit-form{grid-template-columns:1fr;gap:10px}
@@ -1056,6 +1051,12 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   /* ── Backup button text shorter on mobile ─────────────────────────────── */
   /* (Just smaller padding; full text "Download backup" is still fine)      */
 
+}
+@media (max-width: 480px){
+  #clock{display:none}
+  .tabs{width:100%}
+  .scard{padding:12px 14px}
+  .scard-val{font-size:22px}
 }
 /* ── Deep Frost: ambient background blobs (dark mode only) ── */
 [data-theme="dark"] body{background-image:radial-gradient(ellipse 640px 420px at 28% -8%,rgba(93,187,141,.052) 0%,transparent 68%),radial-gradient(ellipse 420px 320px at 84% 92%,rgba(93,187,141,.032) 0%,transparent 68%);background-attachment:fixed}
