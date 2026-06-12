@@ -358,12 +358,6 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 /* Smoother transitions on state changes */
 .topo-node{transition:opacity .3s cubic-bezier(.4,0,.2,1)}
 
-/* Hover ring pulse */
-@keyframes topo-hover-ring{
-  0%   {opacity:0;transform:scale(.5)}
-  100% {opacity:0;transform:scale(1.6)}
-}
-
 /* Labels */
 .topo-node-label-below{text-anchor:middle;fill:var(--text);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;pointer-events:none;paint-order:stroke;stroke:var(--bg);stroke-width:3.5;stroke-linejoin:round;letter-spacing:.01em}
 
@@ -410,19 +404,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-legend-title{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--hint);margin-bottom:6px}
 .topo-legend-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;color:var(--glass-text)}
 .topo-legend-icon{flex-shrink:0;display:block}
-.topo-legend-shape{display:inline-block;width:14px;height:14px;flex-shrink:0;border:1.5px solid var(--muted);background:var(--subtle)}
-.topo-legend-shape.topo-leg-host{border-radius:50%;width:14px;height:14px}
-.topo-legend-shape.topo-leg-vm{border-radius:50%;width:10px;height:10px;background:#1f1a26}
-.topo-legend-shape.topo-leg-network{border-radius:3px;width:18px;height:10px;background:#1a2540}
-.topo-legend-shape.topo-leg-ups{border-radius:3px;width:18px;height:10px;background:#3a2e15}
-.topo-legend-shape.topo-leg-disk{border-radius:2px;width:11px;height:11px;background:#1f2a25}
-.topo-legend-shape.topo-leg-peripheral{border-radius:50%;width:9px;height:9px}
 .topo-legend-dot{display:inline-block;width:12px;height:12px;border-radius:50%;flex-shrink:0;border:2px solid;background:var(--subtle)}
 .topo-legend-dot.topo-leg-up{border-color:#5dbb8d}
 .topo-legend-dot.topo-leg-degraded{border-color:#f0a93b}
 .topo-legend-dot.topo-leg-down{border-color:#e57373}
 .topo-legend-dot.topo-leg-idle{border-color:#7a7a7a}
-.topo-legend-line{display:inline-block;width:24px;height:2px;flex-shrink:0;background:var(--muted);border-radius:1px}
 /* Inline SVG legend lines - show actual dash patterns matching the graph */
 .topo-legend-svg-line{flex-shrink:0;display:block}
 
@@ -434,12 +420,6 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-node:active{cursor:grabbing}
 .topo-web-svg.topo-dragging,
 .topo-web-svg.topo-dragging *{cursor:grabbing !important}
-.topo-legend-line.topo-leg-eth{background:var(--edge-eth)}
-.topo-legend-line.topo-leg-wifi{background:var(--edge-wifi);background-image:linear-gradient(90deg,var(--edge-wifi) 1px,transparent 1px,transparent 4px);background-size:5px 100%}
-.topo-legend-line.topo-leg-fiber{background:var(--edge-fiber);background-image:linear-gradient(90deg,var(--edge-fiber) 4px,transparent 4px,transparent 6px);background-size:6px 100%}
-.topo-legend-line.topo-leg-power{background:var(--edge-power);background-image:linear-gradient(90deg,var(--edge-power) 8px,transparent 8px,transparent 11px);background-size:11px 100%}
-.topo-legend-line.topo-leg-virtual{background:var(--edge-virtual);background-image:linear-gradient(90deg,var(--edge-virtual) 3px,transparent 3px,transparent 5px);background-size:5px 100%}
-.topo-legend-line.topo-leg-dead{background:var(--edge-dead);opacity:.45;background-image:linear-gradient(90deg,var(--edge-dead) 3px,transparent 3px,transparent 6px);background-size:6px 100%}
 .topo-tip-name{font-weight:600;color:var(--text);margin-bottom:2px}
 .topo-tip-meta{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:.04em;text-transform:uppercase}
 .topo-tip-row{margin-top:5px;display:flex;align-items:center;gap:6px}

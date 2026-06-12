@@ -33,6 +33,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.toggle('compact', e.target.checked);
     localStorage.setItem('nw-compact', e.target.checked);
   });
+
+  // App boot: auth gate, polling loops. Lives here (not inventory.js) so a
+  // failure in any later-loaded file can't kill the heartbeat.
+  fetchAuthState();
+  setInterval(fetchAuthState, 60000);
+  setInterval(refresh, REFRESH);
+  setInterval(clockTick, 1000);
+  clockTick();
 });
 
 function setTab(tab){
@@ -42,6 +50,7 @@ function setTab(tab){
     tab === 'topology' && _topoView === 'web');
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
   localStorage.setItem('nw-tab', tab);
+  if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();
 }
 
 const REFRESH = 5000;

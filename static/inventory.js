@@ -1375,18 +1375,3 @@ function showImportResult(cls, msg){
   el.style.display = '';
 }
 
-// Hook into the existing tab buttons to lazy-load inventory data
-document.addEventListener('click', e => {
-  const tab = e.target.closest('.tab[data-tab="inventory"]');
-  if(tab) fetchInventory();
-});
-
-// Initial inventory fetch on page load if tab is restored
-if(localStorage.getItem('nw-tab') === 'inventory') fetchInventory();
-
-// fetchAuthState() hides the landing page and calls refresh() once authenticated
-fetchAuthState();
-setInterval(fetchAuthState, 60000);
-setInterval(refresh, REFRESH);
-setInterval(clockTick, 1000);
-clockTick();

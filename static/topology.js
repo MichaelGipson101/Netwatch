@@ -436,10 +436,8 @@ function renderTopologyWeb(){
     d3.select(this).classed('topo-edge-hovered', false);
   });
 
-  // Tick handler: update positions + curved edges + flowing dot animation
-  let tickFrame = 0;
+  // Tick handler: update positions + curved edges + cache flow path lengths
   sim.on('tick', () => {
-    tickFrame++;
     nodeSel.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
     const edgePath = d => {
       const dx = d.target.x - d.source.x;
