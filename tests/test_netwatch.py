@@ -950,3 +950,12 @@ def test_vendored_asset_files_exist_on_disk():
     base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
     for fname in ['d3.v7.min.js', 'fonts.css', 'dmsans-400.woff2', 'dmmono-400.woff2']:
         assert os.path.exists(os.path.join(base, fname)), fname
+
+def test_dmsans_weights_are_distinct():
+    import hashlib
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
+    digests = {}
+    for w in ('300', '400', '500', '600'):
+        with open(os.path.join(base, f'dmsans-{w}.woff2'), 'rb') as f:
+            digests[w] = hashlib.md5(f.read()).hexdigest()
+    assert len(set(digests.values())) == 4, f'duplicate DM Sans weights: {digests}'
