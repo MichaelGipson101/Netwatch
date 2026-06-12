@@ -4,6 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Netwatch</title>
+<script>
+(function(){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(){
+    var pref = localStorage.getItem('nw-theme') || 'auto';
+    var resolved = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+    document.documentElement.setAttribute('data-theme', resolved);
+  }
+  apply();
+  mq.addEventListener('change', apply);
+  window.nwApplyTheme = apply;   // setTheme() re-runs this after pref changes
+})();
+</script>
 <link rel="stylesheet" href="/static/fonts.css?v={{VERSION}}">
   <link rel="stylesheet" href="/static/main.css?v={{VERSION}}">
 </head>

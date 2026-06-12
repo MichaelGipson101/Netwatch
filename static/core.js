@@ -1,18 +1,27 @@
-(function initTheme(){
-  const saved = localStorage.getItem('nw-theme') || 'auto';
-  document.documentElement.setAttribute('data-theme', saved);
+// Theme: the inline <head> script resolves auto -> light|dark before first
+// paint and exposes window.nwApplyTheme. Here we also apply on script load
+// (for harness/SSR where the head script may not have run with a patched default)
+// and expose setTheme() for button wiring.
+(function(){
+  var pref = localStorage.getItem('nw-theme') || 'auto';
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  var resolved = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.setAttribute('data-theme', resolved);
 })();
 function setTheme(mode){
-  document.documentElement.setAttribute('data-theme', mode);
   localStorage.setItem('nw-theme', mode);
+  if(window.nwApplyTheme) window.nwApplyTheme();
   document.querySelectorAll('#theme-toggle button').forEach(b => {
-    b.classList.toggle('active', b.dataset.themeBtn === mode);
+    const active = b.dataset.themeBtn === mode;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 }
 document.addEventListener('DOMContentLoaded', () => {
   const current = localStorage.getItem('nw-theme') || 'auto';
   document.querySelectorAll('#theme-toggle button').forEach(b => {
     b.classList.toggle('active', b.dataset.themeBtn === current);
+    b.setAttribute('aria-pressed', b.dataset.themeBtn === current ? 'true' : 'false');
     b.addEventListener('click', () => setTheme(b.dataset.themeBtn));
   });
 
