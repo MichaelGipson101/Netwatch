@@ -1,13 +1,6 @@
 // Theme: the inline <head> script resolves auto -> light|dark before first
-// paint and exposes window.nwApplyTheme. Here we also apply on script load
-// (for harness/SSR where the head script may not have run with a patched default)
-// and expose setTheme() for button wiring.
-(function(){
-  var pref = localStorage.getItem('nw-theme') || 'auto';
-  var mq = window.matchMedia('(prefers-color-scheme: dark)');
-  var resolved = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
-  document.documentElement.setAttribute('data-theme', resolved);
-})();
+// paint and exposes window.nwApplyTheme. setTheme() handles button wiring
+// and delegates actual theme application to that head script.
 function setTheme(mode){
   localStorage.setItem('nw-theme', mode);
   if(window.nwApplyTheme) window.nwApplyTheme();
