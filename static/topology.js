@@ -14,6 +14,9 @@ let _topoIncludeUnconnected = false;
 let _topoLastStatus = {};  // id -> status (for change detection / pulse)
 let _topoD3Loaded = false;
 let _topoD3Loading = null;  // Promise during load
+let _topoUserAdjusted = false;   // true once the user pans/zooms/drags
+let _flowRaf = null;             // requestAnimationFrame id for flow dots
+const _reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const TOPO_POSITIONS_KEY = 'nw-topo-positions';
 
 function loadTopoPositions(){
@@ -70,6 +73,7 @@ function setTopoView(view){
     if(web)  web.style.display  = 'block';
     initTopologyWeb();
   } else {
+    if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }
     if(web)  web.style.display  = 'none';
     if(grid) grid.style.display = '';
   }
@@ -132,6 +136,8 @@ function renderTopologyWeb(){
     return;
   }
 
+  _topoUserAdjusted = false;
+
   // Stable copies + restore pinned positions from localStorage
   const positions = loadTopoPositions();
   const nodeMap = {};
@@ -171,7 +177,10 @@ function renderTopologyWeb(){
   const zoomG = svg.append('g').attr('class', 'topo-zoom');
   _topoZoom = d3.zoom()
     .scaleExtent([0.1, 4])
-    .on('zoom', (ev) => zoomG.attr('transform', ev.transform));
+    .on('zoom', (ev) => {
+      if(ev.sourceEvent) _topoUserAdjusted = true;   // ignore programmatic fits
+      zoomG.attr('transform', ev.transform);
+    });
   svg.call(_topoZoom);
 
   // Resize observer: keeps SVG viewBox + simulation centered when the
@@ -200,7 +209,7 @@ function renderTopologyWeb(){
             _topoSimulation.alphaTarget(0.05).restart();
             // Cool back down after a moment
             setTimeout(() => {
-              if(_topoSimulation) _topoSimulation.alphaTarget(0.02);
+              if(_topoSimulation) _topoSimulation.alphaTarget(0);
             }, 800);
           }
         }
@@ -441,43 +450,39 @@ function renderTopologyWeb(){
     };
     edgeSel.select('path.topo-edge-line').attr('d', edgePath);
     edgeSel.select('path.topo-edge-hit').attr('d', edgePath);
-    // Position both flow dots along the path. Forward dot goes 0 -> 1,
-    // reverse dot goes 1 -> 0, offset so they don't collide visually.
-    edgeSel.each(function(d){
+    edgeSel.each(function(){
       const path = this.querySelector('path.topo-edge-line');
-      if(!path) return;
-      const len = path.getTotalLength();
-      if(!len) return;
-      const fwd = this.querySelector('circle.topo-edge-flow-fwd');
-      const rev = this.querySelector('circle.topo-edge-flow-rev');
-      // Speed varies by connection type
-      let speed = 0.3;
-      if(d.connection_type === 'fiber')   speed = 0.5;
-      if(d.connection_type === 'wifi')    speed = 0.18;
-      if(d.connection_type === 'virtual') speed = 0.22;
-      if(d.connection_type === 'power')   speed = 0.15;
-      if(d.connection_type === 'usb')     speed = 0.4;
-      if(d.connection_type === 'console') speed = 0.2;
-      const t = ((tickFrame * speed) % 100) / 100;
-      const tFwd = t;
-      const tRev = (t + 0.5) % 1;  // offset by half so they don't overlap
-      if(fwd){
-        const pt = path.getPointAtLength(tFwd * len);
-        fwd.setAttribute('cx', pt.x);
-        fwd.setAttribute('cy', pt.y);
-      }
-      if(rev){
-        // Travel from end -> start
-        const pt = path.getPointAtLength((1 - tRev) * len);
-        rev.setAttribute('cx', pt.x);
-        rev.setAttribute('cy', pt.y);
-      }
+      this._flowLen = path ? path.getTotalLength() : 0;   // cache while geometry changes
     });
   });
 
+  // Flow dots: time-based rAF loop, independent of the (now-resting)
+  // simulation. Uses cached path lengths; pauses when hidden; disabled
+  // under prefers-reduced-motion.
+  const SPEEDS = {ethernet:.10, fiber:.16, wifi:.06, virtual:.07, power:.05, usb:.13, console:.065, other:.10};
+  if(_flowRaf) cancelAnimationFrame(_flowRaf);
+  function flowFrame(ts){
+    edgeSel.each(function(d){
+      const len = this._flowLen;
+      if(!len) return;
+      const path = this.querySelector('path.topo-edge-line');
+      const speed = SPEEDS[d.connection_type] || .10;
+      const t = (ts / 1000 * speed) % 1;
+      const fwd = this.querySelector('.topo-edge-flow-fwd');
+      const rev = this.querySelector('.topo-edge-flow-rev');
+      if(fwd){ const p = path.getPointAtLength(t * len); fwd.setAttribute('cx', p.x); fwd.setAttribute('cy', p.y); }
+      if(rev){ const p = path.getPointAtLength((1 - (t + .5) % 1) * len); rev.setAttribute('cx', p.x); rev.setAttribute('cy', p.y); }
+    });
+    _flowRaf = requestAnimationFrame(flowFrame);
+  }
+  if(!_reducedMotion.matches) _flowRaf = requestAnimationFrame(flowFrame);
+
   // Cool the simulation gradually
   sim.alpha(1).restart();
-  setTimeout(() => sim.alphaTarget(0.02).restart(), 4000);
+  setTimeout(() => {
+    sim.alphaTarget(0);              // decay below alphaMin -> tick loop stops
+    if(!_topoUserAdjusted) fitTopologyToView();
+  }, 4000);
   // Run label collision pass after the simulation has had time to settle.
   // This nudges overlapping labels apart so dense areas read more clearly.
   setTimeout(() => spreadOverlappingLabels(nodeSel), 4500);
@@ -491,13 +496,14 @@ function renderTopologyWeb(){
   function dragStart(ev, d){
     if(!ev.active) sim.alphaTarget(0.3).restart();
     d.fx = d.x; d.fy = d.y;
+    _topoUserAdjusted = true;
     if(_topoSvg) _topoSvg.classed('topo-dragging', true);
   }
   function dragMove(ev, d){
     d.fx = ev.x; d.fy = ev.y;
   }
   function dragEnd(ev, d){
-    if(!ev.active) sim.alphaTarget(0.02);
+    if(!ev.active) sim.alphaTarget(0);
     // Persist the pinned position so it survives reloads
     saveTopoPosition(d.id, d.fx, d.fy);
     // Re-run label collision since the dragged node's neighborhood changed
@@ -651,11 +657,28 @@ function updateTopologyWebStatus(statusData){
   });
 }
 
+let _resetArmTimer = null;
 function topologyResetPositions(){
-  if(!confirm('Reset all node positions and re-run the layout?')) return;
+  const btn = document.querySelector('.topo-web-controls .topo-view-btn-ghost:last-child')
+    || document.querySelector('[onclick="topologyResetPositions()"]');
+  if(!btn) return;
+  if(btn.dataset.armed !== '1'){
+    btn.dataset.armed = '1';
+    btn.dataset.label = btn.textContent;
+    btn.textContent = 'Confirm reset?';
+    btn.style.color = 'var(--red-text)';
+    _resetArmTimer = setTimeout(() => disarmReset(btn), 3000);
+    return;
+  }
+  clearTimeout(_resetArmTimer);
+  disarmReset(btn);
   clearTopoPositions();
-  // Force a fresh render
   fetchAndRenderTopologyWeb();
+}
+function disarmReset(btn){
+  btn.dataset.armed = '';
+  if(btn.dataset.label) btn.textContent = btn.dataset.label;
+  btn.style.color = '';
 }
 
 function topologyToggleUnconnected(checked){
@@ -888,5 +911,14 @@ document.addEventListener('keydown', (ev) => {
     if(!anyModalOpen){
       exitTopologyFullscreen();
     }
+  }
+});
+
+// Pause the flow loop when the tab is hidden or we leave web view.
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden){
+    if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }
+  } else if(_topoView === 'web' && _topoSvg){
+    renderTopologyWeb();   // re-render restarts sim warmup + flow loop cleanly
   }
 });

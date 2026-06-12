@@ -337,6 +337,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 @media (prefers-reduced-motion: reduce){
   .topo-status-up .topo-node-icon,
   .topo-status-down .topo-node-icon{animation:none}
+  .topo-grid-bg{animation:none}
+  .live-dot{animation:none}
+  .event-bar,.d-incident-bar{animation:none !important}
+  #ai-bubble-btn.streaming{animation:none}
+  .topo-edge-flow{display:none}
 }
 
 /* Background grid drift - very slow translate so the dots feel alive */
