@@ -220,11 +220,13 @@ function renderTopologyWeb(){
       .attr('class', 'topo-grid-dot');
 
 
-  // Vignette: radial gradient overlay at canvas edges
-  const vignette = defs.append('radialGradient').attr('id', 'topo-vignette')
-    .attr('cx', '50%').attr('cy', '50%').attr('r', '70%');
-  vignette.append('stop').attr('offset', '60%').attr('stop-color', 'transparent');
-  vignette.append('stop').attr('offset', '100%').attr('stop-color', 'rgba(0,0,0,0.4)');
+  // Two vignettes; CSS picks the right one per theme.
+  [['topo-vignette-dark','rgba(0,0,0,0.4)'],['topo-vignette-light','rgba(15,18,24,0.07)']].forEach(([id,edge]) => {
+    const g = defs.append('radialGradient').attr('id', id)
+      .attr('cx','50%').attr('cy','50%').attr('r','70%');
+    g.append('stop').attr('offset','60%').attr('stop-color','transparent');
+    g.append('stop').attr('offset','100%').attr('stop-color', edge);
+  });
   zoomG.append('rect')
     .attr('x', -2000).attr('y', -2000)
     .attr('width', 4000).attr('height', 4000)
@@ -237,7 +239,6 @@ function renderTopologyWeb(){
     .attr('class', 'topo-vignette-rect')
     .attr('x', 0).attr('y', 0)
     .attr('width', '100%').attr('height', '100%')
-    .attr('fill', 'url(#topo-vignette)')
     .style('pointer-events', 'none');
 
   // Force simulation
