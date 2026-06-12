@@ -481,7 +481,7 @@ function renderTopologyWeb(){
   sim.alpha(1).restart();
   setTimeout(() => {
     sim.alphaTarget(0);              // decay below alphaMin -> tick loop stops
-    if(!_topoUserAdjusted) fitTopologyToView();
+    if(_topoView === 'web' && !_topoUserAdjusted) fitTopologyToView();
   }, 4000);
   // Run label collision pass after the simulation has had time to settle.
   // This nudges overlapping labels apart so dense areas read more clearly.
