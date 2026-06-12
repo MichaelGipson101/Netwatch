@@ -514,7 +514,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .dot-idle{background:var(--hint);box-shadow:0 0 0 3px var(--subtle)}
 .host-name{font-weight:500;font-size:13px}
 .host-ip-sub{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);margin-top:1px}
-@media(min-width:769px){.host-ip-sub{display:none}}
+@media(min-width:781px){.host-ip-sub{display:none}}
 .badge{font-size:10px;font-family:'DM Mono',monospace;font-weight:500;padding:3px 8px;border-radius:4px;display:inline-block;letter-spacing:.04em}
 .badge-up{background:var(--green-bg);color:var(--green-text)}
 .badge-dn{background:var(--red-bg);color:var(--red-text)}
