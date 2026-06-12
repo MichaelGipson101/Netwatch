@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import re
 import io
 import json as _json
 import threading as _threading
@@ -928,3 +929,24 @@ def test_dashboard_html_version_substitution(tmp_path):
     out = _load_dashboard_html(str(tmp_path))
     assert "{{VERSION}}" not in out
     assert f"?v={VERSION}" in out
+
+
+# ── static asset self-hosting ────────────────────────────────────────────
+
+def test_static_whitelist_includes_vendored_assets():
+    from monitor import _STATIC_FILES
+    expected = {
+        'd3.v7.min.js': 'application/javascript',
+        'fonts.css': 'text/css',
+        'dmsans-300.woff2': 'font/woff2', 'dmsans-400.woff2': 'font/woff2',
+        'dmsans-500.woff2': 'font/woff2', 'dmsans-600.woff2': 'font/woff2',
+        'dmmono-400.woff2': 'font/woff2', 'dmmono-500.woff2': 'font/woff2',
+    }
+    for fname, mime in expected.items():
+        assert fname in _STATIC_FILES, fname
+        assert _STATIC_FILES[fname].startswith(mime), fname
+
+def test_vendored_asset_files_exist_on_disk():
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
+    for fname in ['d3.v7.min.js', 'fonts.css', 'dmsans-400.woff2', 'dmmono-400.woff2']:
+        assert os.path.exists(os.path.join(base, fname)), fname

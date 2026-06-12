@@ -2869,12 +2869,20 @@ def build_api_payload(host_manager, settings, incident_log=None, inventory_db=No
 
 _STATIC_FILES = {
     'main.css':    'text/css; charset=utf-8',
+    'fonts.css':   'text/css; charset=utf-8',
     'utils.js':    'application/javascript; charset=utf-8',
     'core.js':     'application/javascript; charset=utf-8',
     'topology.js': 'application/javascript; charset=utf-8',
     'inventory.js':'application/javascript; charset=utf-8',
     'auth.js':     'application/javascript; charset=utf-8',
     'ai-panel.js': 'application/javascript; charset=utf-8',
+    'd3.v7.min.js':    'application/javascript; charset=utf-8',
+    'dmsans-300.woff2':'font/woff2',
+    'dmsans-400.woff2':'font/woff2',
+    'dmsans-500.woff2':'font/woff2',
+    'dmsans-600.woff2':'font/woff2',
+    'dmmono-400.woff2':'font/woff2',
+    'dmmono-500.woff2':'font/woff2',
 }
 
 # ── Route handler functions (module-level; testable without HTTP) ─────────────

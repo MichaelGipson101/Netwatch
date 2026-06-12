@@ -34,10 +34,12 @@ function ensureD3(){
   if(_topoD3Loading) return _topoD3Loading;
   _topoD3Loading = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js';
+    // Vendored copy — no {{VERSION}} templating inside JS files, and the
+    // file content is immutable for this filename, so a bare URL is safe.
+    s.src = '/static/d3.v7.min.js';
     s.async = true;
     s.onload = () => { _topoD3Loaded = true; resolve(); };
-    s.onerror = () => reject(new Error('Failed to load D3 from CDN'));
+    s.onerror = () => reject(new Error('failed to load /static/d3.v7.min.js'));
     document.head.appendChild(s);
   });
   return _topoD3Loading;
@@ -81,7 +83,7 @@ async function initTopologyWeb(){
   try {
     await ensureD3();
   } catch(e){
-    container.innerHTML = '<div class="topo-web-loading topo-web-error">Could not load D3 from CDN: '
+    container.innerHTML = '<div class="topo-web-loading topo-web-error">Could not load the graph library: '
       + escapeHtml(e.message) + '</div>';
     return;
   }
