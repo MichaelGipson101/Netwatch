@@ -579,7 +579,7 @@ git commit -m "feat: first-class light mode for topology canvas (glass, vignette
 **Files:**
 - Modify: `static/topology.js`
 
-- [ ] **Step 1: Interaction tracking + auto-fit**
+- [x] **Step 1: Interaction tracking + auto-fit**
 
 Add module state near the top (after `_topoD3Loading`):
 
@@ -602,7 +602,7 @@ In `renderTopologyWeb()`: set `_topoUserAdjusted = false;` right before `contain
 
 In `dragStart` add `_topoUserAdjusted = true;`.
 
-- [ ] **Step 2: Let the simulation actually stop**
+- [x] **Step 2: Let the simulation actually stop**
 
 Replace the cooldown lines
 
@@ -623,7 +623,7 @@ with:
 
 In `dragEnd` change `sim.alphaTarget(0.02)` → `sim.alphaTarget(0)`. In the ResizeObserver callback change `_topoSimulation.alphaTarget(0.05).restart()` cool-down line `alphaTarget(0.02)` → `alphaTarget(0)`.
 
-- [ ] **Step 3: Flow dots on rAF with cached lengths**
+- [x] **Step 3: Flow dots on rAF with cached lengths**
 
 In the tick handler, delete the entire `edgeSel.each(function(d){ ... })` dot-positioning block and replace with length caching:
 
@@ -674,7 +674,7 @@ document.addEventListener('visibilitychange', () => {
 
 And in `setTopoView()`, when leaving web mode add: `if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }`.
 
-- [ ] **Step 4: Two-step reset (drop confirm())**
+- [x] **Step 4: Two-step reset (drop confirm())**
 
 Replace `topologyResetPositions()`:
 
@@ -704,7 +704,7 @@ function disarmReset(btn){
 }
 ```
 
-- [ ] **Step 5: Reduced-motion CSS for remaining canvas animation**
+- [x] **Step 5: Reduced-motion CSS for remaining canvas animation**
 
 Extend the existing `@media (prefers-reduced-motion: reduce)` block in main.css to:
 
@@ -720,7 +720,7 @@ Extend the existing `@media (prefers-reduced-motion: reduce)` block in main.css 
 }
 ```
 
-- [ ] **Step 6: Verify + commit**
+- [x] **Step 6: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t7` — `dark-topo-web.png` should now show the full graph framed (auto-fit; nothing clipped at edges). Manually: `top -bn1 -p $(pgrep -f 'port 8089')` while a real chromium kiosk is open is optional; primary check is visual.
 
@@ -736,7 +736,7 @@ git commit -m "perf: rest force simulation, rAF flow dots, auto-fit, two-step re
 **Files:**
 - Modify: `static/core.js`, `static/inventory.js:1378-1391`, `dashboard.html:12-53`, `static/main.css`
 
-- [ ] **Step 1: Move boot into core.js**
+- [x] **Step 1: Move boot into core.js**
 
 In core.js's existing `DOMContentLoaded` listener (after the compact-mode wiring), append:
 
@@ -752,18 +752,18 @@ In core.js's existing `DOMContentLoaded` listener (after the compact-mode wiring
 
 (`fetchAuthState` is defined in auth.js — loaded before DOMContentLoaded fires, since all scripts are classic scripts before `</body>`.)
 
-- [ ] **Step 2: Inventory loads via setTab**
+- [x] **Step 2: Inventory loads via setTab**
 
 In `setTab(tab)` add as last line: `if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();`
 Delete from inventory.js: the tab click-hook (`document.addEventListener('click', e => { const tab = e.target.closest('.tab[data-tab="inventory"]'); ... })`), the `if(localStorage.getItem('nw-tab') === 'inventory') fetchInventory();` line, and the four boot lines (`fetchAuthState(); setInterval(...) x3`).
 
-- [ ] **Step 3: Delete dead code**
+- [x] **Step 3: Delete dead code**
 
 - `dashboard.html:12-53`: remove the entire first `<svg>` sprite block (symbols `icon-host` … `icon-peripheral`). Verify nothing references them: `grep -rn '"#icon-' static/ dashboard.html` → no output.
 - main.css: delete `.topo-legend-shape` rules (7 rules, lines ~415-421), `.topo-legend-line` + its 6 `.topo-leg-*` variants (~427, 439-444), and `@keyframes topo-hover-ring`.
 - Verify: `grep -n "topo-legend-shape\|topo-legend-line\|topo-hover-ring" static/main.css dashboard.html static/*.js` → no output.
 
-- [ ] **Step 4: Verify + commit**
+- [x] **Step 4: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t8` — every tab still renders + refreshes (clock shows, summary populated, inventory table loads). Note: the harness's inventory sed becomes a no-op after this task — restored-tab loading now works natively; confirm `dark-inventory.png` shows data.
 
@@ -779,7 +779,7 @@ git commit -m "refactor: boot wiring in core.js, inventory load via setTab, remo
 **Files:**
 - Modify: `static/main.css` (the `@media (max-width: 768px)` block + new ≤480px rules)
 
-- [ ] **Step 1: Replace the dead-selector rules**
+- [x] **Step 1: Replace the dead-selector rules**
 
 Inside the existing `@media (max-width: 768px){...}` block, DELETE these rules: `.topbar{...}`, `.topbar .live-pip{...}`, `.topbar .clock{...}`, `.theme-toggle .theme-label{...}`, `.group-card{...}`, `.row-hdr{...}`, `.events-hdr{...}`, `.event .col-started,.event .col-ended{...}`, `.col-group` (from the `.col-ip,.col-ping,.col-group` list — keep `.col-ip,.col-ping`). ADD in their place:
 
@@ -806,7 +806,7 @@ Inside the existing `@media (max-width: 768px){...}` block, DELETE these rules: 
   .event-time{display:none}
 ```
 
-- [ ] **Step 2: Stack the hosts + topo toolbars**
+- [x] **Step 2: Stack the hosts + topo toolbars**
 
 Add inside the same ≤768px block:
 
@@ -824,7 +824,7 @@ Add inside the same ≤768px block:
   .topo-web-overlay-tr{top:10px;right:10px;max-width:46%}
 ```
 
-- [ ] **Step 3: Inventory toolbar + chips + robust cards**
+- [x] **Step 3: Inventory toolbar + chips + robust cards**
 
 Still inside ≤768px — replace the existing `.inv-row{...}` card block (and its `td:nth-child` rules) entirely with:
 
@@ -844,7 +844,7 @@ Still inside ≤768px — replace the existing `.inv-row{...}` card block (and i
   .inv-row td:not(:first-child):not(:last-child){margin-right:8px}
 ```
 
-- [ ] **Step 4: ≤480px refinements**
+- [x] **Step 4: ≤480px refinements**
 
 Append after the 768px block:
 
@@ -857,7 +857,7 @@ Append after the 768px block:
 }
 ```
 
-- [ ] **Step 5: Verify + commit**
+- [x] **Step 5: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t9`. Check `m-dark-hosts.png` (no header garbage, clean 2-line rows, no chip clipping, single-row nav), `m-dark-topo.png` (toolbar wraps, overlays inside canvas), `m-light-inventory.png` (export button visible, chips ellipsized, status pill on cards).
 
@@ -873,7 +873,7 @@ git commit -m "fix: rebuild mobile layout on real selectors (nav, hosts, events,
 **Files:**
 - Modify: `static/utils.js`, `static/core.js`, `static/main.css`
 
-- [ ] **Step 1: Icon size + light-mode lift**
+- [x] **Step 1: Icon size + light-mode lift**
 
 In `utils.js deviceIcon()` add a class and bump default size handling:
 
@@ -893,11 +893,11 @@ Change every 18px call site to 22: `grep -rn "deviceIcon(" static/*.js` and upda
 
 (Tune the brightness value 1.2-1.4 by eyeballing the Task-10 screenshot; pick what makes chassis edges readable on white.)
 
-- [ ] **Step 2: IP once per breakpoint**
+- [x] **Step 2: IP once per breakpoint**
 
 main.css, outside media queries: add `@media (min-width: 769px){ .host-ip-sub{display:none} }` — desktop uses the IP column, phones keep the subtitle (mobile already hides `.col-ip`).
 
-- [ ] **Step 3: Hosts empty state**
+- [x] **Step 3: Hosts empty state**
 
 In `core.js renderGroups(data)`, before building HTML add:
 
@@ -911,11 +911,11 @@ In `core.js renderGroups(data)`, before building HTML add:
   }
 ```
 
-- [ ] **Step 4: Latency thresholds + arrow**
+- [x] **Step 4: Latency thresholds + arrow**
 
 utils.js `fmtLatency`: `ms < 20` → `ms < 50`, `ms < 100` → `ms < 150`. core.js wake button: `<span class="arrow">-></span>` → `<span class="arrow">→</span>`. core.js `renderTopologyNode`: remove ` title="Click for details"`.
 
-- [ ] **Step 5: Drawer STATUS stat (both render paths)**
+- [x] **Step 5: Drawer STATUS stat (both render paths)**
 
 In `renderDrawer` replace the first stat cell:
 
@@ -938,7 +938,7 @@ In `renderDrawer` replace the first stat cell:
 
 (declare the same `statusColor` const at the top of `updateDrawerStats`; remove the old `labelLat` usage there).
 
-- [ ] **Step 6: Verify + commit**
+- [x] **Step 6: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t10` — `light-hosts.png`: icons readable at 22px, single IP per row, latency colors calmer.
 
