@@ -146,6 +146,7 @@ function setInvTypeFilter(t){
   _inventoryFilter.deviceType = t;
   // Reset category filter when type changes - keeps things simple
   _inventoryFilter.category = null;
+  _invCatsExpanded = false;
   renderInventoryChips();
   renderInventoryRows();
 }
