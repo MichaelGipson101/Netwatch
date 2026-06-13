@@ -60,6 +60,7 @@ function setTab(tab){
 }
 
 const REFRESH = 5000;
+let _firstRender = true;
 let lastOk = true;
 let lastData = null;
 let openDrawerIp = null;
@@ -325,6 +326,13 @@ async function refresh(){
     if(fav){
       const want = down > 0 ? '/static/favicon-alert.svg' : '/static/favicon.svg';
       if(!fav.href.endsWith(want)) fav.href = want;
+    }
+    if(_firstRender){
+      _firstRender = false;
+      if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+        document.body.classList.add('nw-anim');
+        setTimeout(() => document.body.classList.remove('nw-anim'), 900);
+      }
     }
     renderSummary(data);
     renderTopology(data);

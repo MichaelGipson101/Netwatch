@@ -333,6 +333,18 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-node:hover .topo-node-icon,
 .topo-node.focus .topo-node-icon{animation:none}
 
+/* One orchestrated load reveal. body.nw-anim is added by JS before first
+   data render and removed after; without JS everything is simply visible. */
+body.nw-anim .scard,body.nw-anim .topo-group,body.nw-anim .table{animation:nw-rise .38s cubic-bezier(.2,.7,.3,1) backwards}
+body.nw-anim .scard:nth-child(1){animation-delay:.02s}
+body.nw-anim .scard:nth-child(2){animation-delay:.07s}
+body.nw-anim .scard:nth-child(3){animation-delay:.12s}
+body.nw-anim .scard:nth-child(4){animation-delay:.17s}
+body.nw-anim .topo-group:nth-child(1),body.nw-anim .group:nth-child(1) .table{animation-delay:.10s}
+body.nw-anim .topo-group:nth-child(2),body.nw-anim .group:nth-child(2) .table{animation-delay:.16s}
+body.nw-anim .topo-group:nth-child(3),body.nw-anim .group:nth-child(3) .table{animation-delay:.22s}
+@keyframes nw-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
 /* Reduced-motion: kill the animations but keep the halo */
 @media (prefers-reduced-motion: reduce){
   .topo-status-up .topo-node-icon,
@@ -342,6 +354,8 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
   .event-bar,.d-incident-bar{animation:none !important}
   #ai-bubble-btn.streaming{animation:none}
   .topo-edge-flow{display:none}
+  body.nw-anim .scard,body.nw-anim .topo-group,body.nw-anim .table{animation:none}
+  .scard:hover{transform:none}
 }
 
 /* Background grid drift - very slow translate so the dots feel alive */
@@ -448,11 +462,13 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .scard-sub{font-size:11px;color:var(--hint);margin-top:5px}
 .scard-health-ok{background:var(--green-soft);border-color:var(--green-bg)}
 .scard-health-warn{background:var(--red-soft);border-color:var(--red-bg)}
+.scard:hover{transform:translateY(-1px);box-shadow:var(--shadow-2)}
 
 /* Topology */
 .topo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
-.topo-group{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;transition:box-shadow .3s;box-shadow:var(--shadow-1)}
+.topo-group{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;transition:box-shadow .3s,transform .2s;box-shadow:var(--shadow-1)}
 .topo-group.has-down{border-color:var(--red);box-shadow:0 0 0 4px var(--red-soft)}
+.topo-group:hover{box-shadow:var(--shadow-2)}
 .topo-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .topo-name{font-size:11px;font-family:'DM Mono',monospace;letter-spacing:.09em;text-transform:uppercase;color:var(--hint);font-weight:500}
 .topo-count{font-size:11px;font-family:'DM Mono',monospace;color:var(--green-text)}
