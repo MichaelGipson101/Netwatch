@@ -54,11 +54,13 @@ function renderInventoryMetrics(){
   });
   // Use the global INV_TYPE_ORDER constant. For the breakdown line we
   // lowercase the labels and keep "other" for peripheral (was a special
-  // case in the original code).
+  // case in the original code). Singular form is used when count === 1.
   const breakdownLabels = Object.assign({}, INV_TYPE_LABELS, {peripheral: 'Other'});
   const breakdownParts = INV_TYPE_ORDER
     .filter(t => typeCounts[t])
-    .map(t => typeCounts[t] + ' ' + (breakdownLabels[t] || t).toLowerCase());
+    .map(t => typeCounts[t] + ' ' + (typeCounts[t] === 1
+      ? (INV_TYPE_SINGULAR[t] || t)
+      : (breakdownLabels[t] || t).toLowerCase()));
   const html = [
     '<div class="inv-metric"><div class="inv-metric-label">Total devices</div><div class="inv-metric-val">' + total + '</div><div class="inv-metric-sub">' + (breakdownParts.join(' · ') || 'no records yet') + '</div></div>',
     '<div class="inv-metric"><div class="inv-metric-label">Hosts</div><div class="inv-metric-val">' + hostsCount + '</div><div class="inv-metric-sub">' + active + ' currently online</div></div>',
@@ -69,8 +71,10 @@ function renderInventoryMetrics(){
   document.getElementById('inv-metrics').innerHTML = html;
 }
 
+let _invCatsExpanded = false;
+const INV_CAT_LIMIT = 8;
+
 function renderInventoryChips(){
-  // Calculate counts from the search-filtered set so chips reflect what's visible
   let searchFiltered = _inventoryData;
   if(_inventoryFilter.search){
     const q = _inventoryFilter.search.toLowerCase();
@@ -80,60 +84,62 @@ function renderInventoryChips(){
       || (i.os || '').toLowerCase().includes(q)
       || (i.cpu || '').toLowerCase().includes(q)
       || (i.gpu || '').toLowerCase().includes(q)
-      || JSON.stringify(i.properties || {}).toLowerCase().includes(q)
-    );
+      || JSON.stringify(i.properties || {}).toLowerCase().includes(q));
   }
+  const chipBtn = (label, count, active, onclick) =>
+    '<button type="button" class="inv-chip' + (active ? ' active' : '') + '" onclick="' + onclick + '">'
+    + escapeHtml(label) + (count !== null ? '<span class="inv-chip-count">' + count + '</span>' : '') + '</button>';
 
-  // Type chips (top row)
   const typeCounts = {};
-  searchFiltered.forEach(i => {
-    const t = i.device_type || 'host';
-    typeCounts[t] = (typeCounts[t] || 0) + 1;
-  });
-  // Use the global INV_TYPE_ORDER / INV_TYPE_LABELS constants so this
-  // automatically picks up future type additions.
-  const typeChips = ['<span class="inv-chip inv-chip-type ' + (_inventoryFilter.deviceType === null ? 'active' : '') + '" onclick="setInvTypeFilter(null)">All<span class="inv-chip-count">' + searchFiltered.length + '</span></span>'];
+  searchFiltered.forEach(i => { const t = i.device_type || 'host'; typeCounts[t] = (typeCounts[t] || 0) + 1; });
+  const typeChips = [chipBtn('All', searchFiltered.length, _inventoryFilter.deviceType === null, 'setInvTypeFilter(null)')];
   INV_TYPE_ORDER.forEach(t => {
-    if(!typeCounts[t]) return;  // hide empty types
-    // HTML-escape the JSON string so the inline onclick attribute parses
-    // correctly. Without this, JSON.stringify produces "host" with literal
-    // quotes that clash with the surrounding attribute quotes.
+    if(!typeCounts[t]) return;
     const safeArg = JSON.stringify(t).replace(/"/g, '&quot;');
-    typeChips.push('<span class="inv-chip inv-chip-type ' + (_inventoryFilter.deviceType === t ? 'active' : '') + '" onclick="setInvTypeFilter(' + safeArg + ')">' + (INV_TYPE_LABELS[t] || t) + '<span class="inv-chip-count">' + typeCounts[t] + '</span></span>');
+    typeChips.push(chipBtn(INV_TYPE_LABELS[t] || t, typeCounts[t], _inventoryFilter.deviceType === t, 'setInvTypeFilter(' + safeArg + ')'));
   });
 
-  // Category chips (existing - second row). Filter categories by current
-  // type filter so we only show categories that exist within the active type.
   let scope = searchFiltered;
-  if(_inventoryFilter.deviceType !== null){
-    scope = scope.filter(i => (i.device_type || 'host') === _inventoryFilter.deviceType);
-  }
+  if(_inventoryFilter.deviceType !== null) scope = scope.filter(i => (i.device_type || 'host') === _inventoryFilter.deviceType);
   const cats = {};
-  scope.forEach(i => {
-    const c = i.category || '(uncategorized)';
-    cats[c] = (cats[c] || 0) + 1;
-  });
+  scope.forEach(i => { const c = i.category || '(uncategorized)'; cats[c] = (cats[c] || 0) + 1; });
   const sortedCats = Object.entries(cats).sort((a,b) => b[1] - a[1]);
-  const catChips = ['<span class="inv-chip ' + (_inventoryFilter.category === null ? 'active' : '') + '" onclick="setInvCategoryFilter(null)">All<span class="inv-chip-count">' + scope.length + '</span></span>'];
-  sortedCats.forEach(([cat, count]) => {
-    catChips.push('<span class="inv-chip ' + (_inventoryFilter.category === cat ? 'active' : '') + '" onclick="setInvCategoryFilter(' + JSON.stringify(cat).replace(/"/g, '&quot;') + ')">' + escapeHtml(cat) + '<span class="inv-chip-count">' + count + '</span></span>');
+  const visibleCats = _invCatsExpanded ? sortedCats : sortedCats.slice(0, INV_CAT_LIMIT);
+  const catChips = [chipBtn('All', scope.length, _inventoryFilter.category === null, 'setInvCategoryFilter(null)')];
+  visibleCats.forEach(([cat, count]) => {
+    const safeArg = JSON.stringify(cat).replace(/"/g, '&quot;');
+    catChips.push(chipBtn(cat, count, _inventoryFilter.category === cat, 'setInvCategoryFilter(' + safeArg + ')'));
   });
+  // Keep an active-but-hidden category visible so its chip never vanishes
+  if(!_invCatsExpanded && _inventoryFilter.category !== null
+     && !visibleCats.some(([c]) => c === _inventoryFilter.category) && cats[_inventoryFilter.category]){
+    const safeArg = JSON.stringify(_inventoryFilter.category).replace(/"/g, '&quot;');
+    catChips.push(chipBtn(_inventoryFilter.category, cats[_inventoryFilter.category], true, 'setInvCategoryFilter(' + safeArg + ')'));
+  }
+  if(sortedCats.length > INV_CAT_LIMIT){
+    catChips.push('<button type="button" class="inv-chip inv-chip-more" onclick="toggleInvCats()">'
+      + (_invCatsExpanded ? 'Show less' : '+' + (sortedCats.length - INV_CAT_LIMIT) + ' more') + '</button>');
+  }
 
   const STATUS_OPTS = [
-    {val: null,       label: 'All'},
-    {val: 'up',       label: 'Up'},
-    {val: 'down',     label: 'Down'},
-    {val: 'unlinked', label: 'Unlinked'},
+    {val: null, label: 'All'}, {val: 'up', label: 'Up'},
+    {val: 'down', label: 'Down'}, {val: 'unlinked', label: 'Unlinked'},
   ];
   const statusChips = STATUS_OPTS.map(o =>
-    '<span class="inv-chip ' + (_inventoryFilter.status === o.val ? 'active' : '') + '"'
-    + ' onclick="setInvStatusFilter(' + (o.val === null ? 'null' : JSON.stringify(o.val)) + ')">'
-    + escapeHtml(o.label) + '</span>'
-  );
+    chipBtn(o.label, null, _inventoryFilter.status === o.val,
+      'setInvStatusFilter(' + (o.val === null ? 'null' : JSON.stringify(o.val).replace(/"/g, '&quot;')) + ')'));
+
+  const rowFn = (label, chips) =>
+    '<div class="inv-chip-row"><span class="inv-chip-row-label">' + label + '</span>' + chips.join('') + '</div>';
   document.getElementById('inv-chips').innerHTML =
-    '<div class="inv-chip-row">' + statusChips.join('') + '</div>'
-    + '<div class="inv-chip-row inv-chip-row-types">' + typeChips.join('') + '</div>'
-    + (catChips.length > 1 ? '<div class="inv-chip-row inv-chip-row-cats">' + catChips.join('') + '</div>' : '');
+    rowFn('Status', statusChips)
+    + rowFn('Type', typeChips)
+    + (catChips.length > 1 ? rowFn('Category', catChips) : '');
+}
+
+function toggleInvCats(){
+  _invCatsExpanded = !_invCatsExpanded;
+  renderInventoryChips();
 }
 
 function setInvTypeFilter(t){
@@ -241,6 +247,10 @@ const INV_TYPE_LABELS = {
   host: 'Hosts', vm: 'VMs', network: 'Network', ups: 'UPS',
   disk: 'Disks', peripheral: 'Peripherals',
   tablet: 'Tablets', phone: 'Phones', printer: 'Printers'
+};
+const INV_TYPE_SINGULAR = {
+  host: 'host', vm: 'vm', network: 'network', ups: 'ups',
+  disk: 'disk', peripheral: 'other', tablet: 'tablet', phone: 'phone', printer: 'printer'
 };
 const INV_TYPE_ORDER = ['host', 'vm', 'network', 'ups', 'disk', 'peripheral', 'tablet', 'phone', 'printer'];
 
