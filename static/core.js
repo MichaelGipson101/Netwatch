@@ -320,6 +320,12 @@ async function refresh(){
     if(!res.ok) throw new Error('bad');
     const data = await res.json();
     lastData = data;
+    const down = data.hosts.filter(h => !h.is_up && h.status === 'DOWN').length;
+    const fav = document.getElementById('favicon-link');
+    if(fav){
+      const want = down > 0 ? '/static/favicon-alert.svg' : '/static/favicon.svg';
+      if(!fav.href.endsWith(want)) fav.href = want;
+    }
     renderSummary(data);
     renderTopology(data);
     updateTopologyWebStatus(data);

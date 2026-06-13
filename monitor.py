@@ -2890,6 +2890,12 @@ _STATIC_FILES = {
     'dmsans-600.woff2':'font/woff2',
     'dmmono-400.woff2':'font/woff2',
     'dmmono-500.woff2':'font/woff2',
+    'favicon.svg':     'image/svg+xml',
+    'favicon-alert.svg':'image/svg+xml',
+    'manifest.json':   'application/manifest+json',
+    'icon-192.png':    'image/png',
+    'icon-512.png':    'image/png',
+    'apple-touch-icon.png':'image/png',
 }
 
 # ── Route handler functions (module-level; testable without HTTP) ─────────────

@@ -941,6 +941,10 @@ def test_static_whitelist_includes_vendored_assets():
         'dmsans-300.woff2': 'font/woff2', 'dmsans-400.woff2': 'font/woff2',
         'dmsans-500.woff2': 'font/woff2', 'dmsans-600.woff2': 'font/woff2',
         'dmmono-400.woff2': 'font/woff2', 'dmmono-500.woff2': 'font/woff2',
+        'favicon.svg': 'image/svg+xml', 'favicon-alert.svg': 'image/svg+xml',
+        'manifest.json': 'application/manifest+json',
+        'icon-192.png': 'image/png', 'icon-512.png': 'image/png',
+        'apple-touch-icon.png': 'image/png',
     }
     for fname, mime in expected.items():
         assert fname in _STATIC_FILES, fname

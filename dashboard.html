@@ -11,6 +11,8 @@
     var pref = localStorage.getItem('nw-theme') || 'auto';
     var resolved = pref === 'auto' ? (mq.matches ? 'dark' : 'light') : pref;
     document.documentElement.setAttribute('data-theme', resolved);
+    var m = document.getElementById('theme-color-meta');
+    if(m) m.setAttribute('content', resolved === 'dark' ? '#0f0e0d' : '#f5f4f1');
   }
   apply();
   mq.addEventListener('change', apply);
@@ -19,6 +21,10 @@
 </script>
 <link rel="stylesheet" href="/static/fonts.css?v={{VERSION}}">
   <link rel="stylesheet" href="/static/main.css?v={{VERSION}}">
+<link rel="icon" id="favicon-link" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" id="theme-color-meta" content="#0f0e0d">
 </head>
 <body>
 <!-- Dimensional ("Variant A") icons used inside the topology web view.
