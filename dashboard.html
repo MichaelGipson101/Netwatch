@@ -213,7 +213,7 @@
 
   <div class="err-banner" id="err-banner">Lost connection to netwatch - retrying...</div>
 
-  <div class="tabs" role="tablist">
+  <div class="tabs" role="tablist" aria-label="Views">
     <button class="tab" data-tab="topology" role="tab">Topology</button>
     <button class="tab" data-tab="hosts" role="tab">Hosts</button>
     <button class="tab" data-tab="events" role="tab">Events <span class="tab-count" id="events-count" style="display:none">0</span></button>
@@ -337,7 +337,7 @@
 
   <div class="view" id="view-hosts">
     <div class="hosts-toolbar">
-      <input type="text" id="hosts-filter" class="hosts-filter-input" placeholder="Filter hosts…" oninput="applyHostFilter()" autocomplete="off">
+      <input type="text" id="hosts-filter" class="hosts-filter-input" placeholder="Filter hosts…" oninput="applyHostFilter()" autocomplete="off" aria-label="Filter hosts">
       <div style="display:flex;gap:6px">
         <button class="hosts-status-chip active" data-status="all"   onclick="setHostChip(this)">All</button>
         <button class="hosts-status-chip"        data-status="down"  onclick="setHostChip(this)">Down</button>

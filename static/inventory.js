@@ -440,7 +440,7 @@ function renderTypeTable(deviceType, rows, showHeading){
   out += '</tr></thead>';
   out += '<tbody>';
   sortedRows.forEach(rec => {
-    out += '<tr class="inv-row" onclick="openInventoryDrawer(' + rec.id + ')">';
+    out += '<tr class="inv-row" tabindex="0" onclick="openInventoryDrawer(' + rec.id + ')">';
     cols.forEach((c, i) => {
       if(i === 0){
         out += '<td><span style="display:flex;align-items:center;gap:5px">'

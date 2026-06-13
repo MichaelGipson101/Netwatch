@@ -47,7 +47,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setTab(tab){
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+    t.setAttribute('aria-selected', t.dataset.tab === tab ? 'true' : 'false');
+  });
   // Web-overlay metrics only apply when topology tab is active in web mode
   document.body.classList.toggle('nw-topo-web',
     tab === 'topology' && _topoView === 'web');
@@ -61,6 +64,7 @@ let lastOk = true;
 let lastData = null;
 let openDrawerIp = null;
 let drawerHistRange = 24;  // hours; persists across drawer opens this session
+let _drawerOpener = null;  // element that triggered openDrawer — focus returned on close
 const HIST_RANGES = [['1h', 1], ['6h', 6], ['24h', 24], ['7d', 168]];
 
 
@@ -87,7 +91,7 @@ function renderHost(h){
   const uLabel = uPct !== null ? uPct.toFixed(1) + '%' : '-%';
   const rowCls = isDegraded ? ' degraded-row' : (h.is_up || h.status === 'WAIT' || isIdle ? '' : ' down-row');
   const ipAttr = ' data-ip="' + escapeHtml(h.ip) + '"';
-  return '<div class="row' + rowCls + '"' + ipAttr + ' onclick="openDrawer(this.dataset.ip)">'
+  return '<div class="row' + rowCls + '"' + ipAttr + ' tabindex="0" role="button" onclick="openDrawer(this.dataset.ip)">'
     + '<div><span class="dot ' + dotCls + '"></span></div>'
     + '<div><div class="host-name" ' + nameStyle + '>'
     + deviceIcon(h.device_type, 22)
@@ -157,7 +161,7 @@ function renderTopologyNode(h){
   else if(isDegraded) lat = 'degraded';
   else if(h.is_up && h.latency_ms !== null) lat = h.latency_ms.toFixed(1) + 'ms';
   else lat = 'offline';
-  return '<div class="node ' + cls + '" data-ip="' + escapeHtml(h.ip) + '" onclick="openDrawer(this.dataset.ip)">'
+  return '<div class="node ' + cls + '" data-ip="' + escapeHtml(h.ip) + '" tabindex="0" role="button" onclick="openDrawer(this.dataset.ip)">'
     + '<span class="node-dot"></span>'
     + '<span class="node-name">' + escapeHtml(h.name) + '</span>'
     + '<span class="node-lat">' + lat + '</span>'
@@ -198,7 +202,7 @@ function renderTopology(data){
       } else {
         dur = '<span class="dur">down</span>';
       }
-      return '<div class="problem-pill" data-ip="' + escapeHtml(h.ip) + '" onclick="openDrawer(this.dataset.ip)"><span class="name">' + escapeHtml(h.name) + '</span><span class="ip">' + escapeHtml(h.ip) + '</span>' + dur + '</div>';
+      return '<div class="problem-pill" data-ip="' + escapeHtml(h.ip) + '" tabindex="0" role="button" onclick="openDrawer(this.dataset.ip)"><span class="name">' + escapeHtml(h.name) + '</span><span class="ip">' + escapeHtml(h.ip) + '</span>' + dur + '</div>';
     }).join('');
   } else {
     banner.classList.remove('show');
@@ -246,7 +250,7 @@ function renderEvents(data){
     const timeLabel = e.started_ts
       ? new Date(e.started_ts * 1000).toLocaleTimeString(undefined, {hourCycle:'h23'})
       : (e.started_str || '');
-    html += '<div class="event ' + cls + '" data-ip="' + escapeHtml(e.host_ip) + '" onclick="openDrawer(this.dataset.ip)">'
+    html += '<div class="event ' + cls + '" data-ip="' + escapeHtml(e.host_ip) + '" tabindex="0" role="button" onclick="openDrawer(this.dataset.ip)">'
       + '<div class="event-bar"></div>'
       + '<div class="event-host">' + escapeHtml(e.host_name) + ' <span class="ip">' + escapeHtml(e.host_ip) + '</span></div>'
       + '<div class="event-time">' + escapeHtml(timeLabel) + '</div>'
@@ -356,10 +360,13 @@ function openDrawer(ip){
   if(!lastData) return;
   const h = lastData.hosts.find(x => x.ip === ip);
   if(!h) return;
+  _drawerOpener = document.activeElement;
   openDrawerIp = ip;
   renderDrawer(h, lastData);
   document.getElementById('drawer').classList.add('open');
   document.getElementById('drawer-backdrop').classList.add('open');
+  const closeBtn = document.querySelector('.drawer-close');
+  if(closeBtn) closeBtn.focus();
 }
 function closeDrawer(){
   openDrawerIp = null;
@@ -368,6 +375,8 @@ function closeDrawer(){
   // Clear the cached host so next open does a fresh render
   const body = document.getElementById('drawer-body');
   if(body) body.dataset.hostIp = '';
+  if(_drawerOpener && _drawerOpener.focus){ _drawerOpener.focus(); }
+  _drawerOpener = null;
 }
 
 function renderDrawer(h, data){

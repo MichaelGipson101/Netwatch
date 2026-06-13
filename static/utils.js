@@ -133,3 +133,30 @@ function toast(msg, kind){
   t.onclick = () => { clearTimeout(tid); t.remove(); };
   wrap.appendChild(t);
 }
+
+// Keyboard activation for clickable non-button rows/cards/pills.
+// Host rows, topology nodes, events, and problem-pills all use data-ip.
+// Inventory rows (.inv-row) have no data attribute — matched by class only.
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  const el = e.target.closest('.row[data-ip], .node[data-ip], .event[data-ip], .problem-pill[data-ip], .inv-row');
+  if(!el || el === document.body) return;
+  e.preventDefault();
+  el.click();
+});
+
+// Focus trap for open drawer and modals.
+function trapFocus(container, e){
+  const focusables = container.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])');
+  if(!focusables.length) return;
+  const first = focusables[0], last = focusables[focusables.length - 1];
+  if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+}
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Tab') return;
+  const drawer = document.getElementById('drawer');
+  if(drawer && drawer.classList.contains('open')) return trapFocus(drawer, e);
+  const overlay = document.querySelector('.modal-overlay.open .modal');
+  if(overlay) return trapFocus(overlay, e);
+});
