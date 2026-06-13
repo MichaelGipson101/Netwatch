@@ -343,6 +343,7 @@ body.nw-anim .scard:nth-child(4){animation-delay:.17s}
 body.nw-anim .topo-group:nth-child(1),body.nw-anim .group:nth-child(1) .table{animation-delay:.10s}
 body.nw-anim .topo-group:nth-child(2),body.nw-anim .group:nth-child(2) .table{animation-delay:.16s}
 body.nw-anim .topo-group:nth-child(3),body.nw-anim .group:nth-child(3) .table{animation-delay:.22s}
+body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .table{animation-delay:.28s}
 @keyframes nw-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* Reduced-motion: kill the animations but keep the halo */

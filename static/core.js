@@ -331,6 +331,7 @@ async function refresh(){
       _firstRender = false;
       if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
         document.body.classList.add('nw-anim');
+        // Safe only while 900ms < REFRESH: no re-render lands mid-animation.
         setTimeout(() => document.body.classList.remove('nw-anim'), 900);
       }
     }
