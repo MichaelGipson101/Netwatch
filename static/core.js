@@ -824,14 +824,15 @@ document.addEventListener('keydown', e => {
   const open = id => { const el = document.getElementById(id); return el && el.classList.contains('open'); };
   const aiUsage = document.getElementById('ai-usage-modal');
   const aiPanel = document.getElementById('ai-panel');
-  if(aiUsage && !aiUsage.classList.contains('hidden')) aiUsage.classList.add('hidden');
-  else if(aiPanel && !aiPanel.classList.contains('hidden')) aiPanel.classList.add('hidden');
-  else if(open('discover-overlay')) closeDiscover();
+  // Order follows the z-index ladder: modals (50) > drawer (41) > AI panel (37)
+  if(open('discover-overlay')) closeDiscover();
   else if(open('import-overlay')) closeImportModal();
   else if(open('inv-edit-overlay')) closeInventoryEditor();
   else if(open('add-host-overlay')) closeAddHostModal();
   else if(open('modal-overlay')) closeEditor();
   else if(openDrawerIp) closeDrawer();
+  else if(aiUsage && !aiUsage.classList.contains('hidden')) aiUsage.classList.add('hidden');
+  else if(aiPanel && !aiPanel.classList.contains('hidden')) aiPanel.classList.add('hidden');
 });
 
 // ── Editor ──

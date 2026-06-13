@@ -129,7 +129,7 @@ function toast(msg, kind){
   const t = document.createElement('div');
   t.className = 'nw-toast ' + (kind || 'info');
   t.textContent = msg;
-  t.onclick = () => t.remove();
+  const tid = setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 4000);
+  t.onclick = () => { clearTimeout(tid); t.remove(); };
   wrap.appendChild(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 4000);
 }
