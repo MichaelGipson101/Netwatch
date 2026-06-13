@@ -117,3 +117,19 @@ function setStatus(msg, kind){
   el.textContent = msg;
   el.className = 'save-status ' + (kind || '');
 }
+
+function toast(msg, kind){
+  let wrap = document.getElementById('nw-toasts');
+  if(!wrap){
+    wrap = document.createElement('div');
+    wrap.id = 'nw-toasts';
+    wrap.setAttribute('aria-live', 'polite');
+    document.body.appendChild(wrap);
+  }
+  const t = document.createElement('div');
+  t.className = 'nw-toast ' + (kind || 'info');
+  t.textContent = msg;
+  t.onclick = () => t.remove();
+  wrap.appendChild(t);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 4000);
+}

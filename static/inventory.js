@@ -1112,7 +1112,7 @@ async function submitConnection(deviceId){
   const fpEl     = document.querySelector('.conn-f-from-port');
   const tpEl     = document.querySelector('.conn-f-to-port');
   if(!targetEl || !targetEl.value){
-    alert('Please pick a device to connect to.');
+    toast('Please pick a device to connect to.', 'info');
     return;
   }
   const data = {
@@ -1130,13 +1130,13 @@ async function submitConnection(deviceId){
     if(!res.ok){
       let msg = 'Failed (HTTP ' + res.status + ')';
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
-      alert('Could not add connection: ' + msg);
+      toast('Could not add connection: ' + msg, 'error');
       return;
     }
     _connFormState = { open: false, deviceId: null };
     loadInventoryConnections(deviceId);
   } catch(e){
-    alert('Network error: ' + e.message);
+    toast('Network error: ' + e.message, 'error');
   }
 }
 
@@ -1147,12 +1147,12 @@ async function deleteConnection(connId, deviceId){
     if(!res.ok){
       let msg = 'Failed (HTTP ' + res.status + ')';
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
-      alert('Could not delete: ' + msg);
+      toast('Could not delete: ' + msg, 'error');
       return;
     }
     loadInventoryConnections(deviceId);
   } catch(e){
-    alert('Network error: ' + e.message);
+    toast('Network error: ' + e.message, 'error');
   }
 }
 
@@ -1313,7 +1313,7 @@ async function downloadInventoryExport(btn, scope){
     return;
   }
   if(!_authState.admin){
-    alert("Inventory export requires admin access.");
+    toast("Inventory export requires admin access.", 'info');
     return;
   }
   const origText = btn ? btn.textContent : null;
@@ -1323,7 +1323,7 @@ async function downloadInventoryExport(btn, scope){
     if(!res.ok){
       let msg = "Export failed (HTTP " + res.status + ")";
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
-      alert(msg);
+      toast(msg, 'error');
       return;
     }
     const blob = await res.blob();
@@ -1338,7 +1338,7 @@ async function downloadInventoryExport(btn, scope){
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch(e){
-    alert("Export failed: " + e.message);
+    toast("Export failed: " + e.message, 'error');
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = origText || "Export XLSX"; }
   }

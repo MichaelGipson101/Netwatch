@@ -94,7 +94,7 @@ async function openEditor(){
     if(!data.hosts || !data.hosts.length) addRow();
     setStatus('Changes apply immediately on save', '');
     document.getElementById('modal-overlay').classList.add('open');
-  } catch(e) { alert('Could not load host list.'); }
+  } catch(e) { toast('Could not load host list.', 'error'); }
 }
 
 // ── Landing page ──────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ async function downloadBackup(){
     if(!res.ok){
       let msg = 'Backup failed (HTTP ' + res.status + ')';
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
-      alert(msg);
+      toast(msg, 'error');
       return;
     }
     const blob = await res.blob();
@@ -236,7 +236,7 @@ async function downloadBackup(){
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch(e){
-    alert('Backup failed: ' + e.message);
+    toast('Backup failed: ' + e.message, 'error');
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = origText || 'Download backup'; }
   }

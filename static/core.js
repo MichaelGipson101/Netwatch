@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(refresh, REFRESH);
   setInterval(clockTick, 1000);
   clockTick();
+
+  const footerRefresh = document.getElementById('footer-refresh');
+  if(footerRefresh) footerRefresh.textContent = 'refreshes every ' + (REFRESH/1000) + ' s';
 });
 
 function setTab(tab){
@@ -817,11 +820,18 @@ async function sendWake(ip){
 }
 
 document.addEventListener('keydown', e => {
-  if(e.key === 'Escape'){
-    if(document.getElementById('add-host-overlay').classList.contains('open')) closeAddHostModal();
-    else if(document.getElementById('modal-overlay').classList.contains('open')) closeEditor();
-    else if(openDrawerIp) closeDrawer();
-  }
+  if(e.key !== 'Escape') return;
+  const open = id => { const el = document.getElementById(id); return el && el.classList.contains('open'); };
+  const aiUsage = document.getElementById('ai-usage-modal');
+  const aiPanel = document.getElementById('ai-panel');
+  if(aiUsage && !aiUsage.classList.contains('hidden')) aiUsage.classList.add('hidden');
+  else if(aiPanel && !aiPanel.classList.contains('hidden')) aiPanel.classList.add('hidden');
+  else if(open('discover-overlay')) closeDiscover();
+  else if(open('import-overlay')) closeImportModal();
+  else if(open('inv-edit-overlay')) closeInventoryEditor();
+  else if(open('add-host-overlay')) closeAddHostModal();
+  else if(open('modal-overlay')) closeEditor();
+  else if(openDrawerIp) closeDrawer();
 });
 
 // ── Editor ──
@@ -986,7 +996,7 @@ async function detectMac(btn){
   const macEl = row.querySelector('.f-mac');
   if(!ipEl || !macEl) return;
   const ip = ipEl.value.trim();
-  if(!ip){ alert('Set the IP first, then try Detect.'); return; }
+  if(!ip){ toast('Set the IP first, then try Detect.', 'info'); return; }
   const origText = btn.textContent;
   btn.disabled = true; btn.textContent = '...';
   try {
@@ -997,7 +1007,7 @@ async function detectMac(btn){
     });
     const data = await res.json();
     if(!res.ok){
-      alert(data.error || 'Could not detect MAC');
+      toast(data.error || 'Could not detect MAC', 'error');
       return;
     }
     macEl.value = data.mac;
@@ -1014,7 +1024,7 @@ async function detectMac(btn){
       parent.appendChild(tag);
     }
   } catch(e){
-    alert('Network error during MAC detection');
+    toast('Network error during MAC detection', 'error');
   } finally {
     btn.disabled = false; btn.textContent = origText;
   }

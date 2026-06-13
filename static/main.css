@@ -1112,11 +1112,11 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 [data-theme="dark"] .inv-edit-form select{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.10)}
 [data-theme="dark"] .row-extra{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:8px}
 /* ── AI Chat Bubble ─────────────────────────────────────────────────────── */
-#ai-bubble-btn{position:fixed;bottom:88px;right:24px;z-index:8000;width:48px;height:48px;border-radius:50%;background:var(--text);color:var(--surface);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.18);transition:transform .15s,box-shadow .15s}
+#ai-bubble-btn{position:fixed;bottom:88px;right:24px;z-index:36;width:48px;height:48px;border-radius:50%;background:var(--text);color:var(--surface);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.18);transition:transform .15s,box-shadow .15s}
 #ai-bubble-btn:hover{transform:scale(1.07);box-shadow:0 4px 20px rgba(0,0,0,.28)}
 #ai-bubble-btn.streaming{animation:ai-pulse 1.2s ease-in-out infinite}
 @keyframes ai-pulse{0%,100%{box-shadow:0 2px 12px rgba(0,0,0,.18)}50%{box-shadow:0 0 0 7px rgba(34,197,94,.22),0 2px 12px rgba(0,0,0,.18)}}
-#ai-panel{position:fixed;bottom:146px;right:24px;z-index:8000;width:380px;max-height:60vh;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:var(--surface);box-shadow:0 8px 32px rgba(0,0,0,.18);transition:opacity .15s,transform .15s}
+#ai-panel{position:fixed;bottom:146px;right:24px;z-index:37;width:380px;max-height:60vh;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:var(--surface);box-shadow:0 8px 32px rgba(0,0,0,.18);transition:opacity .15s,transform .15s}
 #ai-panel.hidden{display:none}
 [data-theme="dark"] #ai-panel{background:rgba(20,22,26,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:rgba(255,255,255,.10)}
 .ai-panel-header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -1222,3 +1222,23 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 /* ── Vignette: light mode gets a very subtle ink-wash; dark gets the full gradient ── */
 .topo-vignette-rect{fill:url(#topo-vignette-light)}
 [data-theme="dark"] .topo-vignette-rect{fill:url(#topo-vignette-dark)}
+
+/* ── Toast notifications ─────────────────────────────────────────────────── */
+#nw-toasts{position:fixed;top:60px;right:16px;z-index:9500;display:flex;flex-direction:column;gap:8px;max-width:340px}
+.nw-toast{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--text);box-shadow:var(--shadow-2);cursor:pointer;animation:toast-in .2s ease-out}
+.nw-toast.error{border-left-color:var(--red)}
+.nw-toast.success{border-left-color:var(--green)}
+.nw-toast.out{opacity:0;transform:translateX(8px);transition:all .25s}
+@keyframes toast-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+
+/* ── Shared form-field classes ───────────────────────────────────────────── */
+.form-field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
+.form-field.mono-label{font-size:11px;font-family:'DM Mono',monospace;letter-spacing:.05em;color:var(--hint);text-transform:uppercase}
+.form-field input,.form-field textarea{padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;background:var(--surface);color:var(--text);text-transform:none;letter-spacing:0}
+.form-field textarea{resize:vertical;min-height:56px;width:100%;box-sizing:border-box}
+.form-field input:focus,.form-field textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-bg)}
+[data-theme="dark"] .form-field input,[data-theme="dark"] .form-field textarea{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.10)}
+.form-error{font-size:12px;color:var(--red-text);min-height:16px}
+.form-stack{display:flex;flex-direction:column;gap:12px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:600px){.form-grid{grid-template-columns:1fr}}
