@@ -954,7 +954,7 @@ git commit -m "feat: hosts/drawer polish — 22px icons with light lift, IP dedu
 **Files:**
 - Modify: `static/core.js` (`renderEvents`), `static/main.css`
 
-- [ ] **Step 1: Group by day in renderEvents**
+- [x] **Step 1: Group by day in renderEvents**
 
 Replace the `list.innerHTML = events.map(e => {...}).join('');` statement with:
 
@@ -989,13 +989,13 @@ Replace the `list.innerHTML = events.map(e => {...}).join('');` statement with:
   list.innerHTML = html;
 ```
 
-- [ ] **Step 2: Header style**
+- [x] **Step 2: Header style**
 
 ```css
 .events-day-hdr{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--hint);padding:12px 18px 6px;border-bottom:1px solid var(--border-light);background:var(--subtle)}
 ```
 
-- [ ] **Step 3: Verify + commit**
+- [x] **Step 3: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t11` — `dark-events.png` shows "TODAY" (and date headers if older events exist in the sandbox DB copy).
 
@@ -1011,7 +1011,7 @@ git commit -m "feat: group events under Today/Yesterday/date headers"
 **Files:**
 - Modify: `static/inventory.js` (`renderInventoryChips`, `renderInventoryMetrics`, labels), `static/main.css`
 
-- [ ] **Step 1: Singular labels**
+- [x] **Step 1: Singular labels**
 
 Add next to `INV_TYPE_LABELS`:
 
@@ -1032,7 +1032,7 @@ In `renderInventoryMetrics` change the breakdown map line to:
       : (breakdownLabels[t] || t).toLowerCase()));
 ```
 
-- [ ] **Step 2: Rewrite renderInventoryChips**
+- [x] **Step 2: Rewrite renderInventoryChips**
 
 Replace the whole function with (key changes: `<button type="button">` elements, row labels, top-8 categories + expander, state var):
 
@@ -1111,7 +1111,7 @@ function toggleInvCats(){
 
 (The old `inv-chip-row-types`/`inv-chip-row-cats` class styling keys off classes we no longer emit — delete those two rules from main.css.)
 
-- [ ] **Step 3: Chip CSS**
+- [x] **Step 3: Chip CSS**
 
 ```css
 .inv-chip-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -1120,7 +1120,7 @@ function toggleInvCats(){
 .inv-chip-more{border-style:dashed;color:var(--hint)}
 ```
 
-- [ ] **Step 4: Verify + commit**
+- [x] **Step 4: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t12` — `dark-inventory.png`: three labeled rows, category row capped with "+N more". Breakdown line reads "1 printer".
 
@@ -1136,7 +1136,7 @@ git commit -m "feat: inventory chips — row labels, button semantics, top-8 cat
 **Files:**
 - Modify: `static/utils.js`, `static/core.js`, `static/auth.js`, `static/main.css`, `dashboard.html`
 
-- [ ] **Step 1: Toast component (utils.js, append)**
+- [x] **Step 1: Toast component (utils.js, append)**
 
 ```js
 function toast(msg, kind){
@@ -1167,11 +1167,11 @@ CSS:
 @keyframes toast-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
 ```
 
-- [ ] **Step 2: Replace every native alert**
+- [x] **Step 2: Replace every native alert**
 
 `grep -n "alert(" static/*.js` and replace each: core.js `detectMac` two `alert(...)` → `toast(..., 'error')` (and the "Set the IP first" one → `toast('Set the IP first, then try Detect.', 'info')`); auth.js `openEditor` catch → `toast('Could not load host list.', 'error')`; auth.js `downloadBackup` two alerts → `toast(msg, 'error')`. Verify `grep -c "alert(" static/*.js` → 0.
 
-- [ ] **Step 3: Escape chain + AI z-order**
+- [x] **Step 3: Escape chain + AI z-order**
 
 Replace the core.js Escape handler with:
 
@@ -1194,7 +1194,7 @@ document.addEventListener('keydown', e => {
 
 CSS: `#ai-bubble-btn{... z-index:8000}` → `z-index:36` and `#ai-panel{... z-index:8000}` → `z-index:37` (below drawer 41 and modal 50, above FAB 35).
 
-- [ ] **Step 4: Shared form-field classes**
+- [x] **Step 4: Shared form-field classes**
 
 Add CSS:
 
@@ -1216,11 +1216,11 @@ In dashboard.html rewrite, removing ALL inline `style="..."` from these fields:
 - Setup modal: same treatment for its three fields + error div.
 - Add-host modal: each `<label style="...">` → `<label class="form-field mono-label">`; inputs/textarea lose inline styles; the two grid wrapper divs keep their inline grid styles or move to `.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}` — use the class. Error div → `class="form-error"`.
 
-- [ ] **Step 5: Footer version + refresh cadence**
+- [x] **Step 5: Footer version + refresh cadence**
 
 dashboard.html footer → `<span>netwatch v{{VERSION}} · raspberry pi</span><span id="footer-refresh">refreshes every 5 s</span>`. In core.js DOMContentLoaded: `document.getElementById('footer-refresh').textContent = 'refreshes every ' + (REFRESH/1000) + ' s';`
 
-- [ ] **Step 6: Verify + commit**
+- [x] **Step 6: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t13` — login/setup/add-host modals can't be screenshotted directly; verify footer shows `v3.38` in any shot, and `grep -c 'style="' dashboard.html` dropped substantially (record before/after counts).
 
@@ -1236,7 +1236,7 @@ git commit -m "feat: toast system, full Escape chain, AI z-order, shared form fi
 **Files:**
 - Modify: `static/utils.js`, `static/core.js`, `static/main.css`, `dashboard.html`
 
-- [ ] **Step 1: Delegated Enter/Space activation (utils.js, append)**
+- [x] **Step 1: Delegated Enter/Space activation (utils.js, append)**
 
 ```js
 // Keyboard activation for clickable non-button rows/cards/pills.
@@ -1249,15 +1249,15 @@ document.addEventListener('keydown', e => {
 });
 ```
 
-- [ ] **Step 2: Make the rows focusable**
+- [x] **Step 2: Make the rows focusable**
 
 Add `tabindex="0" role="button"` into the opening tags generated in: core.js `renderHost` (`<div class="row...` — NOT the `.row.hdr`), `renderTopologyNode` (`<div class="node...`), `renderEvents` event div, `renderTopology` problem-pill div; inventory.js `renderTypeTable` row `<tr class="inv-row" ...` gets `tabindex="0"` (tr can't be role=button; use `role="link"`... keep `role="button"` off and rely on tabindex + delegated handler; screen-reader depth is out of scope). Confirm inv rows carry `data-inv-id` (check `grep -n 'inv-row' static/inventory.js`; if the attribute is `data-id`, use that name in the Step-1 selector instead).
 
-- [ ] **Step 3: Tab + toggle ARIA**
+- [x] **Step 3: Tab + toggle ARIA**
 
 core.js `setTab`: inside the tabs forEach add `t.setAttribute('aria-selected', t.dataset.tab === tab ? 'true' : 'false');`. (aria-pressed on theme buttons was done in Task 4.) dashboard.html: hosts filter input gets `aria-label="Filter hosts"`; `.tabs` div gets `aria-label="Views"`.
 
-- [ ] **Step 4: Focus ring + focus management**
+- [x] **Step 4: Focus ring + focus management**
 
 CSS:
 
@@ -1287,7 +1287,7 @@ document.addEventListener('keydown', e => {
 });
 ```
 
-- [ ] **Step 5: Verify + commit**
+- [x] **Step 5: Verify + commit**
 
 No screenshot value — verify by code inspection + console check: `/tmp/nw-uplift/shotgen.sh matrix t14` and confirm no JS errors in `/tmp/nw-uplift/sandbox/out.log`, all tabs render.
 
@@ -1304,7 +1304,7 @@ git commit -m "feat: keyboard access — focusable rows, Enter/Space activation,
 - Create: `static/favicon.svg`, `static/favicon-alert.svg`, `static/manifest.json`, `static/icon-192.png`, `static/icon-512.png`, `static/apple-touch-icon.png`
 - Modify: `dashboard.html` (head), `monitor.py` (`_STATIC_FILES`), `static/core.js` (`refresh`), `tests/test_netwatch.py`
 
-- [ ] **Step 1: Extend the whitelist test (failing first)**
+- [x] **Step 1: Extend the whitelist test (failing first)**
 
 Append to the Task-2 test's `expected` dict:
 
@@ -1317,7 +1317,7 @@ Append to the Task-2 test's `expected` dict:
 
 Run `python3 -m pytest tests/test_netwatch.py -k whitelist -v` → FAIL.
 
-- [ ] **Step 2: Create the SVGs**
+- [x] **Step 2: Create the SVGs**
 
 `static/favicon.svg`:
 
@@ -1330,7 +1330,7 @@ Run `python3 -m pytest tests/test_netwatch.py -k whitelist -v` → FAIL.
 
 `static/favicon-alert.svg`: same plus `<circle cx="50" cy="14" r="9" fill="#ef4444" stroke="#0f0e0d" stroke-width="3"/>` before `</svg>`.
 
-- [ ] **Step 3: Generate PNGs with PIL**
+- [x] **Step 3: Generate PNGs with PIL**
 
 ```bash
 python3 - <<'EOF'
@@ -1350,7 +1350,7 @@ print('icons written')
 EOF
 ```
 
-- [ ] **Step 4: manifest.json**
+- [x] **Step 4: manifest.json**
 
 ```json
 {
@@ -1368,7 +1368,7 @@ EOF
 }
 ```
 
-- [ ] **Step 5: Wire up head, whitelist, dynamic swaps**
+- [x] **Step 5: Wire up head, whitelist, dynamic swaps**
 
 monitor.py `_STATIC_FILES`: add the six entries matching the test. dashboard.html head, after the fonts link:
 
@@ -1397,7 +1397,7 @@ core.js `refresh()` success path (right after `lastData = data;`):
     }
 ```
 
-- [ ] **Step 6: Tests + smoke + commit**
+- [x] **Step 6: Tests + smoke + commit**
 
 `python3 -m pytest tests/test_netwatch.py -v` → PASS. `curl -sI http://localhost:8089/static/favicon.svg | head -3` after `shotgen.sh sync; shotgen.sh start` → `200` + `image/svg+xml` (then `shotgen.sh stop`).
 
@@ -1413,7 +1413,7 @@ git commit -m "feat: favicon with down-alert variant, theme-color, PWA manifest 
 **Files:**
 - Modify: `static/main.css`, `static/core.js`
 
-- [ ] **Step 1: Stagger CSS (JS-gated so no-JS never hides content)**
+- [x] **Step 1: Stagger CSS (JS-gated so no-JS never hides content)**
 
 ```css
 /* One orchestrated load reveal. body.nw-anim is added by JS before first
@@ -1436,7 +1436,7 @@ body.nw-anim .topo-group:nth-child(3),body.nw-anim .group:nth-child(3) .table{an
 }
 ```
 
-- [ ] **Step 2: JS gate**
+- [x] **Step 2: JS gate**
 
 core.js — module scope: `let _firstRender = true;`. In `refresh()` success path, right before `renderSummary(data)`:
 
@@ -1450,7 +1450,7 @@ core.js — module scope: `let _firstRender = true;`. In `refresh()` success pat
     }
 ```
 
-- [ ] **Step 3: Verify + commit**
+- [x] **Step 3: Verify + commit**
 
 Run: `/tmp/nw-uplift/shotgen.sh matrix t16` — static shots must look IDENTICAL to t13-t15 output (animation completes within the 15s virtual budget; `backwards` fill + class removal guarantee final state). Spot-check `dark-topo-cards.png` for missing/transparent cards (would indicate the gate failed).
 
