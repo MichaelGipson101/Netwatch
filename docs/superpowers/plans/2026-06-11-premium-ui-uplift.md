@@ -1465,16 +1465,16 @@ git commit -m "feat: orchestrated load stagger + card hover lift (reduced-motion
 
 **Files:** none (verification + stragglers only)
 
-- [ ] **Step 1: Full test suite** — `python3 -m pytest tests/test_netwatch.py -v` → all PASS.
-- [ ] **Step 2: Full matrix** — `/tmp/nw-uplift/shotgen.sh matrix final`; review all 12 against `/tmp/nw-uplift/shots/baseline/` (themes, tabs, mobile). Every audit bug must be visibly gone; dark mode must look unchanged-or-better.
-- [ ] **Step 3: Console sweep** — `grep -iE "uncaught|referenceerror|typeerror" /tmp/nw-uplift/sandbox/out.log /tmp/nw-uplift/sandbox/m.log` → no output; plus one chromium run with `--enable-logging=stderr` grepping `CONSOLE` for errors.
-- [ ] **Step 4: Reduced-motion spot check** — one shot with `--force-prefers-reduced-motion` added to the chromium flags; page renders fully (no invisible cards).
-- [ ] **Step 5: Grep hygiene** — each must return nothing:
+- [x] **Step 1: Full test suite** — `python3 -m pytest tests/test_netwatch.py -v` → all PASS.
+- [x] **Step 2: Full matrix** — `/tmp/nw-uplift/shotgen.sh matrix final`; review all 12 against `/tmp/nw-uplift/shots/baseline/` (themes, tabs, mobile). Every audit bug must be visibly gone; dark mode must look unchanged-or-better.
+- [x] **Step 3: Console sweep** — `grep -iE "uncaught|referenceerror|typeerror" /tmp/nw-uplift/sandbox/out.log /tmp/nw-uplift/sandbox/m.log` → no output; plus one chromium run with `--enable-logging=stderr` grepping `CONSOLE` for errors.
+- [x] **Step 4: Reduced-motion spot check** — one shot with `--force-prefers-reduced-motion` added to the chromium flags; page renders fully (no invisible cards).
+- [x] **Step 5: Grep hygiene** — each must return nothing:
 ```bash
 grep -rn "cdnjs\|fonts.googleapis" dashboard.html static/
 grep -rn "alert(" static/
 grep -n "v3.37" dashboard.html
 grep -n 'data-theme="auto"' static/main.css
 ```
-- [ ] **Step 6: Fix anything found, re-run, commit stragglers** — `git add -A && git commit -m "fix: final verification sweep fixes"` (only if changes exist).
-- [ ] **Step 7: Invoke superpowers:verification-before-completion, then superpowers:finishing-a-development-branch** to decide merge of `ui-premium-uplift`.
+- [x] **Step 6: Fix anything found, re-run, commit stragglers** — `git add -A && git commit -m "fix: final verification sweep fixes"` (only if changes exist).
+- [x] **Step 7: Invoke superpowers:verification-before-completion, then superpowers:finishing-a-development-branch** to decide merge of `ui-premium-uplift`.
