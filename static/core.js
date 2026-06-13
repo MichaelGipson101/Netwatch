@@ -241,7 +241,7 @@ function renderEvents(data){
     const badgeTxt = e.ongoing ? 'ONGOING' : 'RESOLVED';
     const dur = durationStr(e.duration_seconds || 0);
     const timeLabel = e.started_ts
-      ? new Date(e.started_ts * 1000).toLocaleTimeString(undefined, {hour12:false})
+      ? new Date(e.started_ts * 1000).toLocaleTimeString(undefined, {hourCycle:'h23'})
       : (e.started_str || '');
     html += '<div class="event ' + cls + '" data-ip="' + escapeHtml(e.host_ip) + '" onclick="openDrawer(this.dataset.ip)">'
       + '<div class="event-bar"></div>'
