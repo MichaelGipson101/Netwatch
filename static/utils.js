@@ -147,7 +147,11 @@ document.addEventListener('keydown', e => {
 
 // Focus trap for open drawer and modals.
 function trapFocus(container, e){
-  const focusables = container.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])');
+  // Disabled or display:none elements can't take focus; if one were the wrap
+  // anchor the trap would silently fail and Tab would escape the dialog.
+  const focusables = Array.from(
+    container.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')
+  ).filter(el => !el.disabled && el.offsetParent !== null);
   if(!focusables.length) return;
   const first = focusables[0], last = focusables[focusables.length - 1];
   if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
@@ -155,8 +159,10 @@ function trapFocus(container, e){
 }
 document.addEventListener('keydown', e => {
   if(e.key !== 'Tab') return;
-  const drawer = document.getElementById('drawer');
-  if(drawer && drawer.classList.contains('open')) return trapFocus(drawer, e);
+  // Modals stack above the drawer (e.g. inventory editor opened from it),
+  // so trap in the topmost modal first, then fall back to the drawer.
   const overlay = document.querySelector('.modal-overlay.open .modal');
   if(overlay) return trapFocus(overlay, e);
+  const drawer = document.getElementById('drawer');
+  if(drawer && drawer.classList.contains('open')) return trapFocus(drawer, e);
 });
