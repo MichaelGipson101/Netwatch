@@ -354,7 +354,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   .live-dot{animation:none}
   .event-bar,.d-incident-bar{animation:none !important}
   #ai-bubble-btn.streaming{animation:none}
-  .topo-edge-flow{display:none}
   body.nw-anim .scard,body.nw-anim .topo-group,body.nw-anim .table{animation:none}
   .scard:hover{transform:none}
 }

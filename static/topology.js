@@ -473,7 +473,7 @@ function renderTopologyWeb(){
     });
     _flowRaf = requestAnimationFrame(flowFrame);
   }
-  if(!_reducedMotion.matches) _flowRaf = requestAnimationFrame(flowFrame);
+  _flowRaf = requestAnimationFrame(flowFrame);
 
   // Cool the simulation gradually
   sim.alpha(1).restart();
