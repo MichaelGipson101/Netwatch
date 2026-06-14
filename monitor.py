@@ -2537,7 +2537,7 @@ class NASPoller:
         except Exception as e:
             logging.warning(f"NASPoller: poll failed: {e}")
             with self._lock:
-                self._cache["reachable"] = False
+                self._cache.update({"reachable": False, "error": str(e)})
 
     def _fire_alert(self, condition_id, title, message):
         if not self._alert_state.get(condition_id, False):
@@ -4197,8 +4197,10 @@ def main():
     host_manager.load_initial(config.get("hosts", []), default_interval)
 
     nas_poller = NASPoller(auth_manager, alert_settings=settings, alert_port=args.port)
-    nas_poller.start(stop_event)
-    print(f"[netwatch] NAS poller -> polling TrueNAS every {NASPoller.POLL_INTERVAL_SECONDS}s")
+    _nas_url, _ = nas_poller._get_config()
+    if _nas_url:
+        nas_poller.start(stop_event)
+        print(f"[netwatch] NAS poller -> polling TrueNAS every {NASPoller.POLL_INTERVAL_SECONDS}s")
 
     if not args.no_web:
         web_settings = {**settings, "default_interval": default_interval}
