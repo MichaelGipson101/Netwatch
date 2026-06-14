@@ -14,7 +14,7 @@ Dashboard: http://<pi-ip>:8080
 """
 
 import os, time, json, shutil, subprocess, threading, curses, yaml, argparse, logging
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
@@ -2528,7 +2528,7 @@ class NASPoller:
             with self._lock:
                 self._cache = {
                     "reachable": True,
-                    "last_updated": datetime.utcnow().isoformat(),
+                    "last_updated": datetime.now(tz=timezone.utc).isoformat(),
                     "error": None,
                     "pools": pools,
                     "replication_tasks": tasks,
@@ -2571,7 +2571,7 @@ class NASPoller:
         now = datetime.now(tz=timezone.utc)
         stale_delta = timedelta(hours=self.REPLICATION_STALE_HOURS)
         for task in tasks:
-            cid = f"replication_{task['id']}"
+            cid = f"replication_{task['id'] or task['name']}"
             ok_states = ("SUCCESS", "FINISHED", "PENDING")
             failed = task["last_state"] not in ok_states
             stale = False
