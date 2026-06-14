@@ -18,6 +18,9 @@ function renderNas(data) {
   }
 
   var html = renderNasActionBar(data);
+  if (data.reachable && (!data.pools || !data.pools.length)) {
+    html += '<div class="nas-unavailable">No pools found on TrueNAS.</div>';
+  }
   (data.pools || []).forEach(function(pool) { html += renderPoolSection(pool); });
   if (data.replication_tasks && data.replication_tasks.length) {
     html += renderReplicationSection(data.replication_tasks);
@@ -107,7 +110,10 @@ function renderReplicationSection(tasks) {
 }
 
 function nasRepBadge(task) {
-  var okStates = ['SUCCESS', 'FINISHED', 'PENDING'];
+  if (!task.last_state && !task.last_run) {
+    return { label: 'Never run', cls: 'nas-badge-warn' };
+  }
+  var okStates = ['SUCCESS', 'FINISHED', 'PENDING', 'RUNNING'];
   if (task.last_state && okStates.indexOf(task.last_state) === -1) {
     return { label: 'Failed', cls: 'nas-badge-err' };
   }

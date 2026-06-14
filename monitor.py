@@ -2572,7 +2572,7 @@ class NASPoller:
         stale_delta = timedelta(hours=self.REPLICATION_STALE_HOURS)
         for task in tasks:
             cid = f"replication_{task['id'] or task['name']}"
-            ok_states = ("SUCCESS", "FINISHED", "PENDING")
+            ok_states = ("SUCCESS", "FINISHED", "PENDING", "RUNNING")
             failed = task["last_state"] not in ok_states
             stale = False
             last = None
