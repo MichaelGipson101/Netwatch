@@ -2391,7 +2391,7 @@ class NASPoller:
     def get_cache(self):
         with self._lock:
             import copy
-            return copy.copy(self._cache)
+            return copy.deepcopy(self._cache)
 
     def _get_config(self):
         data = self._auth_manager.data if self._auth_manager else {}
@@ -2453,7 +2453,7 @@ class NASPoller:
         for _ in range(366 * 24 * 60):
             if (month == "*" or t.month == int(month)) and \
                (dom == "*" or t.day == int(dom)) and \
-               (dow == "*" or t.weekday() == int(dow) % 7) and \
+               (dow == "*" or t.weekday() == (int(dow) - 1) % 7) and \
                (hour == "*" or t.hour == int(hour)) and \
                (minute == "*" or t.minute == int(minute)):
                 return t.isoformat()
@@ -2466,10 +2466,10 @@ class NASPoller:
         next_scrub = None
         for st in scrub_tasks:
             if st.get("pool") == name:
-                sch = st.get("schedule", {})
+                sch = st.get("schedule", {}) or {}
+                def _f(k): v = sch.get(k); return "*" if v is None else str(v)
                 next_scrub = cls._next_cron_run(
-                    sch.get("minute", "*"), sch.get("hour", "*"),
-                    sch.get("dom", "*"), sch.get("month", "*"), sch.get("dow", "*"),
+                    _f("minute"), _f("hour"), _f("dom"), _f("month"), _f("dow"),
                 )
                 break
         return {
@@ -2490,7 +2490,10 @@ class NASPoller:
         if isinstance(dt_raw, str):
             last_run = dt_raw
         elif isinstance(dt_raw, dict):
-            last_run = dt_raw.get("$date") or dt_raw.get("$numberLong")
+            inner = dt_raw.get("$date") or dt_raw.get("$numberLong")
+            if isinstance(inner, dict):
+                inner = inner.get("$numberLong")
+            last_run = inner
         return {
             "id": raw.get("id"),
             "name": raw.get("name", ""),
