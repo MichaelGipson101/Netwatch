@@ -1078,6 +1078,20 @@ def test_parse_replication_basic():
     assert task["last_run"] == "2026-06-14T02:00:00"
 
 
+def test_parse_replication_ms_epoch():
+    # TrueNAS returns {"$date": <ms_since_epoch>} for some datetime fields
+    raw = {
+        "id": 2,
+        "name": "tank → offsite",
+        "state": {"state": "FINISHED", "datetime": {"$date": 1781337621000}},
+    }
+    task = NASPoller._parse_replication(raw)
+    assert task["last_state"] == "FINISHED"
+    # Should be an ISO string, not a raw integer
+    assert isinstance(task["last_run"], str)
+    assert "2026" in task["last_run"]
+
+
 def test_next_cron_run_monthly():
     # dom=1 means 1st of each month — result must be in the future
     from datetime import datetime, timezone

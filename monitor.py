@@ -2493,7 +2493,10 @@ class NASPoller:
             inner = dt_raw.get("$date") or dt_raw.get("$numberLong")
             if isinstance(inner, dict):
                 inner = inner.get("$numberLong")
-            last_run = inner
+            if isinstance(inner, (int, float)):
+                last_run = datetime.fromtimestamp(inner / 1000, tz=timezone.utc).isoformat()
+            elif isinstance(inner, str):
+                last_run = inner
         return {
             "id": raw.get("id"),
             "name": raw.get("name", ""),
