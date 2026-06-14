@@ -1085,3 +1085,63 @@ def test_next_cron_run_monthly():
     assert result is not None
     dt = datetime.fromisoformat(result).replace(tzinfo=None)
     assert dt > datetime.now(tz=timezone.utc).replace(tzinfo=None)
+
+
+# ============================================================================
+# NASPoller poll loop and alert logic tests
+# ============================================================================
+
+from unittest.mock import patch, MagicMock
+
+
+def _make_nas_poller():
+    am = MagicMock()
+    am.data = {"truenas_url": "http://truenas.test", "truenas_api_key": "testkey"}
+    return NASPoller(am, alert_settings={}, alert_port=8080)
+
+
+def test_alert_fires_once_on_repeated_degraded():
+    poller = _make_nas_poller()
+    pools = [{"name": "tank", "status": "DEGRADED", "last_scrub": {"errors": 0}, "next_scrub": None}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(pools, [])
+        poller._check_alerts(pools, [])
+    assert mock_send.call_count == 1  # fired once, not twice
+
+
+def test_alert_rearmed_after_clear():
+    poller = _make_nas_poller()
+    pools_degraded = [{"name": "tank", "status": "DEGRADED", "last_scrub": {"errors": 0}, "next_scrub": None}]
+    pools_ok = [{"name": "tank", "status": "ONLINE", "last_scrub": {"errors": 0}, "next_scrub": None}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(pools_degraded, [])  # fires
+        poller._check_alerts(pools_ok, [])         # clears
+        poller._check_alerts(pools_degraded, [])  # re-arms → fires again
+    assert mock_send.call_count == 2
+
+
+def test_replication_stale_alert():
+    poller = _make_nas_poller()
+    from datetime import datetime, timezone, timedelta
+    old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=30)).isoformat()
+    tasks = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "FINISHED"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts([], tasks)
+    assert mock_send.call_count == 1
+
+
+def test_get_cache_returns_copy():
+    poller = _make_nas_poller()
+    cache1 = poller.get_cache()
+    cache1["reachable"] = True
+    cache2 = poller.get_cache()
+    assert cache2["reachable"] is False  # mutation of copy didn't affect internal cache
+
+
+def test_poll_skipped_when_unconfigured():
+    am = MagicMock()
+    am.data = {}  # no truenas_url or api_key
+    poller = NASPoller(am)
+    poller._poll()
+    assert poller.get_cache()["reachable"] is False
+    assert poller.get_cache()["error"] == "NAS not configured"

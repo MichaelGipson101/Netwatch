@@ -2501,6 +2501,97 @@ class NASPoller:
             "last_state": state.get("state") or "UNKNOWN",
         }
 
+    def start(self, stop_event):
+        t = threading.Thread(target=self._loop, args=(stop_event,), daemon=True, name="nas-poller")
+        t.start()
+        return t
+
+    def _loop(self, stop_event):
+        self._poll()
+        while not stop_event.is_set():
+            stop_event.wait(timeout=self.POLL_INTERVAL_SECONDS)
+            if not stop_event.is_set():
+                self._poll()
+
+    def _poll(self):
+        url, api_key = self._get_config()
+        if not url or not api_key:
+            with self._lock:
+                self._cache.update({"reachable": False, "error": "NAS not configured"})
+            return
+        try:
+            pools_raw = self._fetch(url, api_key, "/api/v2.0/pool")
+            scrub_tasks = self._fetch(url, api_key, "/api/v2.0/pool/scrub")
+            replication_raw = self._fetch(url, api_key, "/api/v2.0/replication")
+            pools = [self._parse_pool(p, scrub_tasks) for p in pools_raw]
+            tasks = [self._parse_replication(r) for r in replication_raw]
+            with self._lock:
+                self._cache = {
+                    "reachable": True,
+                    "last_updated": datetime.utcnow().isoformat(),
+                    "error": None,
+                    "pools": pools,
+                    "replication_tasks": tasks,
+                }
+            self._check_alerts(pools, tasks)
+        except Exception as e:
+            logging.warning(f"NASPoller: poll failed: {e}")
+            with self._lock:
+                self._cache["reachable"] = False
+
+    def _fire_alert(self, condition_id, title, message):
+        if not self._alert_state.get(condition_id, False):
+            self._alert_state[condition_id] = True
+            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+            _send_alert_async(
+                self._alert_settings, title, message,
+                priority="high", tags="warning", click_url=click_url,
+            )
+
+    def _clear_alert(self, condition_id):
+        self._alert_state[condition_id] = False
+
+    def _check_alerts(self, pools, tasks):
+        from datetime import timezone, timedelta
+        for pool in pools:
+            cid = f"pool_health_{pool['name']}"
+            if pool["status"] != "ONLINE":
+                self._fire_alert(cid, "Netwatch · NAS Alert",
+                                 f"Pool \"{pool['name']}\" is {pool['status']}")
+            else:
+                self._clear_alert(cid)
+            cid_scrub = f"scrub_errors_{pool['name']}"
+            errors = (pool.get("last_scrub") or {}).get("errors", 0) or 0
+            if int(errors) > 0:
+                self._fire_alert(cid_scrub, "Netwatch · NAS Alert",
+                                 f"Scrub on \"{pool['name']}\" found {errors} error(s)")
+            else:
+                self._clear_alert(cid_scrub)
+
+        now = datetime.now(tz=timezone.utc)
+        stale_delta = timedelta(hours=self.REPLICATION_STALE_HOURS)
+        for task in tasks:
+            cid = f"replication_{task['id']}"
+            ok_states = ("SUCCESS", "FINISHED", "PENDING")
+            failed = task["last_state"] not in ok_states
+            stale = False
+            last = None
+            if task.get("last_run"):
+                try:
+                    last = datetime.fromisoformat(task["last_run"].rstrip("Z"))
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=timezone.utc)
+                    stale = (now - last) > stale_delta
+                except (ValueError, TypeError):
+                    pass
+            if failed or stale:
+                hours_old = int((now - last).total_seconds() // 3600) if last else 0
+                reason = "failed" if failed else f"stale ({hours_old}h)"
+                self._fire_alert(cid, "Netwatch · NAS Alert",
+                                 f"Replication \"{task['name']}\" {reason}")
+            else:
+                self._clear_alert(cid)
+
 
 # ============================================================================
 # Wake-on-LAN
