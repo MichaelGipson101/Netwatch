@@ -9,6 +9,8 @@ import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
 from monitor import _column_exists
 from monitor import export_inventory_to_xlsx
+from monitor import NASPoller
+import monitor as _mon
 from monitor import (
     _h_get_ai_config, _h_get_hosts,
     _h_get_auth_status, _h_get_auth_users,
@@ -999,3 +1001,87 @@ def test_started_str_includes_date_for_older_events(tmp_path):
     inc = hdb.list_incidents()[0]
     # e.g. "Jun 08 17:39" — month abbrev + day + HH:MM
     assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{2}:\d{2}", inc["started_str"])
+
+
+# ============================================================================
+# NASPoller parse tests
+# ============================================================================
+
+_POOL_RAW = {
+    "name": "tank",
+    "status": "ONLINE",
+    "size": 4000000000000,
+    "allocated": 2000000000000,
+    "topology": {
+        "data": [
+            {
+                "type": "MIRROR",
+                "name": "mirror-0",
+                "status": "ONLINE",
+                "children": [
+                    {"disk": "ada0", "status": "ONLINE", "type": "DISK"},
+                    {"disk": "ada1", "status": "ONLINE", "type": "DISK"},
+                ],
+            }
+        ]
+    },
+    "scan": {
+        "state": "FINISHED",
+        "end_time": "2026-06-01T04:22:00",
+        "errors": 0,
+    },
+}
+
+_SCRUB_TASKS = [
+    {"pool": "tank", "schedule": {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "*"}}
+]
+
+_REP_RAW = {
+    "id": 1,
+    "name": "tank → backup",
+    "state": {"state": "FINISHED", "datetime": "2026-06-14T02:00:00"},
+}
+
+
+def test_parse_pool_basic():
+    pool = NASPoller._parse_pool(_POOL_RAW, _SCRUB_TASKS)
+    assert pool["name"] == "tank"
+    assert pool["status"] == "ONLINE"
+    assert pool["capacity_total_bytes"] == 4000000000000
+    assert pool["capacity_used_bytes"] == 2000000000000
+    assert pool["last_scrub"]["errors"] == 0
+    assert pool["last_scrub"]["status"] == "FINISHED"
+    assert pool["next_scrub"] is not None  # cron produced a date
+
+
+def test_parse_pool_null_scan():
+    raw = dict(_POOL_RAW)
+    raw["scan"] = None
+    pool = NASPoller._parse_pool(raw, [])
+    assert pool["last_scrub"]["status"] is None
+    assert pool["last_scrub"]["errors"] == 0
+
+
+def test_parse_vdevs_mirror():
+    vdevs = NASPoller._parse_vdevs(_POOL_RAW["topology"]["data"])
+    assert len(vdevs) == 1
+    assert vdevs[0]["type"] == "MIRROR"
+    assert len(vdevs[0]["disks"]) == 2
+    assert vdevs[0]["disks"][0]["name"] == "ada0"
+
+
+def test_parse_replication_basic():
+    task = NASPoller._parse_replication(_REP_RAW)
+    assert task["id"] == 1
+    assert task["name"] == "tank → backup"
+    assert task["last_state"] == "FINISHED"
+    assert task["last_run"] == "2026-06-14T02:00:00"
+
+
+def test_next_cron_run_monthly():
+    # dom=1 means 1st of each month — result must be in the future
+    from datetime import datetime, timezone
+    result = NASPoller._next_cron_run("0", "0", "1", "*", "*")
+    assert result is not None
+    dt = datetime.fromisoformat(result).replace(tzinfo=None)
+    assert dt > datetime.now(tz=timezone.utc).replace(tzinfo=None)

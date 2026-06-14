@@ -2367,6 +2367,139 @@ def _send_alert_async(settings, title, message, priority, tags, click_url,
 
 
 # ============================================================================
+# NAS Poller (TrueNAS REST API)
+# ============================================================================
+
+class NASPoller:
+    POLL_INTERVAL_SECONDS = 900    # 15 minutes
+    REPLICATION_STALE_HOURS = 25   # grace window for daily replication tasks
+
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+        self._auth_manager = auth_manager
+        self._alert_settings = alert_settings or {}
+        self._alert_port = alert_port
+        self._cache = {
+            "reachable": False,
+            "last_updated": None,
+            "error": None,
+            "pools": [],
+            "replication_tasks": [],
+        }
+        self._lock = threading.Lock()
+        self._alert_state = {}  # condition_id -> bool, True = currently alerting
+
+    def get_cache(self):
+        with self._lock:
+            import copy
+            return copy.copy(self._cache)
+
+    def _get_config(self):
+        data = self._auth_manager.data if self._auth_manager else {}
+        return data.get("truenas_url", ""), data.get("truenas_api_key", "")
+
+    @staticmethod
+    def _fetch(url, api_key, path):
+        import urllib.request
+        req = urllib.request.Request(
+            url.rstrip("/") + path,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+
+    @staticmethod
+    def _parse_vdevs(data_vdevs):
+        vdevs = []
+        for v in data_vdevs:
+            vdev = {
+                "type": v.get("type", "DISK"),
+                "name": v.get("name", ""),
+                "status": v.get("status", "UNKNOWN"),
+                "disks": [],
+            }
+            for child in v.get("children", []):
+                vdev["disks"].append({
+                    "name": child.get("disk") or child.get("name", ""),
+                    "status": child.get("status", "UNKNOWN"),
+                })
+            if not vdev["disks"] and v.get("disk"):
+                vdev["disks"].append({"name": v["disk"], "status": v.get("status", "UNKNOWN")})
+            vdevs.append(vdev)
+        return vdevs
+
+    @staticmethod
+    def _parse_scrub(scan):
+        if not scan:
+            return {"status": None, "end_time": None, "errors": 0}
+        end_raw = scan.get("end_time")
+        end_str = None
+        if isinstance(end_raw, str):
+            end_str = end_raw
+        elif isinstance(end_raw, dict):
+            ms = end_raw.get("$date", {})
+            if isinstance(ms, dict):
+                ms = ms.get("$numberLong")
+            if ms:
+                from datetime import timezone
+                end_str = datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).isoformat()
+        return {"status": scan.get("state"), "end_time": end_str, "errors": scan.get("errors", 0)}
+
+    @staticmethod
+    def _next_cron_run(minute, hour, dom, month, dow):
+        """Return next ISO datetime string for a simple cron expression (no ranges/steps/lists)."""
+        from datetime import timedelta, timezone
+        now = datetime.now(tz=timezone.utc).replace(second=0, microsecond=0)
+        t = now + timedelta(minutes=1)
+        for _ in range(366 * 24 * 60):
+            if (month == "*" or t.month == int(month)) and \
+               (dom == "*" or t.day == int(dom)) and \
+               (dow == "*" or t.weekday() == int(dow) % 7) and \
+               (hour == "*" or t.hour == int(hour)) and \
+               (minute == "*" or t.minute == int(minute)):
+                return t.isoformat()
+            t += timedelta(minutes=1)
+        return None
+
+    @classmethod
+    def _parse_pool(cls, raw, scrub_tasks):
+        name = raw.get("name", "")
+        next_scrub = None
+        for st in scrub_tasks:
+            if st.get("pool") == name:
+                sch = st.get("schedule", {})
+                next_scrub = cls._next_cron_run(
+                    sch.get("minute", "*"), sch.get("hour", "*"),
+                    sch.get("dom", "*"), sch.get("month", "*"), sch.get("dow", "*"),
+                )
+                break
+        return {
+            "name": name,
+            "status": raw.get("status", "UNKNOWN"),
+            "capacity_used_bytes": raw.get("allocated", 0),
+            "capacity_total_bytes": raw.get("size", 0),
+            "vdevs": cls._parse_vdevs(raw.get("topology", {}).get("data", [])),
+            "last_scrub": cls._parse_scrub(raw.get("scan")),
+            "next_scrub": next_scrub,
+        }
+
+    @staticmethod
+    def _parse_replication(raw):
+        state = raw.get("state") or {}
+        dt_raw = state.get("datetime") or state.get("time_finished")
+        last_run = None
+        if isinstance(dt_raw, str):
+            last_run = dt_raw
+        elif isinstance(dt_raw, dict):
+            last_run = dt_raw.get("$date") or dt_raw.get("$numberLong")
+        return {
+            "id": raw.get("id"),
+            "name": raw.get("name", ""),
+            "last_run": last_run,
+            "last_state": state.get("state") or "UNKNOWN",
+        }
+
+
+# ============================================================================
 # Wake-on-LAN
 # ============================================================================
 
