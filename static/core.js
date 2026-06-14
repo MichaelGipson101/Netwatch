@@ -57,6 +57,7 @@ function setTab(tab){
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
   localStorage.setItem('nw-tab', tab);
   if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();
+  if(tab === 'storage' && typeof fetchNas === 'function') fetchNas();
 }
 
 const REFRESH = 5000;

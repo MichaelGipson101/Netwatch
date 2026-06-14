@@ -3110,6 +3110,7 @@ _STATIC_FILES = {
     'inventory.js':'application/javascript; charset=utf-8',
     'auth.js':     'application/javascript; charset=utf-8',
     'ai-panel.js': 'application/javascript; charset=utf-8',
+    'nas.js':      'application/javascript; charset=utf-8',
     'd3.v7.min.js':    'application/javascript; charset=utf-8',
     'dmsans-300.woff2':'font/woff2',
     'dmsans-400.woff2':'font/woff2',

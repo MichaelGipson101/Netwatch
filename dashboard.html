@@ -224,6 +224,7 @@
     <button class="tab" data-tab="hosts" role="tab">Hosts</button>
     <button class="tab" data-tab="events" role="tab">Events <span class="tab-count" id="events-count" style="display:none">0</span></button>
     <button class="tab" data-tab="inventory" role="tab">Inventory <span class="tab-count" id="inv-count" style="display:none">0</span></button>
+    <button class="tab" data-tab="storage" role="tab">Storage</button>
   </div>
 
   <div class="summary">
@@ -385,6 +386,10 @@
     <div class="inv-chips" id="inv-chips"></div>
     <div id="inv-tables"></div>
     <div id="inv-empty" class="inv-empty" style="display:none"></div>
+  </div>
+
+  <div class="view" id="view-storage">
+    <div id="nas-content"></div>
   </div>
 
   <div class="footer">
@@ -701,6 +706,7 @@
 <script src="/static/auth.js?v={{VERSION}}"></script>
 <script src="/static/inventory.js?v={{VERSION}}"></script>
 <script src="/static/ai-panel.js?v={{VERSION}}"></script>
+<script src="/static/nas.js?v={{VERSION}}"></script>
 
 </body>
 </html>
