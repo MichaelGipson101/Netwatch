@@ -1138,6 +1138,36 @@ def test_get_cache_returns_copy():
     assert cache2["reachable"] is False  # mutation of copy didn't affect internal cache
 
 
+# ============================================================================
+# /api/nas handler tests
+# ============================================================================
+
+from monitor import _h_get_nas
+
+
+def test_h_get_nas_when_poller_is_none():
+    status, body = _h_get_nas(None)
+    assert status == 503
+    assert body["reachable"] is False
+
+
+def test_h_get_nas_returns_cache():
+    poller = _make_nas_poller()
+    # Manually inject a known cache state
+    with poller._lock:
+        poller._cache = {
+            "reachable": True,
+            "last_updated": "2026-06-14T02:00:00",
+            "error": None,
+            "pools": [{"name": "tank", "status": "ONLINE"}],
+            "replication_tasks": [],
+        }
+    status, body = _h_get_nas(poller)
+    assert status == 200
+    assert body["reachable"] is True
+    assert body["pools"][0]["name"] == "tank"
+
+
 def test_poll_skipped_when_unconfigured():
     am = MagicMock()
     am.data = {}  # no truenas_url or api_key

@@ -3157,6 +3157,12 @@ def _h_get_pi_health() -> tuple:
         return 500, {"error": str(e)}
 
 
+def _h_get_nas(nas_poller) -> tuple:
+    if nas_poller is None:
+        return 503, {"reachable": False, "error": "NAS poller not available"}
+    return 200, nas_poller.get_cache()
+
+
 def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
     user, is_admin = current_user_fn() if auth_manager else (None, False)
     return 200, {
@@ -3475,7 +3481,7 @@ def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
     return 200, {"ok": True}
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -3601,6 +3607,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/pi-health":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_pi_health())
+                return
+            if self.path == "/api/nas":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_nas(nas_poller))
                 return
             if self.path == "/api/auth/status":
                 self._send_json(*_h_get_auth_status(auth_manager, self._current_user))
@@ -3903,8 +3913,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
@@ -4186,11 +4196,16 @@ def main():
     )
     host_manager.load_initial(config.get("hosts", []), default_interval)
 
+    nas_poller = NASPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    nas_poller.start(stop_event)
+    print(f"[netwatch] NAS poller -> polling TrueNAS every {NASPoller.POLL_INTERVAL_SECONDS}s")
+
     if not args.no_web:
         web_settings = {**settings, "default_interval": default_interval}
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, web_settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
+            kwargs={"nas_poller": nas_poller},
             daemon=True
         )
         wt.start()
