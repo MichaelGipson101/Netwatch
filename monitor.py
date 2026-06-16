@@ -2851,6 +2851,40 @@ def build_topology_payload(inventory_db, host_manager):
 SETTINGS_PUBLIC_KEYS = ("default_interval", "ping_timeout", "history_window",
                         "refresh_rate", "history_days")
 
+# All settings readable/writable via /api/settings (admin only).
+SETTINGS_EDITABLE_KEYS = {
+    "default_interval":     int,
+    "ping_timeout":         int,
+    "history_window":       int,
+    "refresh_rate":         int,
+    "history_days":         int,
+    "ntfy_topic":           str,
+    "ntfy_server":          str,
+    "truenas_url":          str,
+    "truenas_api_key":      str,
+    "proxmox_url":          str,
+    "proxmox_user":         str,
+    "proxmox_password":     str,
+    "proxmox_token_id":     str,
+    "proxmox_token_secret": str,
+    "proxmox_node":         str,
+    "openrouter_api_key":   str,
+    "ai_model":             str,
+    "setup_wizard_complete": bool,
+}
+
+_SETTINGS_INT_RANGES = {
+    "default_interval": (5,  3600),
+    "ping_timeout":     (1,  30),
+    "history_window":   (10, 10000),
+    "refresh_rate":     (1,  60),
+    "history_days":     (1,  365),
+}
+
+_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url"}
+_SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_window",
+                                "refresh_rate", "history_days"}
+
 
 def build_api_payload(host_manager, settings, incident_log=None, inventory_db=None):
     hosts = host_manager.list_hosts()
@@ -2882,7 +2916,8 @@ _STATIC_FILES = {
     'topology.js': 'application/javascript; charset=utf-8',
     'inventory.js':'application/javascript; charset=utf-8',
     'auth.js':     'application/javascript; charset=utf-8',
-    'ai-panel.js': 'application/javascript; charset=utf-8',
+    'ai-panel.js':  'application/javascript; charset=utf-8',
+    'settings.js':  'application/javascript; charset=utf-8',
     'd3.v7.min.js':    'application/javascript; charset=utf-8',
     'dmsans-300.woff2':'font/woff2',
     'dmsans-400.woff2':'font/woff2',
@@ -2912,6 +2947,66 @@ def _h_get_ai_config(settings: dict) -> tuple:
         "api_key": api_key,
         "model": settings.get("ai_model", "openrouter/free"),
     }
+
+
+def _h_get_settings(settings: dict) -> tuple:
+    return 200, {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+
+
+def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
+    updates = {}
+    for k, typ in SETTINGS_EDITABLE_KEYS.items():
+        if k not in data:
+            continue
+        val = data[k]
+        if val is None or val == "":
+            if k in _SETTINGS_REQUIRED_INT_KEYS:
+                continue  # never clear required numeric settings
+            updates[k] = None
+            continue
+        if typ == int:
+            try:
+                updates[k] = int(val)
+            except (ValueError, TypeError):
+                return 400, {"error": f"'{k}' must be an integer"}
+            lo, hi = _SETTINGS_INT_RANGES.get(k, (None, None))
+            if lo is not None and not (lo <= updates[k] <= hi):
+                return 400, {"error": f"'{k}' must be between {lo} and {hi}"}
+        elif typ == bool:
+            if not isinstance(val, bool):
+                return 400, {"error": f"'{k}' must be true or false"}
+            updates[k] = val
+        else:
+            updates[k] = str(val).strip()
+            if k in _SETTINGS_URL_KEYS and updates[k] and not _validate_url(updates[k]):
+                return 400, {"error": f"'{k}' must be a valid http:// or https:// URL"}
+
+    try:
+        existing = load_yaml(config_path) or {}
+    except Exception:
+        existing = {}
+    existing_settings = dict(existing.get("settings", {}))
+
+    for k, v in updates.items():
+        if v is None:
+            existing_settings.pop(k, None)
+            settings.pop(k, None)
+        else:
+            existing_settings[k] = v
+            settings[k] = v
+
+    new_config = {"settings": existing_settings, "hosts": existing.get("hosts", [])}
+    tmp_path = config_path + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            yaml.safe_dump(new_config, f, sort_keys=False, default_flow_style=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, config_path)
+    except Exception as e:
+        logging.exception("settings save error")
+        return 500, {"error": f"Failed to save settings: {e}"}
+
+    return 200, {"ok": True, "settings": {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}}
 
 
 def _h_get_hosts(config_path: str) -> tuple:
@@ -3367,6 +3462,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_ai_config(settings))
                 return
+            if self.path == "/api/settings":
+                if not self._require_auth(admin_only=True): return
+                self._send_json(*_h_get_settings(settings))
+                return
             if self.path == "/api/hosts":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_hosts(config_path))
@@ -3668,6 +3767,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_hosts(data, config_path, host_manager, settings))
+                return
+
+            if self.path == "/api/settings":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_settings(data, config_path, settings))
                 return
 
             self.send_response(404)

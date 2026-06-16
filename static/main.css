@@ -1261,3 +1261,22 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .form-stack{display:flex;flex-direction:column;gap:12px}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media (max-width:600px){.form-grid{grid-template-columns:1fr}}
+
+/* ── Settings panel tabs ─────────────────────────────────────────────────── */
+.stab-bar{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px}
+.stab-btn{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--muted);cursor:pointer;margin-bottom:-1px;transition:color .12s,border-color .12s}
+.stab-btn:hover{color:var(--text)}
+.stab-btn.active{color:var(--text);border-bottom-color:var(--text);font-weight:500}
+[data-theme="dark"] .stab-btn.active{border-bottom-color:var(--text)}
+.settings-section-hdr{font-size:11px;font-family:'DM Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--hint);padding:6px 0 2px;margin-top:6px}
+.form-hint{font-size:12px;color:var(--muted);line-height:1.5}
+.field-with-toggle{display:flex;gap:6px;align-items:center}
+.field-with-toggle input{flex:1;min-width:0}
+.toggle-vis-btn{flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;padding:4px 8px;font-size:11px;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap}
+.toggle-vis-btn:hover{color:var(--text);border-color:var(--text)}
+
+/* ── Wizard step indicator ───────────────────────────────────────────────── */
+.wizard-step-indicator{display:flex;justify-content:center;gap:8px;margin-bottom:20px}
+.wstep-dot{width:8px;height:8px;border-radius:50%;background:var(--border);transition:background .15s}
+.wstep-dot.active{background:var(--text)}
+.wstep-dot.done{background:var(--green)}

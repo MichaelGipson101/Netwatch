@@ -695,12 +695,190 @@
   </div>
 </div>
 
+<!-- Settings panel modal -->
+<div class="modal-overlay" id="settings-overlay">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-hdr">
+      <div class="modal-title">Settings</div>
+      <button type="button" class="modal-close-btn" onclick="closeSettings()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="stab-bar" role="tablist">
+        <button class="stab-btn active" data-tab="general" onclick="switchSettingsTab('general')" role="tab">General</button>
+        <button class="stab-btn" data-tab="alerts" onclick="switchSettingsTab('alerts')" role="tab">Alerts</button>
+        <button class="stab-btn" data-tab="integrations" onclick="switchSettingsTab('integrations')" role="tab">Integrations</button>
+        <button class="stab-btn" data-tab="ai" onclick="switchSettingsTab('ai')" role="tab">AI</button>
+      </div>
+
+      <div class="stab-content" id="stab-general">
+        <div class="form-stack">
+          <label class="form-field">Ping interval (seconds)<input type="number" id="s-default_interval" min="5" max="3600"></label>
+          <label class="form-field">Ping timeout (seconds)<input type="number" id="s-ping_timeout" min="1" max="30"></label>
+          <label class="form-field">History window (pings per host)<input type="number" id="s-history_window" min="10" max="10000"></label>
+          <label class="form-field">Dashboard refresh rate (seconds)<input type="number" id="s-refresh_rate" min="1" max="60"></label>
+          <label class="form-field">Ping history retention (days)<input type="number" id="s-history_days" min="1" max="365"></label>
+        </div>
+      </div>
+
+      <div class="stab-content" id="stab-alerts" style="display:none">
+        <div class="form-stack">
+          <p class="form-hint">Netwatch uses <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> for push alerts. Leave topic blank to disable.</p>
+          <label class="form-field">ntfy topic<input type="text" id="s-ntfy_topic" placeholder="your-topic-name" autocomplete="off"></label>
+          <label class="form-field">ntfy server<input type="text" id="s-ntfy_server" placeholder="https://ntfy.sh"></label>
+        </div>
+      </div>
+
+      <div class="stab-content" id="stab-integrations" style="display:none">
+        <div class="form-stack">
+          <div class="settings-section-hdr">TrueNAS</div>
+          <label class="form-field">URL<input type="text" id="s-truenas_url" placeholder="https://truenas.local"></label>
+          <label class="form-field">API key
+            <div class="field-with-toggle">
+              <input type="password" id="s-truenas_api_key" placeholder="Paste API key from TrueNAS" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-truenas_api_key')">Show</button>
+            </div>
+          </label>
+          <div class="settings-section-hdr" style="margin-top:8px">Proxmox VE</div>
+          <label class="form-field">URL<input type="text" id="s-proxmox_url" placeholder="https://proxmox.local:8006"></label>
+          <label class="form-field">Username<input type="text" id="s-proxmox_user" placeholder="root@pam" autocomplete="off"></label>
+          <label class="form-field">Password
+            <div class="field-with-toggle">
+              <input type="password" id="s-proxmox_password" placeholder="or use API token below" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-proxmox_password')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">API token ID<input type="text" id="s-proxmox_token_id" placeholder="netwatch@pam!token" autocomplete="off"></label>
+          <label class="form-field">API token secret
+            <div class="field-with-toggle">
+              <input type="password" id="s-proxmox_token_secret" placeholder="token secret value" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-proxmox_token_secret')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">Node name<input type="text" id="s-proxmox_node" placeholder="pve"></label>
+        </div>
+      </div>
+
+      <div class="stab-content" id="stab-ai" style="display:none">
+        <div class="form-stack">
+          <p class="form-hint">The AI assistant uses OpenRouter. Leave blank to disable.</p>
+          <label class="form-field">OpenRouter API key
+            <div class="field-with-toggle">
+              <input type="password" id="s-openrouter_api_key" placeholder="sk-or-..." autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-openrouter_api_key')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">Model<input type="text" id="s-ai_model" placeholder="openrouter/free"></label>
+        </div>
+      </div>
+
+      <div id="settings-error" class="form-error" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" onclick="openWizard()">Run setup wizard</button>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn" onclick="closeSettings()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Config wizard modal -->
+<div class="modal-overlay" id="wizard-overlay">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-hdr">
+      <div class="modal-title" id="wizard-title">Setup — Monitoring</div>
+      <button type="button" class="modal-close-btn" onclick="closeWizard()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="wizard-step-indicator" id="wizard-step-indicator"></div>
+
+      <!-- Step 1: Monitoring -->
+      <div id="wstep-1">
+        <p class="form-hint" style="margin-bottom:14px">Configure how often Netwatch polls your hosts. The defaults work well for most homelabs.</p>
+        <div class="form-stack">
+          <label class="form-field">Ping interval (seconds)<input type="number" id="w-default_interval" value="30" min="5" max="3600"></label>
+          <label class="form-field">Ping timeout (seconds)<input type="number" id="w-ping_timeout" value="2" min="1" max="30"></label>
+          <label class="form-field">History window (pings per host)<input type="number" id="w-history_window" value="100" min="10" max="10000"></label>
+          <label class="form-field">Dashboard refresh rate (seconds)<input type="number" id="w-refresh_rate" value="5" min="1" max="60"></label>
+          <label class="form-field">Ping history retention (days)<input type="number" id="w-history_days" value="30" min="1" max="365"></label>
+        </div>
+      </div>
+
+      <!-- Step 2: Alerts -->
+      <div id="wstep-2" style="display:none">
+        <p class="form-hint" style="margin-bottom:14px">Get push notifications when hosts go up or down via <strong>ntfy</strong>. Skip this step to disable alerts.</p>
+        <div class="form-stack">
+          <label class="form-field">ntfy topic<input type="text" id="w-ntfy_topic" placeholder="your-topic-name" autocomplete="off"></label>
+          <label class="form-field">ntfy server<input type="text" id="w-ntfy_server" placeholder="https://ntfy.sh"></label>
+        </div>
+      </div>
+
+      <!-- Step 3: Integrations -->
+      <div id="wstep-3" style="display:none">
+        <p class="form-hint" style="margin-bottom:14px">Connect external services for richer monitoring. All fields are optional.</p>
+        <div class="form-stack">
+          <div class="settings-section-hdr">TrueNAS</div>
+          <label class="form-field">URL<input type="text" id="w-truenas_url" placeholder="https://truenas.local"></label>
+          <label class="form-field">API key
+            <div class="field-with-toggle">
+              <input type="password" id="w-truenas_api_key" placeholder="Paste API key from TrueNAS" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('w-truenas_api_key')">Show</button>
+            </div>
+          </label>
+          <div class="settings-section-hdr" style="margin-top:6px">Proxmox VE</div>
+          <label class="form-field">URL<input type="text" id="w-proxmox_url" placeholder="https://proxmox.local:8006"></label>
+          <label class="form-field">Username<input type="text" id="w-proxmox_user" placeholder="root@pam" autocomplete="off"></label>
+          <label class="form-field">Password
+            <div class="field-with-toggle">
+              <input type="password" id="w-proxmox_password" placeholder="or use API token below" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('w-proxmox_password')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">API token ID<input type="text" id="w-proxmox_token_id" placeholder="netwatch@pam!token" autocomplete="off"></label>
+          <label class="form-field">API token secret
+            <div class="field-with-toggle">
+              <input type="password" id="w-proxmox_token_secret" placeholder="token secret value" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('w-proxmox_token_secret')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">Node name<input type="text" id="w-proxmox_node" placeholder="pve"></label>
+        </div>
+      </div>
+
+      <!-- Step 4: AI -->
+      <div id="wstep-4" style="display:none">
+        <p class="form-hint" style="margin-bottom:14px">Enable the AI assistant for natural-language queries about your homelab. Skip to disable.</p>
+        <div class="form-stack">
+          <label class="form-field">OpenRouter API key
+            <div class="field-with-toggle">
+              <input type="password" id="w-openrouter_api_key" placeholder="sk-or-..." autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('w-openrouter_api_key')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">Model<input type="text" id="w-ai_model" placeholder="openrouter/free"></label>
+        </div>
+      </div>
+
+      <div id="wizard-error" class="form-error" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" id="wizard-back-btn" onclick="wizardBack()" style="display:none">Back</button>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn" id="wizard-skip-btn" onclick="wizardSkip()" style="display:none">Skip</button>
+        <button type="button" class="btn btn-primary" id="wizard-next-btn" onclick="wizardNext()">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/static/utils.js?v={{VERSION}}"></script>
 <script src="/static/core.js?v={{VERSION}}"></script>
 <script src="/static/topology.js?v={{VERSION}}"></script>
 <script src="/static/auth.js?v={{VERSION}}"></script>
 <script src="/static/inventory.js?v={{VERSION}}"></script>
 <script src="/static/ai-panel.js?v={{VERSION}}"></script>
+<script src="/static/settings.js?v={{VERSION}}"></script>
 
 </body>
 </html>

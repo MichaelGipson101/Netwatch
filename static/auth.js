@@ -26,7 +26,8 @@ function updateAuthUI(){
   if(_authState.logged_in){
     const label = escapeHtml(_authState.username) + (_authState.admin ? ' <span style="opacity:.5">(admin)</span>' : '');
     const backupItem = _authState.admin
-      ? '<button class="user-dropdown-item" onclick="toggleUserMenu();downloadBackup()">Download backup</button>'
+      ? '<button class="user-dropdown-item" onclick="toggleUserMenu();openSettings()">Settings</button>'
+      + '<button class="user-dropdown-item" onclick="toggleUserMenu();downloadBackup()">Download backup</button>'
       : '';
     navAuth.innerHTML =
       '<div class="user-menu" id="user-menu">'
@@ -164,6 +165,7 @@ async function submitLandingSetup(ev){
     updateAuthUI();
     hideLanding();
     refresh();
+    if(typeof checkAndOpenWizard === 'function') checkAndOpenWizard();
   } catch(e){ err.textContent = 'Network error'; }
 }
 
@@ -270,6 +272,7 @@ async function submitSetup(ev){
     _authState = { logged_in: true, username: data.username, admin: true, setup_required: false };
     updateAuthUI();
     closeSetup();
+    if(typeof checkAndOpenWizard === 'function') checkAndOpenWizard();
   } catch(e){ err.textContent = 'Network error'; }
 }
 
