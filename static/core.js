@@ -18,7 +18,8 @@ document.addEventListener('DOMContentLoaded', () => {
     b.addEventListener('click', () => setTheme(b.dataset.themeBtn));
   });
 
-  const initialTab = localStorage.getItem('nw-tab') || 'topology';
+  let initialTab = localStorage.getItem('nw-tab') || 'topology';
+  if (initialTab === 'storage') initialTab = 'servers';  // renamed in v3.41
   setTab(initialTab);
   // Restore Cards/Web view preference for the topology tab
   if(typeof setTopoView === 'function') setTopoView(_topoView);
