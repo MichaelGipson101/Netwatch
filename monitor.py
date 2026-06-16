@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.41"
+VERSION = "3.42"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -3471,7 +3471,11 @@ def _h_get_nas(nas_poller) -> tuple:
 def _h_get_proxmox(proxmox_poller) -> tuple:
     if proxmox_poller is None:
         return 503, {"reachable": False, "error": "Proxmox poller not running"}
-    return 200, proxmox_poller.get_cache()
+    cache = proxmox_poller.get_cache()
+    url, _, _, _ = proxmox_poller._get_config()
+    if not url and not cache.get("nodes"):
+        cache["error"] = "Proxmox not configured"
+    return 200, cache
 
 
 def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:

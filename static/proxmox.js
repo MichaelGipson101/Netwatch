@@ -69,7 +69,7 @@
   function _renderProxmox (data) {
     var el = document.getElementById('proxmox-content');
     if (!el) return;
-    if (!data.reachable && data.error === 'Proxmox not configured') {
+    if (data.error === 'Proxmox not configured' || (!data.reachable && !data.last_updated && !data.error)) {
       el.innerHTML = '<div class="pve-unavailable">Proxmox is not configured.'
         + ' Add credentials in <strong>Settings → Integrations</strong>.</div>';
       return;
