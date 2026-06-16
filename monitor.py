@@ -2680,8 +2680,54 @@ class ProxmoxPoller:
             "guests":          guests,
         }
 
+    def _fire_alert(self, condition_id, message):
+        if not self._alert_state.get(condition_id, False):
+            self._alert_state[condition_id] = True
+            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+            _send_alert_async(
+                self._alert_settings, "Netwatch · Proxmox Alert", message,
+                priority="high", tags="rotating_light", click_url=click_url,
+            )
+
+    def _clear_alert(self, condition_id):
+        self._alert_state[condition_id] = False
+
     def _check_alerts(self, nodes, prev_nodes):
-        pass  # implemented in Task 4
+        now = time.time()
+        prev_states = {}
+        for n in prev_nodes:
+            for g in n.get("guests", []):
+                prev_states[g["vmid"]] = g["status"]
+
+        for node in nodes:
+            name = node["name"]
+
+            cid_node = f"node:{name}"
+            if node["status"] != "online":
+                self._fire_alert(cid_node, f'Proxmox node "{name}" is offline')
+            else:
+                self._clear_alert(cid_node)
+
+            for guest in node.get("guests", []):
+                vmid   = guest["vmid"]
+                gname  = guest["name"]
+                status = guest["status"]
+
+                cid_stop = f"stop:{vmid}"
+                if (prev_states.get(vmid) == "running"
+                        and status == "stopped"
+                        and now > self._exemptions.get(vmid, 0)):
+                    self._fire_alert(cid_stop,
+                                     f'VM "{gname}" ({vmid}) stopped unexpectedly on {name}')
+                elif status == "running":
+                    self._clear_alert(cid_stop)
+
+                cid_pause = f"pause:{vmid}"
+                if status == "paused":
+                    self._fire_alert(cid_pause,
+                                     f'VM "{gname}" ({vmid}) is paused on {name}')
+                else:
+                    self._clear_alert(cid_pause)
 
     def _poll(self):
         url, user, token_id, token_secret = self._get_config()

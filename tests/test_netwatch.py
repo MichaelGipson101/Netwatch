@@ -1352,3 +1352,68 @@ def test_pve_poll_skipped_when_unconfigured():
     cache = poller.get_cache()
     assert cache["reachable"] is False
     assert cache["error"] == "Proxmox not configured"
+
+
+# ============================================================================
+# ProxmoxPoller — alert logic
+# ============================================================================
+
+def _make_nodes(node_status="online", guest_status="running", vmid=108):
+    return [{
+        "name": "pve", "status": node_status,
+        "cpu_percent": 1.0, "mem_used_bytes": 0, "mem_total_bytes": 0, "uptime_seconds": 0,
+        "guests": [{"vmid": vmid, "name": "haos", "type": "qemu",
+                    "status": guest_status, "cpu_percent": 0.0,
+                    "mem_used_bytes": 0, "mem_total_bytes": 0}],
+    }]
+
+
+def test_pve_node_offline_alert_fires_once():
+    poller = _make_proxmox_poller()
+    nodes_offline = _make_nodes(node_status="offline")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(nodes_offline, [])
+        poller._check_alerts(nodes_offline, [])
+    assert mock_send.call_count == 1
+
+
+def test_pve_node_alert_rearmed_after_clear():
+    poller = _make_proxmox_poller()
+    offline = _make_nodes(node_status="offline")
+    online  = _make_nodes(node_status="online")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(offline, [])  # fires
+        poller._check_alerts(online, [])   # clears
+        poller._check_alerts(offline, [])  # re-arms → fires
+    assert mock_send.call_count == 2
+
+
+def test_pve_unexpected_stop_fires_alert():
+    poller = _make_proxmox_poller()
+    prev   = _make_nodes(guest_status="running")
+    now    = _make_nodes(guest_status="stopped")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(now, prev)
+    assert mock_send.call_count == 1
+    args = mock_send.call_args[0]
+    assert "stopped unexpectedly" in args[2]
+
+
+def test_pve_exempted_stop_does_not_alert():
+    poller = _make_proxmox_poller()
+    poller.exempt_vmid(108, seconds=60)
+    prev = _make_nodes(guest_status="running")
+    now  = _make_nodes(guest_status="stopped")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(now, prev)
+    assert mock_send.call_count == 0
+
+
+def test_pve_paused_guest_fires_alert():
+    poller = _make_proxmox_poller()
+    nodes = _make_nodes(guest_status="paused")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(nodes, [])
+    assert mock_send.call_count == 1
+    args = mock_send.call_args[0]
+    assert "paused" in args[2]
