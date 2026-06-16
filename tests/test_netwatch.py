@@ -1417,3 +1417,31 @@ def test_pve_paused_guest_fires_alert():
     assert mock_send.call_count == 1
     args = mock_send.call_args[0]
     assert "paused" in args[2]
+
+
+# ============================================================================
+# /api/proxmox handler
+# ============================================================================
+
+from monitor import _h_get_proxmox
+
+
+def test_h_get_proxmox_when_poller_is_none():
+    status, body = _h_get_proxmox(None)
+    assert status == 503
+    assert body["reachable"] is False
+
+
+def test_h_get_proxmox_returns_cache():
+    poller = _make_proxmox_poller()
+    with poller._lock:
+        poller._cache = {
+            "reachable": True,
+            "last_updated": "2026-06-16T14:00:00",
+            "error": None,
+            "nodes": [{"name": "pve"}],
+        }
+    status, body = _h_get_proxmox(poller)
+    assert status == 200
+    assert body["reachable"] is True
+    assert body["nodes"][0]["name"] == "pve"

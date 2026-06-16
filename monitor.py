@@ -3467,6 +3467,12 @@ def _h_get_nas(nas_poller) -> tuple:
     return 200, nas_poller.get_cache()
 
 
+def _h_get_proxmox(proxmox_poller) -> tuple:
+    if proxmox_poller is None:
+        return 503, {"reachable": False, "error": "Proxmox poller not running"}
+    return 200, proxmox_poller.get_cache()
+
+
 def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
     user, is_admin = current_user_fn() if auth_manager else (None, False)
     return 200, {
@@ -3785,7 +3791,7 @@ def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
     return 200, {"ok": True}
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -3919,6 +3925,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/nas":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_nas(nas_poller))
+                return
+            if self.path == "/api/proxmox":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_proxmox(proxmox_poller))
                 return
             if self.path == "/api/auth/status":
                 self._send_json(*_h_get_auth_status(auth_manager, self._current_user))
@@ -4228,8 +4238,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
@@ -4517,12 +4527,18 @@ def main():
         nas_poller.start(stop_event)
         print(f"[netwatch] NAS poller -> polling TrueNAS every {NASPoller.POLL_INTERVAL_SECONDS}s")
 
+    proxmox_poller = ProxmoxPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    _pve_url, _, _, _ = proxmox_poller._get_config()
+    if _pve_url:
+        proxmox_poller.start(stop_event)
+        print(f"[netwatch] Proxmox poller -> polling every {ProxmoxPoller.POLL_INTERVAL_SECONDS}s")
+
     if not args.no_web:
         web_settings = {**settings, "default_interval": default_interval}
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, web_settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller},
             daemon=True
         )
         wt.start()
