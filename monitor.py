@@ -3328,6 +3328,7 @@ _STATIC_FILES = {
     'auth.js':     'application/javascript; charset=utf-8',
     'ai-panel.js':  'application/javascript; charset=utf-8',
     'nas.js':       'application/javascript; charset=utf-8',
+    'proxmox.js':   'application/javascript; charset=utf-8',
     'settings.js':  'application/javascript; charset=utf-8',
     'd3.v7.min.js':    'application/javascript; charset=utf-8',
     'dmsans-300.woff2':'font/woff2',
