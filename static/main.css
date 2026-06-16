@@ -1315,3 +1315,26 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .wstep-dot{width:8px;height:8px;border-radius:50%;background:var(--border);transition:background .15s}
 .wstep-dot.active{background:var(--text)}
 .wstep-dot.done{background:var(--green)}
+
+/* ── Servers tab pill toggle ─────────────────────────────────────────────── */
+.servers-pills {
+  display: flex;
+  gap: 4px;
+  padding: 12px 0 16px;
+}
+.servers-pill {
+  padding: 5px 18px;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font: 500 13px/1 var(--font-sans);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.servers-pill:hover { background: var(--surface2); color: var(--text); }
+.servers-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

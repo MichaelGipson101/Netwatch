@@ -224,7 +224,7 @@
     <button class="tab" data-tab="hosts" role="tab">Hosts</button>
     <button class="tab" data-tab="events" role="tab">Events <span class="tab-count" id="events-count" style="display:none">0</span></button>
     <button class="tab" data-tab="inventory" role="tab">Inventory <span class="tab-count" id="inv-count" style="display:none">0</span></button>
-    <button class="tab" data-tab="storage" role="tab">Storage</button>
+    <button class="tab" data-tab="servers" role="tab">Servers</button>
   </div>
 
   <div class="summary">
@@ -388,8 +388,19 @@
     <div id="inv-empty" class="inv-empty" style="display:none"></div>
   </div>
 
-  <div class="view" id="view-storage">
-    <div id="nas-content"></div>
+  <div class="view" id="view-servers">
+    <div class="servers-pills" role="tablist">
+      <button class="servers-pill active" data-panel="proxmox"
+              onclick="switchServersPanel('proxmox')" role="tab">Proxmox</button>
+      <button class="servers-pill" data-panel="truenas"
+              onclick="switchServersPanel('truenas')" role="tab">TrueNAS</button>
+    </div>
+    <div data-servers-panel="proxmox">
+      <div id="proxmox-content"></div>
+    </div>
+    <div data-servers-panel="truenas" style="display:none">
+      <div id="nas-content"></div>
+    </div>
   </div>
 
   <div class="footer">
