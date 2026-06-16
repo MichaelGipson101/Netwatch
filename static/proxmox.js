@@ -186,9 +186,9 @@
     var title = escapeHtml(entry.name)
       + (entry.is_up === true ? ' • UP' : entry.is_up === false ? ' • DOWN' : '');
     return '<span class="pve-nw-dot ' + upCls + '" title="' + title + '"'
-      + ' onclick="if(typeof showTab===\'function\')showTab(\'inventory\')"'
+      + ' onclick="if(typeof showTab===\'function\')setTab(\'inventory\')"'
       + ' style="cursor:pointer" tabindex="0" role="link"'
-      + ' onkeydown="if(event.key===\'Enter\'&&typeof showTab===\'function\')showTab(\'inventory\')"></span>';
+      + ' onkeydown="if(event.key===\'Enter\'&&typeof showTab===\'function\')setTab(\'inventory\')"></span>';
   }
 
   /* ── Action buttons ─────────────────────────────────────────────────────── */
