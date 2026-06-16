@@ -3473,6 +3473,54 @@ def _h_get_proxmox(proxmox_poller) -> tuple:
     return 200, proxmox_poller.get_cache()
 
 
+def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
+    import ssl, urllib.request, urllib.error as _urlerr
+    node   = (data.get("node") or "").strip()
+    vmid   = data.get("vmid")
+    gtype  = (data.get("type") or "").strip()
+    action = (data.get("action") or "").strip()
+
+    if not node or not vmid or gtype not in ("qemu", "lxc") \
+            or action not in ("start", "stop", "reboot"):
+        return 400, {"error": "Required: node, vmid, type (qemu/lxc), action (start/stop/reboot)"}
+
+    try:
+        vmid = int(vmid)
+    except (TypeError, ValueError):
+        return 400, {"error": "vmid must be an integer"}
+
+    if action in ("stop", "reboot") and proxmox_poller:
+        proxmox_poller.exempt_vmid(vmid, 30)
+
+    auth_data    = auth_manager.data if auth_manager else {}
+    base_url     = auth_data.get("proxmox_url", "")
+    user         = auth_data.get("proxmox_user", "")
+    token_id     = auth_data.get("proxmox_token_id", "")
+    token_secret = auth_data.get("proxmox_token_secret", "")
+
+    if not all([base_url, user, token_id, token_secret]):
+        return 503, {"error": "Proxmox not configured"}
+
+    url = (f"{base_url.rstrip('/')}/api2/json/nodes"
+           f"/{node}/{gtype}/{vmid}/status/{action}")
+    token = f"{user}!{token_id}={token_secret}"
+    req = urllib.request.Request(
+        url, data=b"", method="POST",
+        headers={"Authorization": f"PVEAPIToken={token}"},
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=10):
+            return 200, {"ok": True}
+    except _urlerr.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        return e.code, {"error": body}
+    except Exception as e:
+        return 500, {"error": str(e)}
+
+
 def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
     user, is_admin = current_user_fn() if auth_manager else (None, False)
     return 200, {
@@ -4216,6 +4264,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_wake(data, host_manager, inventory_db))
+                return
+
+            if self.path == "/api/proxmox/action":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_proxmox_action(data, proxmox_poller, auth_manager))
                 return
 
             if self.path == "/api/hosts":

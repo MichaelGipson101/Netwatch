@@ -1445,3 +1445,72 @@ def test_h_get_proxmox_returns_cache():
     assert status == 200
     assert body["reachable"] is True
     assert body["nodes"][0]["name"] == "pve"
+
+
+# ============================================================================
+# /api/proxmox/action handler
+# ============================================================================
+
+from monitor import _h_post_proxmox_action
+
+
+def _make_auth_manager_with_pve():
+    am = MagicMock()
+    am.data = {
+        "proxmox_url": "https://pve.test:8006",
+        "proxmox_user": "root@pam",
+        "proxmox_token_id": "Netwatch",
+        "proxmox_token_secret": "test-uuid",
+    }
+    return am
+
+
+def test_pve_action_missing_node_returns_400():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"vmid": 108, "type": "qemu", "action": "stop"}, None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_invalid_action_returns_400():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"node": "pve", "vmid": 108, "type": "qemu", "action": "destroy"}, None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_invalid_type_returns_400():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"node": "pve", "vmid": 108, "type": "openvz", "action": "stop"}, None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_stop_exempts_vmid():
+    import time
+    am = _make_auth_manager_with_pve()
+    poller = _make_proxmox_poller()
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = b'{"data": "UPID:pve:..."}'
+        mock_open.return_value = mock_resp
+        status, body = _h_post_proxmox_action(
+            {"node": "pve", "vmid": 108, "type": "qemu", "action": "stop"},
+            poller, am
+        )
+    # Exemption should now be set
+    assert poller._exemptions.get(108, 0) > time.time()
+
+
+def test_pve_action_unconfigured_returns_503():
+    am = MagicMock()
+    am.data = {}
+    status, body = _h_post_proxmox_action(
+        {"node": "pve", "vmid": 108, "type": "qemu", "action": "stop"}, None, am
+    )
+    assert status == 503
