@@ -1239,3 +1239,13 @@ def test_h_post_settings_saves_proxmox_secret_to_auth_manager():
             {"proxmox_token_secret": "new-uuid"}, cfg, {}, auth_manager=am
         )
     assert am.data.get("proxmox_token_secret") == "new-uuid"
+
+
+# ============================================================================
+# proxmox_vmid in VM inventory properties
+# ============================================================================
+
+def test_proxmox_vmid_in_vm_type_properties():
+    from monitor import INVENTORY_TYPE_PROPERTIES
+    vm_keys = [p[0] for p in INVENTORY_TYPE_PROPERTIES.get("vm", [])]
+    assert "proxmox_vmid" in vm_keys

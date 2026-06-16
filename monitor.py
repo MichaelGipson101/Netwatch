@@ -1409,6 +1409,7 @@ INVENTORY_TYPE_PROPERTIES = {
         ("ram_alloc_gb",   "int",    "Allocated RAM (GB)"),
         ("disk_alloc_gb",  "int",    "Allocated disk (GB)"),
         ("autostart",      "bool",   "Auto-starts with host"),
+        ("proxmox_vmid",   "int",    "Proxmox VMID"),
     ],
     "network": [
         ("port_count",     "int",    "Port count"),
