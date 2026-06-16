@@ -1249,3 +1249,106 @@ def test_proxmox_vmid_in_vm_type_properties():
     from monitor import INVENTORY_TYPE_PROPERTIES
     vm_keys = [p[0] for p in INVENTORY_TYPE_PROPERTIES.get("vm", [])]
     assert "proxmox_vmid" in vm_keys
+
+
+# ============================================================================
+# ProxmoxPoller — data fetch and transformation
+# ============================================================================
+
+from monitor import ProxmoxPoller
+
+
+def _make_proxmox_poller():
+    am = MagicMock()
+    am.data = {
+        "proxmox_url": "https://pve.test:8006",
+        "proxmox_user": "root@pam",
+        "proxmox_token_id": "Netwatch",
+        "proxmox_token_secret": "test-uuid",
+    }
+    return ProxmoxPoller(am, alert_settings={}, alert_port=8080)
+
+
+_RAW_QEMU = {
+    "vmid": 108, "name": "haos13.2", "status": "running",
+    "cpu": 0.0243, "mem": 2046949088, "maxmem": 4294967296,
+    "cpus": 2, "uptime": 3891377,
+}
+_RAW_LXC = {
+    "vmid": 120, "name": "pihole", "type": "lxc", "status": "running",
+    "cpu": 0.003, "mem": 20336640, "maxmem": 536870912,
+    "cpus": 1, "uptime": 3891350,
+}
+_RAW_STOPPED = {
+    "vmid": 100, "name": "windows-11", "status": "stopped",
+    "cpu": 0, "mem": 0, "maxmem": 8589934592,
+    "cpus": 4, "uptime": 0,
+}
+_RAW_NODE = {
+    "node": "pve", "status": "online",
+    "cpu": 0.1209, "mem": 11170574336, "maxmem": 16147808256,
+    "uptime": 3891504,
+}
+
+
+def test_build_guest_qemu_type_inferred():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_QEMU, "qemu")
+    assert g["type"] == "qemu"
+    assert g["vmid"] == 108
+    assert g["name"] == "haos13.2"
+    assert g["status"] == "running"
+
+
+def test_build_guest_lxc_type_inferred():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_LXC, "lxc")
+    assert g["type"] == "lxc"
+
+
+def test_build_guest_cpu_fraction_to_percent():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_QEMU, "qemu")
+    assert g["cpu_percent"] == round(0.0243 * 100, 1)
+
+
+def test_build_guest_stopped_has_zero_cpu():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_STOPPED, "qemu")
+    assert g["cpu_percent"] == 0.0
+    assert g["mem_used_bytes"] == 0
+
+
+def test_build_node_contains_guests():
+    poller = _make_proxmox_poller()
+    node = poller._build_node(_RAW_NODE, [_RAW_QEMU, _RAW_STOPPED], [_RAW_LXC])
+    assert node["name"] == "pve"
+    assert node["status"] == "online"
+    assert len(node["guests"]) == 3
+    assert node["guests"][0]["vmid"] == 100
+    assert node["guests"][1]["vmid"] == 108
+    assert node["guests"][2]["vmid"] == 120
+
+
+def test_build_node_cpu_fraction_to_percent():
+    poller = _make_proxmox_poller()
+    node = poller._build_node(_RAW_NODE, [], [])
+    assert node["cpu_percent"] == round(0.1209 * 100, 1)
+
+
+def test_pve_get_cache_returns_deepcopy():
+    poller = _make_proxmox_poller()
+    c1 = poller.get_cache()
+    c1["reachable"] = True
+    c2 = poller.get_cache()
+    assert c2["reachable"] is False
+
+
+def test_pve_poll_skipped_when_unconfigured():
+    am = MagicMock()
+    am.data = {}
+    poller = ProxmoxPoller(am)
+    poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is False
+    assert cache["error"] == "Proxmox not configured"

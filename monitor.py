@@ -2598,6 +2598,134 @@ class NASPoller:
 
 
 # ============================================================================
+# Proxmox Poller (Proxmox VE REST API)
+# ============================================================================
+
+class ProxmoxPoller:
+    POLL_INTERVAL_SECONDS = 60
+
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+        self._auth_manager = auth_manager
+        self._alert_settings = alert_settings or {}
+        self._alert_port = alert_port
+        self._cache = {
+            "reachable": False,
+            "last_updated": None,
+            "error": None,
+            "nodes": [],
+        }
+        self._lock = threading.Lock()
+        self._alert_state = {}    # condition_id -> bool (True = currently alerting)
+        self._exemptions = {}     # vmid (int) -> float timestamp (exempt until)
+
+    def get_cache(self):
+        with self._lock:
+            import copy
+            return copy.deepcopy(self._cache)
+
+    def exempt_vmid(self, vmid, seconds=30):
+        """Suppress unexpected-stop alert for vmid for the next N seconds."""
+        self._exemptions[int(vmid)] = time.time() + seconds
+
+    def _get_config(self):
+        data = self._auth_manager.data if self._auth_manager else {}
+        return (
+            data.get("proxmox_url", ""),
+            data.get("proxmox_user", ""),
+            data.get("proxmox_token_id", ""),
+            data.get("proxmox_token_secret", ""),
+        )
+
+    def _make_ssl_ctx(self):
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    def _fetch(self, base_url, user, token_id, token_secret, path):
+        import urllib.request
+        url = base_url.rstrip("/") + path
+        token = f"{user}!{token_id}={token_secret}"
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"PVEAPIToken={token}"}
+        )
+        with urllib.request.urlopen(req, context=self._make_ssl_ctx(), timeout=10) as r:
+            return json.loads(r.read().decode())["data"]
+
+    def _build_guest(self, raw, guest_type):
+        return {
+            "vmid":            raw.get("vmid"),
+            "name":            raw.get("name", ""),
+            "type":            guest_type,
+            "status":          raw.get("status", "stopped"),
+            "cpu_percent":     round((raw.get("cpu") or 0.0) * 100, 1),
+            "mem_used_bytes":  raw.get("mem", 0),
+            "mem_total_bytes": raw.get("maxmem", 0),
+        }
+
+    def _build_node(self, raw_node, qemu_list, lxc_list):
+        guests = (
+            [self._build_guest(g, "qemu") for g in qemu_list]
+            + [self._build_guest(g, "lxc")  for g in lxc_list]
+        )
+        guests.sort(key=lambda g: g["vmid"] or 0)
+        return {
+            "name":            raw_node.get("node", ""),
+            "status":          raw_node.get("status", "unknown"),
+            "cpu_percent":     round((raw_node.get("cpu") or 0.0) * 100, 1),
+            "mem_used_bytes":  raw_node.get("mem", 0),
+            "mem_total_bytes": raw_node.get("maxmem", 0),
+            "uptime_seconds":  raw_node.get("uptime", 0),
+            "guests":          guests,
+        }
+
+    def _check_alerts(self, nodes, prev_nodes):
+        pass  # implemented in Task 4
+
+    def _poll(self):
+        url, user, token_id, token_secret = self._get_config()
+        if not all([url, user, token_id, token_secret]):
+            with self._lock:
+                self._cache["error"] = "Proxmox not configured"
+            return
+        try:
+            raw_nodes = self._fetch(url, user, token_id, token_secret, "/api2/json/nodes")
+            nodes = []
+            for raw in raw_nodes:
+                name = raw.get("node", "")
+                qemu = self._fetch(url, user, token_id, token_secret,
+                                   f"/api2/json/nodes/{name}/qemu")
+                lxc  = self._fetch(url, user, token_id, token_secret,
+                                   f"/api2/json/nodes/{name}/lxc")
+                nodes.append(self._build_node(raw, qemu, lxc))
+            now_str = datetime.now().isoformat(timespec="seconds")
+            with self._lock:
+                prev_nodes = self._cache.get("nodes", [])
+                self._cache.update({
+                    "reachable":    True,
+                    "last_updated": now_str,
+                    "error":        None,
+                    "nodes":        nodes,
+                })
+            self._check_alerts(nodes, prev_nodes)
+        except Exception as e:
+            logging.warning(f"ProxmoxPoller: poll failed: {e}")
+            with self._lock:
+                self._cache["reachable"] = False
+
+    def start(self, stop_event):
+        def _loop():
+            while not stop_event.is_set():
+                try:
+                    self._poll()
+                except Exception as e:
+                    logging.warning(f"ProxmoxPoller: unexpected error in loop: {e}")
+                stop_event.wait(self.POLL_INTERVAL_SECONDS)
+        threading.Thread(target=_loop, daemon=True, name="proxmox-poller").start()
+
+
+# ============================================================================
 # Wake-on-LAN
 # ============================================================================
 
