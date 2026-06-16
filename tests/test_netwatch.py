@@ -1189,3 +1189,53 @@ def test_poll_skipped_when_unconfigured():
     poller._poll()
     assert poller.get_cache()["reachable"] is False
     assert poller.get_cache()["error"] == "NAS not configured"
+
+
+# ============================================================================
+# Auth routing — Proxmox credential keys
+# ============================================================================
+
+from monitor import _AUTH_STORED_KEYS, _h_get_settings, _h_post_settings
+
+
+def _make_am_with_proxmox():
+    am = MagicMock()
+    am.data = {
+        "proxmox_url": "https://pve.test:8006",
+        "proxmox_user": "root@pam",
+        "proxmox_token_id": "Netwatch",
+        "proxmox_token_secret": "test-uuid",
+    }
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    return am
+
+
+def test_proxmox_keys_in_auth_stored_keys():
+    for k in ("proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret"):
+        assert k in _AUTH_STORED_KEYS, f"{k} not in _AUTH_STORED_KEYS"
+
+
+def test_h_get_settings_reads_proxmox_creds_from_auth_manager():
+    am = _make_am_with_proxmox()
+    status, body = _h_get_settings({}, auth_manager=am)
+    assert status == 200
+    assert body["proxmox_url"] == "https://pve.test:8006"
+    assert body["proxmox_token_secret"] == "test-uuid"
+
+
+def test_h_post_settings_saves_proxmox_secret_to_auth_manager():
+    import tempfile, os
+    am = MagicMock()
+    am.data = {}
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    am._save = MagicMock()
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "hosts.yaml")
+        status, body = _h_post_settings(
+            {"proxmox_token_secret": "new-uuid"}, cfg, {}, auth_manager=am
+        )
+    assert am.data.get("proxmox_token_secret") == "new-uuid"

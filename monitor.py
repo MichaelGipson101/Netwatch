@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.39"
+VERSION = "3.40"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -3114,6 +3114,11 @@ _SETTINGS_INT_RANGES = {
 _SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url"}
 _SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_window",
                                 "refresh_rate", "history_days"}
+# These keys live in auth.json (alongside user credentials), not hosts.yaml
+_AUTH_STORED_KEYS = {
+    "truenas_url", "truenas_api_key",
+    "proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret",
+}
 
 
 def build_api_payload(host_manager, settings, incident_log=None, inventory_db=None):
@@ -3180,11 +3185,17 @@ def _h_get_ai_config(settings: dict) -> tuple:
     }
 
 
-def _h_get_settings(settings: dict) -> tuple:
-    return 200, {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+def _h_get_settings(settings: dict, auth_manager=None) -> tuple:
+    result = {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+    if auth_manager:
+        with auth_manager.lock:
+            for k in _AUTH_STORED_KEYS:
+                if k in auth_manager.data:
+                    result[k] = auth_manager.data[k]
+    return 200, result
 
 
-def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
+def _h_post_settings(data: dict, config_path: str, settings: dict, auth_manager=None) -> tuple:
     updates = {}
     for k, typ in SETTINGS_EDITABLE_KEYS.items():
         if k not in data:
@@ -3212,13 +3223,26 @@ def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
             if k in _SETTINGS_URL_KEYS and updates[k] and not _validate_url(updates[k]):
                 return 400, {"error": f"'{k}' must be a valid http:// or https:// URL"}
 
+    # TrueNAS credentials live in auth.json alongside user data, not hosts.yaml
+    auth_updates = {k: v for k, v in updates.items() if k in _AUTH_STORED_KEYS}
+    yaml_updates  = {k: v for k, v in updates.items() if k not in _AUTH_STORED_KEYS}
+
+    if auth_updates and auth_manager:
+        with auth_manager.lock:
+            for k, v in auth_updates.items():
+                if v is None:
+                    auth_manager.data.pop(k, None)
+                else:
+                    auth_manager.data[k] = v
+            auth_manager._save()
+
     try:
         existing = load_yaml(config_path) or {}
     except Exception:
         existing = {}
     existing_settings = dict(existing.get("settings", {}))
 
-    for k, v in updates.items():
+    for k, v in yaml_updates.items():
         if v is None:
             existing_settings.pop(k, None)
             settings.pop(k, None)
@@ -3237,7 +3261,13 @@ def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
         logging.exception("settings save error")
         return 500, {"error": f"Failed to save settings: {e}"}
 
-    return 200, {"ok": True, "settings": {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}}
+    result = {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+    if auth_manager:
+        with auth_manager.lock:
+            for k in _AUTH_STORED_KEYS:
+                if k in auth_manager.data:
+                    result[k] = auth_manager.data[k]
+    return 200, {"ok": True, "settings": result}
 
 
 def _h_get_hosts(config_path: str) -> tuple:
@@ -3701,7 +3731,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
             if self.path == "/api/settings":
                 if not self._require_auth(admin_only=True): return
-                self._send_json(*_h_get_settings(settings))
+                self._send_json(*_h_get_settings(settings, auth_manager))
                 return
             if self.path == "/api/hosts":
                 if not self._require_auth(): return
@@ -4014,7 +4044,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(admin_only=True): return
                 data, err = self._read_json_body()
                 if err: return
-                self._send_json(*_h_post_settings(data, config_path, settings))
+                self._send_json(*_h_post_settings(data, config_path, settings, auth_manager))
                 return
 
             self.send_response(404)
