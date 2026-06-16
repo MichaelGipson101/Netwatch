@@ -1327,23 +1327,23 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   border-radius: 20px;
   border: 1.5px solid var(--border);
   background: transparent;
-  color: var(--text-muted);
-  font: 500 13px/1 var(--font-sans);
+  color: var(--muted);
+  font: 500 13px/1 'DM Sans', sans-serif;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.servers-pill:hover { background: var(--surface2); color: var(--text); }
+.servers-pill:hover { background: var(--subtle); color: var(--text); }
 .servers-pill.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--surface);
 }
 
 /* ── Proxmox panel — shared & action bar ─────────────────────────────────── */
 .pve-unavailable {
   padding: 32px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 14px;
 }
 .pve-action-bar {
@@ -1352,8 +1352,8 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   gap: 12px;
   padding-bottom: 16px;
 }
-.pve-meta  { font-size: 12px; color: var(--text-muted); }
-.pve-warn  { font-size: 12px; color: var(--warn, #e8a000); font-weight: 500; }
+.pve-meta  { font-size: 12px; color: var(--muted); }
+.pve-warn  { font-size: 12px; color: var(--amber); font-weight: 500; }
 
 /* ── Node cards ──────────────────────────────────────────────────────────── */
 .pve-node-cards {
@@ -1372,25 +1372,25 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   flex-direction: column;
   gap: 8px;
 }
-.pve-node-name  { font: 600 14px/1 var(--font-mono); color: var(--text); }
+.pve-node-name  { font: 600 14px/1 'DM Mono', monospace; color: var(--text); }
 .pve-node-badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font: 600 11px/1 var(--font-mono);
+  font: 600 11px/1 'DM Mono', monospace;
   letter-spacing: .5px;
   width: fit-content;
 }
-.pve-node-badge-ok  { background: #1a4a2e; color: #4caf50; }
-.pve-node-badge-err { background: #4a1a1a; color: #f44336; }
+.pve-node-badge-ok  { background: var(--green-bg); color: var(--green-text); }
+.pve-node-badge-err { background: var(--red-bg);   color: var(--red-text); }
 .pve-node-stat {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
 }
-.pve-stat-lbl { color: var(--text-muted); width: 30px; flex-shrink: 0; }
-.pve-stat-val { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.pve-stat-lbl { color: var(--muted); width: 30px; flex-shrink: 0; }
+.pve-stat-val { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .pve-bar {
   flex: 1;
   height: 5px;
@@ -1400,12 +1400,12 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 }
 .pve-bar-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--green);
   border-radius: 3px;
   transition: width 0.3s;
   max-width: 100%;
 }
-.pve-node-uptime { font-size: 11px; color: var(--text-muted); }
+.pve-node-uptime { font-size: 11px; color: var(--muted); }
 
 /* ── Proxmox guest table ─────────────────────────────────────────────────── */
 .pve-guest-table {
@@ -1417,8 +1417,8 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   text-align: left;
   padding: 6px 10px;
   border-bottom: 2px solid var(--border);
-  font: 600 11px/1 var(--font-sans);
-  color: var(--text-muted);
+  font: 600 11px/1 'DM Sans', sans-serif;
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .5px;
   white-space: nowrap;
@@ -1429,8 +1429,8 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   vertical-align: middle;
 }
 .pve-guest-table tr:last-child td { border-bottom: none; }
-.pve-td-mono { font-family: var(--font-mono); font-size: 12px; }
-.pve-td-num  { text-align: right; font-family: var(--font-mono); font-size: 12px; }
+.pve-td-mono { font-family: 'DM Mono', monospace; font-size: 12px; }
+.pve-td-num  { text-align: right; font-family: 'DM Mono', monospace; font-size: 12px; }
 .pve-td-nw, .pve-col-nw { text-align: center; width: 36px; }
 .pve-td-actions { white-space: nowrap; }
 
@@ -1439,23 +1439,23 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font: 600 11px/1.4 var(--font-mono);
+  font: 600 11px/1.4 'DM Mono', monospace;
   letter-spacing: .3px;
 }
-.pve-badge-running { background: #1a4a2e; color: #4caf50; }
-.pve-badge-stopped { background: var(--surface2); color: var(--text-muted); }
-.pve-badge-paused  { background: #4a3b1a; color: #ffb300; }
+.pve-badge-running { background: var(--green-bg);  color: var(--green-text); }
+.pve-badge-stopped { background: var(--subtle);     color: var(--muted); }
+.pve-badge-paused  { background: var(--amber-bg);   color: var(--amber-text); }
 
 /* Type pills */
 .pve-type-vm, .pve-type-lxc {
   display: inline-block;
   padding: 2px 7px;
   border-radius: 4px;
-  font: 600 10px/1.4 var(--font-mono);
+  font: 600 10px/1.4 'DM Mono', monospace;
   letter-spacing: .5px;
 }
-.pve-type-vm  { background: #1a2e4a; color: #64b5f6; }
-.pve-type-lxc { background: #2e1a4a; color: #ce93d8; }
+.pve-type-vm  { background: var(--blue-bg); color: var(--blue); }
+.pve-type-lxc { background: var(--subtle);  color: var(--muted); }
 
 /* ── Proxmox action buttons ──────────────────────────────────────────────── */
 .pve-btn {
@@ -1467,18 +1467,18 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--surface);
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
   margin-right: 3px;
 }
-.pve-btn:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+.pve-btn:hover:not(:disabled) { background: var(--subtle); color: var(--text); }
 .pve-btn:disabled { opacity: 0.4; cursor: default; }
-.pve-btn-start:hover:not(:disabled) { color: #4caf50; border-color: #4caf50; }
-.pve-btn-stop:hover:not(:disabled)  { color: #f44336; border-color: #f44336; }
+.pve-btn-start:hover:not(:disabled) { color: var(--green);  border-color: var(--green); }
+.pve-btn-stop:hover:not(:disabled)  { color: var(--red);    border-color: var(--red); }
 .pve-btn-loading { opacity: 0.5; }
-.pve-btn-err { border-color: #f44336 !important; color: #f44336 !important; }
+.pve-btn-err { border-color: var(--red) !important; color: var(--red) !important; }
 
 /* ── Proxmox Netwatch host link dot ─────────────────────────────────────── */
 .pve-nw-dot {
@@ -1490,6 +1490,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   transition: transform 0.1s;
 }
 .pve-nw-dot:hover { transform: scale(1.3); }
-.pve-nw-up      { background: #4caf50; border-color: #4caf50; }
-.pve-nw-down    { background: #f44336; border-color: #f44336; }
-.pve-nw-unknown { background: var(--surface2); }
+.pve-nw-up      { background: var(--green); border-color: var(--green); }
+.pve-nw-down    { background: var(--red);   border-color: var(--red); }
+.pve-nw-unknown { background: var(--subtle); }
