@@ -11,6 +11,7 @@
     fetch('/api/proxmox')
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        window.nwLastProxmox = data;
         _buildHostsMap(function () { _renderProxmox(data); });
       })
       .catch(function () {

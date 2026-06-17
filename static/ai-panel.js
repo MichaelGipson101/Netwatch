@@ -82,6 +82,38 @@
     if(tab === 'events'){
       return {page:'events', events:(lastData && lastData.events)||[]};
     }
+    if(tab === 'servers'){
+      const pve = window.nwLastProxmox;
+      const nas = window.nwLastNas;
+      return {
+        page: 'servers',
+        proxmox: pve ? {
+          reachable: pve.reachable, error: pve.error || null,
+          nodes: (pve.nodes || []).map(n => ({
+            name: n.name, status: n.status,
+            cpu_percent: n.cpu_percent, mem_used_bytes: n.mem_used_bytes,
+            mem_total_bytes: n.mem_total_bytes, uptime_seconds: n.uptime_seconds,
+            guests: (n.guests || []).map(g => ({
+              vmid: g.vmid, name: g.name, type: g.type, status: g.status,
+              cpu_percent: g.cpu_percent, mem_used_bytes: g.mem_used_bytes,
+              mem_total_bytes: g.mem_total_bytes
+            }))
+          }))
+        } : null,
+        truenas: nas ? {
+          reachable: nas.reachable, error: nas.error || null,
+          pools: (nas.pools || []).map(p => ({
+            name: p.name, status: p.status,
+            capacity_used_bytes: p.capacity_used_bytes,
+            capacity_total_bytes: p.capacity_total_bytes,
+            last_scrub: p.last_scrub, next_scrub: p.next_scrub
+          })),
+          replication_tasks: (nas.replication_tasks || []).map(t => ({
+            name: t.name, last_run: t.last_run, last_state: t.last_state
+          }))
+        } : null
+      };
+    }
     const hosts = (lastData && lastData.hosts)||[];
     return {
       page: tab,
@@ -354,6 +386,16 @@
       return base
         + 'You have the recent event log below. Events record host status changes (going up, going down, degraded).\n\n'
         + 'Current page: events\nLive data:\n' + JSON.stringify(ctx, null, 2);
+    }
+    if(ctx.page === 'servers'){
+      return base
+        + 'You have Proxmox VE and TrueNAS data below, if configured and loaded.\n'
+        + 'proxmox.nodes[]: name, status (online/offline), cpu_percent, mem_used_bytes, mem_total_bytes, '
+        + 'uptime_seconds, and guests[] (vmid, name, type: qemu/lxc, status: running/stopped, cpu_percent, mem_used_bytes, mem_total_bytes).\n'
+        + 'truenas.pools[]: name, status (ONLINE/degraded), capacity_used_bytes, capacity_total_bytes, '
+        + 'last_scrub (status, errors, end_time), next_scrub. truenas.replication_tasks[]: name, last_run, last_state.\n'
+        + 'If proxmox or truenas is null, that panel has not been opened yet this session or is not configured — say so rather than guessing.\n\n'
+        + 'Current page: servers\nLive data:\n' + JSON.stringify(ctx, null, 2);
     }
     return base
       + 'You have real-time data about every monitored host below. Each host includes:\n'

@@ -1,7 +1,10 @@
 function fetchNas() {
   fetch('/api/nas')
     .then(function(r) { return r.json(); })
-    .then(renderNas)
+    .then(function(data) {
+      window.nwLastNas = data;
+      renderNas(data);
+    })
     .catch(function() {
       var el = document.getElementById('nas-content');
       if (el) el.innerHTML = '<div class="nas-unavailable">Could not reach Netwatch server.</div>';
