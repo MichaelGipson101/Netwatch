@@ -157,7 +157,7 @@
         + '</tr>';
     }).join('') + '</tbody>';
 
-    return '<table class="pve-guest-table">' + head + body + '</table>';
+    return '<div class="pve-table-scroll"><table class="pve-guest-table">' + head + body + '</table></div>';
   }
 
   function _statusBadge (status) {

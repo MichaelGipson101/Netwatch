@@ -1418,10 +1418,17 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .pve-node-uptime { font-size: 11px; color: var(--muted); }
 
 /* ── Proxmox guest table ─────────────────────────────────────────────────── */
+.pve-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
 .pve-guest-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+}
+@media (max-width: 600px) {
+  .pve-guest-table { min-width: 640px; }
 }
 .pve-guest-table th {
   text-align: left;

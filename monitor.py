@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.42"
+VERSION = "3.43"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
