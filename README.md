@@ -1,13 +1,13 @@
 # NETWATCH
 
-> Homelab ping monitor · inventory CMDB · topology visualizer  
+> Homelab ping monitor · inventory CMDB · topology visualizer · Proxmox/TrueNAS dashboard  
 > Runs on a Raspberry Pi. Single Python file. No dependencies beyond stdlib + PyYAML + openpyxl.
 
 ---
 
 ## What it does
 
-Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, and serving a dark-mode web dashboard with live status, a full inventory database, and an interactive network topology graph.
+Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling Proxmox and TrueNAS, and serving a web dashboard (dark or light) with live status, a full inventory database, an interactive network topology graph, and an AI assistant that can answer questions about all of it.
 
 ```
 192.168.6.90:8080  ←  open in any browser
@@ -24,6 +24,23 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, and ser
 - Latency history charts (1h-7d) and 60-day daily uptime strip per host
 - Incident log with timestamps and duration
 - Push alerts via [ntfy](https://ntfy.sh)
+
+**Servers tab (Proxmox / TrueNAS)**
+- Pill toggle between Proxmox and TrueNAS panels
+- Proxmox: per-node cards (CPU/RAM bars, uptime), guest table (VMs + LXCs) with live CPU/RAM, start/stop/reboot actions, and a link dot back to the matching inventory host
+- TrueNAS: pool health metrics and replication task status
+- Background pollers (60s Proxmox, 900s TrueNAS) drive alerting via ntfy
+- Credentials managed through the Settings panel / config wizard, stored server-side in `auth.json`
+
+**Mira (AI assistant)**
+- Chat bubble (bottom corner) backed by [OpenRouter](https://openrouter.ai) free-tier models (Llama, DeepSeek, Gemma, Nemotron)
+- Context — hosts, Proxmox nodes/guests, TrueNAS pool/replication status — is built fresh on each message send, not on opening the panel
+- Status ring reflects live network health (nominal / advisory / warning / critical)
+- Usage modal for tracking OpenRouter key spend
+
+**Wake-on-LAN**
+- Send a magic packet to any host with a MAC address on record, from the host card or inventory drawer
+- Subnet broadcast address auto-detected
 
 **Inventory CMDB**
 - 9 device types, each with type-specific fields:
@@ -54,11 +71,15 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, and ser
 - Tooltips with live status
 
 **Dashboard**
-- Responsive dark-mode UI; compact mode for small screens
+- Responsive dark-mode UI with first-class light mode; compact mode for small screens
 - Kiosk / fullscreen mode
+- Toast notifications, full keyboard accessibility (focus trap, Enter/Space activation, ARIA states)
+- PWA-installable with status-aware favicon (alert variant when a host is down)
 - Inventory table with sort, filter, type chips
 - Host drawer with uptime history sparkline
 - Inventory drawer with full record detail and edit
+- Settings panel + setup wizard for credentials (Proxmox, TrueNAS, OpenRouter, ntfy)
+- Self-hosted fonts and D3 — no CDN calls, works on a fully isolated LAN
 
 **Security**
 - Session-based auth (login required for all routes and API)
@@ -138,9 +159,11 @@ HTTP access log: `tail -f monitor.log`
 ## Files
 
 ```
-monitor.py          — application core (~3,900 lines)
+monitor.py          — application core (~4,600 lines)
 dashboard.html      — frontend shell (served by the Python server)
-static/             — dashboard CSS/JS (main.css, core.js, topology.js, ...)
+static/             — dashboard CSS/JS (main.css, core.js, topology.js, inventory.js,
+                       proxmox.js, nas.js, ai-panel.js, settings.js, auth.js, utils.js,
+                       vendored D3 + self-hosted fonts, icons/manifest)
 hosts.yaml          — host list (ping targets)
 hosts.yaml.example  — template
 tests/              — pytest suite
@@ -148,7 +171,8 @@ docs/               — design specs and implementation plans
 ```
 
 Data is stored next to `monitor.py`: `netwatch.db` (ping history, daily rollups,
-inventory, login lockouts), `auth.json` (users), `monitor.log` (rotating).
+inventory, login lockouts), `auth.json` (users + Proxmox/TrueNAS/OpenRouter/ntfy
+credentials), `monitor.log` (rotating).
 
 ---
 
