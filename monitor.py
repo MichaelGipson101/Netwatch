@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.39"
+VERSION = "3.42"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -1409,6 +1409,7 @@ INVENTORY_TYPE_PROPERTIES = {
         ("ram_alloc_gb",   "int",    "Allocated RAM (GB)"),
         ("disk_alloc_gb",  "int",    "Allocated disk (GB)"),
         ("autostart",      "bool",   "Auto-starts with host"),
+        ("proxmox_vmid",   "int",    "Proxmox VMID"),
     ],
     "network": [
         ("port_count",     "int",    "Port count"),
@@ -2597,6 +2598,180 @@ class NASPoller:
 
 
 # ============================================================================
+# Proxmox Poller (Proxmox VE REST API)
+# ============================================================================
+
+class ProxmoxPoller:
+    POLL_INTERVAL_SECONDS = 60
+
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+        self._auth_manager = auth_manager
+        self._alert_settings = alert_settings or {}
+        self._alert_port = alert_port
+        self._cache = {
+            "reachable": False,
+            "last_updated": None,
+            "error": None,
+            "nodes": [],
+        }
+        self._lock = threading.Lock()
+        self._alert_state = {}    # condition_id -> bool (True = currently alerting)
+        self._exemptions = {}     # vmid (int) -> float timestamp (exempt until)
+
+    def get_cache(self):
+        with self._lock:
+            import copy
+            return copy.deepcopy(self._cache)
+
+    def exempt_vmid(self, vmid, seconds=30):
+        """Suppress unexpected-stop alert for vmid for the next N seconds."""
+        self._exemptions[int(vmid)] = time.time() + seconds
+
+    def _get_config(self):
+        data = self._auth_manager.data if self._auth_manager else {}
+        return (
+            data.get("proxmox_url", ""),
+            data.get("proxmox_user", ""),
+            data.get("proxmox_token_id", ""),
+            data.get("proxmox_token_secret", ""),
+        )
+
+    def _make_ssl_ctx(self):
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    def _fetch(self, base_url, user, token_id, token_secret, path):
+        import urllib.request
+        url = base_url.rstrip("/") + path
+        token = f"{user}!{token_id}={token_secret}"
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"PVEAPIToken={token}"}
+        )
+        with urllib.request.urlopen(req, context=self._make_ssl_ctx(), timeout=10) as r:
+            return json.loads(r.read().decode())["data"]
+
+    def _build_guest(self, raw, guest_type):
+        return {
+            "vmid":            raw.get("vmid"),
+            "name":            raw.get("name", ""),
+            "type":            guest_type,
+            "status":          raw.get("status", "stopped"),
+            "cpu_percent":     round((raw.get("cpu") or 0.0) * 100, 1),
+            "mem_used_bytes":  raw.get("mem", 0),
+            "mem_total_bytes": raw.get("maxmem", 0),
+        }
+
+    def _build_node(self, raw_node, qemu_list, lxc_list):
+        guests = (
+            [self._build_guest(g, "qemu") for g in qemu_list]
+            + [self._build_guest(g, "lxc")  for g in lxc_list]
+        )
+        guests.sort(key=lambda g: g["vmid"] or 0)
+        return {
+            "name":            raw_node.get("node", ""),
+            "status":          raw_node.get("status", "unknown"),
+            "cpu_percent":     round((raw_node.get("cpu") or 0.0) * 100, 1),
+            "mem_used_bytes":  raw_node.get("mem", 0),
+            "mem_total_bytes": raw_node.get("maxmem", 0),
+            "uptime_seconds":  raw_node.get("uptime", 0),
+            "guests":          guests,
+        }
+
+    def _fire_alert(self, condition_id, message):
+        if not self._alert_state.get(condition_id, False):
+            self._alert_state[condition_id] = True
+            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+            _send_alert_async(
+                self._alert_settings, "Netwatch · Proxmox Alert", message,
+                priority="high", tags="rotating_light", click_url=click_url,
+            )
+
+    def _clear_alert(self, condition_id):
+        self._alert_state[condition_id] = False
+
+    def _check_alerts(self, nodes, prev_nodes):
+        now = time.time()
+        prev_states = {}
+        for n in prev_nodes:
+            for g in n.get("guests", []):
+                prev_states[g["vmid"]] = g["status"]
+
+        for node in nodes:
+            name = node["name"]
+
+            cid_node = f"node:{name}"
+            if node["status"] != "online":
+                self._fire_alert(cid_node, f'Proxmox node "{name}" is offline')
+            else:
+                self._clear_alert(cid_node)
+
+            for guest in node.get("guests", []):
+                vmid   = guest["vmid"]
+                gname  = guest["name"]
+                status = guest["status"]
+
+                cid_stop = f"stop:{vmid}"
+                if (prev_states.get(vmid) == "running"
+                        and status == "stopped"
+                        and now > self._exemptions.get(vmid, 0)):
+                    self._fire_alert(cid_stop,
+                                     f'VM "{gname}" ({vmid}) stopped unexpectedly on {name}')
+                elif status == "running":
+                    self._clear_alert(cid_stop)
+
+                cid_pause = f"pause:{vmid}"
+                if status == "paused":
+                    self._fire_alert(cid_pause,
+                                     f'VM "{gname}" ({vmid}) is paused on {name}')
+                else:
+                    self._clear_alert(cid_pause)
+
+    def _poll(self):
+        url, user, token_id, token_secret = self._get_config()
+        if not all([url, user, token_id, token_secret]):
+            with self._lock:
+                self._cache["error"] = "Proxmox not configured"
+            return
+        try:
+            raw_nodes = self._fetch(url, user, token_id, token_secret, "/api2/json/nodes")
+            nodes = []
+            for raw in raw_nodes:
+                name = raw.get("node", "")
+                qemu = self._fetch(url, user, token_id, token_secret,
+                                   f"/api2/json/nodes/{name}/qemu")
+                lxc  = self._fetch(url, user, token_id, token_secret,
+                                   f"/api2/json/nodes/{name}/lxc")
+                nodes.append(self._build_node(raw, qemu, lxc))
+            now_str = datetime.now().isoformat(timespec="seconds")
+            with self._lock:
+                prev_nodes = self._cache.get("nodes", [])
+                self._cache.update({
+                    "reachable":    True,
+                    "last_updated": now_str,
+                    "error":        None,
+                    "nodes":        nodes,
+                })
+            self._check_alerts(nodes, prev_nodes)
+        except Exception as e:
+            logging.warning(f"ProxmoxPoller: poll failed: {e}")
+            with self._lock:
+                self._cache["reachable"] = False
+
+    def start(self, stop_event):
+        def _loop():
+            while not stop_event.is_set():
+                try:
+                    self._poll()
+                except Exception as e:
+                    logging.warning(f"ProxmoxPoller: unexpected error in loop: {e}")
+                stop_event.wait(self.POLL_INTERVAL_SECONDS)
+        threading.Thread(target=_loop, daemon=True, name="proxmox-poller").start()
+
+
+# ============================================================================
 # Wake-on-LAN
 # ============================================================================
 
@@ -3114,6 +3289,11 @@ _SETTINGS_INT_RANGES = {
 _SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url"}
 _SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_window",
                                 "refresh_rate", "history_days"}
+# These keys live in auth.json (alongside user credentials), not hosts.yaml
+_AUTH_STORED_KEYS = {
+    "truenas_url", "truenas_api_key",
+    "proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret",
+}
 
 
 def build_api_payload(host_manager, settings, incident_log=None, inventory_db=None):
@@ -3148,6 +3328,7 @@ _STATIC_FILES = {
     'auth.js':     'application/javascript; charset=utf-8',
     'ai-panel.js':  'application/javascript; charset=utf-8',
     'nas.js':       'application/javascript; charset=utf-8',
+    'proxmox.js':   'application/javascript; charset=utf-8',
     'settings.js':  'application/javascript; charset=utf-8',
     'd3.v7.min.js':    'application/javascript; charset=utf-8',
     'dmsans-300.woff2':'font/woff2',
@@ -3181,11 +3362,17 @@ def _h_get_ai_config(settings: dict) -> tuple:
     }
 
 
-def _h_get_settings(settings: dict) -> tuple:
-    return 200, {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+def _h_get_settings(settings: dict, auth_manager=None) -> tuple:
+    result = {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+    if auth_manager:
+        with auth_manager.lock:
+            for k in _AUTH_STORED_KEYS:
+                if k in auth_manager.data:
+                    result[k] = auth_manager.data[k]
+    return 200, result
 
 
-def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
+def _h_post_settings(data: dict, config_path: str, settings: dict, auth_manager=None) -> tuple:
     updates = {}
     for k, typ in SETTINGS_EDITABLE_KEYS.items():
         if k not in data:
@@ -3213,13 +3400,26 @@ def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
             if k in _SETTINGS_URL_KEYS and updates[k] and not _validate_url(updates[k]):
                 return 400, {"error": f"'{k}' must be a valid http:// or https:// URL"}
 
+    # TrueNAS credentials live in auth.json alongside user data, not hosts.yaml
+    auth_updates = {k: v for k, v in updates.items() if k in _AUTH_STORED_KEYS}
+    yaml_updates  = {k: v for k, v in updates.items() if k not in _AUTH_STORED_KEYS}
+
+    if auth_updates and auth_manager:
+        with auth_manager.lock:
+            for k, v in auth_updates.items():
+                if v is None:
+                    auth_manager.data.pop(k, None)
+                else:
+                    auth_manager.data[k] = v
+            auth_manager._save()
+
     try:
         existing = load_yaml(config_path) or {}
     except Exception:
         existing = {}
     existing_settings = dict(existing.get("settings", {}))
 
-    for k, v in updates.items():
+    for k, v in yaml_updates.items():
         if v is None:
             existing_settings.pop(k, None)
             settings.pop(k, None)
@@ -3238,7 +3438,13 @@ def _h_post_settings(data: dict, config_path: str, settings: dict) -> tuple:
         logging.exception("settings save error")
         return 500, {"error": f"Failed to save settings: {e}"}
 
-    return 200, {"ok": True, "settings": {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}}
+    result = {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
+    if auth_manager:
+        with auth_manager.lock:
+            for k in _AUTH_STORED_KEYS:
+                if k in auth_manager.data:
+                    result[k] = auth_manager.data[k]
+    return 200, {"ok": True, "settings": result}
 
 
 def _h_get_hosts(config_path: str) -> tuple:
@@ -3261,6 +3467,64 @@ def _h_get_nas(nas_poller) -> tuple:
     if nas_poller is None:
         return 503, {"reachable": False, "error": "NAS poller not available"}
     return 200, nas_poller.get_cache()
+
+
+def _h_get_proxmox(proxmox_poller) -> tuple:
+    if proxmox_poller is None:
+        return 503, {"reachable": False, "error": "Proxmox poller not running"}
+    cache = proxmox_poller.get_cache()
+    url, _, _, _ = proxmox_poller._get_config()
+    if not url and not cache.get("nodes"):
+        cache["error"] = "Proxmox not configured"
+    return 200, cache
+
+
+def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
+    import ssl, urllib.request, urllib.error as _urlerr
+    node   = (data.get("node") or "").strip()
+    vmid   = data.get("vmid")
+    gtype  = (data.get("type") or "").strip()
+    action = (data.get("action") or "").strip()
+
+    if not node or not vmid or gtype not in ("qemu", "lxc") \
+            or action not in ("start", "stop", "reboot"):
+        return 400, {"error": "Required: node, vmid, type (qemu/lxc), action (start/stop/reboot)"}
+
+    try:
+        vmid = int(vmid)
+    except (TypeError, ValueError):
+        return 400, {"error": "vmid must be an integer"}
+
+    if action in ("stop", "reboot") and proxmox_poller:
+        proxmox_poller.exempt_vmid(vmid, 30)
+
+    auth_data    = auth_manager.data if auth_manager else {}
+    base_url     = auth_data.get("proxmox_url", "")
+    user         = auth_data.get("proxmox_user", "")
+    token_id     = auth_data.get("proxmox_token_id", "")
+    token_secret = auth_data.get("proxmox_token_secret", "")
+
+    if not all([base_url, user, token_id, token_secret]):
+        return 503, {"error": "Proxmox not configured"}
+
+    url = (f"{base_url.rstrip('/')}/api2/json/nodes"
+           f"/{node}/{gtype}/{vmid}/status/{action}")
+    token = f"{user}!{token_id}={token_secret}"
+    req = urllib.request.Request(
+        url, data=b"", method="POST",
+        headers={"Authorization": f"PVEAPIToken={token}"},
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=10):
+            return 200, {"ok": True}
+    except _urlerr.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        return e.code, {"error": body}
+    except Exception as e:
+        return 500, {"error": str(e)}
 
 
 def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
@@ -3581,7 +3845,7 @@ def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
     return 200, {"ok": True}
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -3702,7 +3966,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
             if self.path == "/api/settings":
                 if not self._require_auth(admin_only=True): return
-                self._send_json(*_h_get_settings(settings))
+                self._send_json(*_h_get_settings(settings, auth_manager))
                 return
             if self.path == "/api/hosts":
                 if not self._require_auth(): return
@@ -3715,6 +3979,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/nas":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_nas(nas_poller))
+                return
+            if self.path == "/api/proxmox":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_proxmox(proxmox_poller))
                 return
             if self.path == "/api/auth/status":
                 self._send_json(*_h_get_auth_status(auth_manager, self._current_user))
@@ -4004,6 +4272,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self._send_json(*_h_post_wake(data, host_manager, inventory_db))
                 return
 
+            if self.path == "/api/proxmox/action":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_proxmox_action(data, proxmox_poller, auth_manager))
+                return
+
             if self.path == "/api/hosts":
                 if not self._require_auth(admin_only=True): return
                 data, err = self._read_json_body()
@@ -4015,7 +4290,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(admin_only=True): return
                 data, err = self._read_json_body()
                 if err: return
-                self._send_json(*_h_post_settings(data, config_path, settings))
+                self._send_json(*_h_post_settings(data, config_path, settings, auth_manager))
                 return
 
             self.send_response(404)
@@ -4024,8 +4299,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
@@ -4313,12 +4588,18 @@ def main():
         nas_poller.start(stop_event)
         print(f"[netwatch] NAS poller -> polling TrueNAS every {NASPoller.POLL_INTERVAL_SECONDS}s")
 
+    proxmox_poller = ProxmoxPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    _pve_url, _, _, _ = proxmox_poller._get_config()
+    if _pve_url:
+        proxmox_poller.start(stop_event)
+        print(f"[netwatch] Proxmox poller -> polling every {ProxmoxPoller.POLL_INTERVAL_SECONDS}s")
+
     if not args.no_web:
         web_settings = {**settings, "default_interval": default_interval}
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, web_settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller},
             daemon=True
         )
         wt.start()

@@ -1189,3 +1189,328 @@ def test_poll_skipped_when_unconfigured():
     poller._poll()
     assert poller.get_cache()["reachable"] is False
     assert poller.get_cache()["error"] == "NAS not configured"
+
+
+# ============================================================================
+# Auth routing — Proxmox credential keys
+# ============================================================================
+
+from monitor import _AUTH_STORED_KEYS, _h_get_settings, _h_post_settings
+
+
+def _make_am_with_proxmox():
+    am = MagicMock()
+    am.data = {
+        "proxmox_url": "https://pve.test:8006",
+        "proxmox_user": "root@pam",
+        "proxmox_token_id": "Netwatch",
+        "proxmox_token_secret": "test-uuid",
+    }
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    return am
+
+
+def test_proxmox_keys_in_auth_stored_keys():
+    for k in ("proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret"):
+        assert k in _AUTH_STORED_KEYS, f"{k} not in _AUTH_STORED_KEYS"
+
+
+def test_h_get_settings_reads_proxmox_creds_from_auth_manager():
+    am = _make_am_with_proxmox()
+    status, body = _h_get_settings({}, auth_manager=am)
+    assert status == 200
+    assert body["proxmox_url"] == "https://pve.test:8006"
+    assert body["proxmox_token_secret"] == "test-uuid"
+
+
+def test_h_post_settings_saves_proxmox_secret_to_auth_manager():
+    import tempfile, os
+    am = MagicMock()
+    am.data = {}
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    am._save = MagicMock()
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "hosts.yaml")
+        status, body = _h_post_settings(
+            {"proxmox_token_secret": "new-uuid"}, cfg, {}, auth_manager=am
+        )
+    assert am.data.get("proxmox_token_secret") == "new-uuid"
+
+
+# ============================================================================
+# proxmox_vmid in VM inventory properties
+# ============================================================================
+
+def test_proxmox_vmid_in_vm_type_properties():
+    from monitor import INVENTORY_TYPE_PROPERTIES
+    vm_keys = [p[0] for p in INVENTORY_TYPE_PROPERTIES.get("vm", [])]
+    assert "proxmox_vmid" in vm_keys
+
+
+# ============================================================================
+# ProxmoxPoller — data fetch and transformation
+# ============================================================================
+
+from monitor import ProxmoxPoller
+
+
+def _make_proxmox_poller():
+    am = MagicMock()
+    am.data = {
+        "proxmox_url": "https://pve.test:8006",
+        "proxmox_user": "root@pam",
+        "proxmox_token_id": "Netwatch",
+        "proxmox_token_secret": "test-uuid",
+    }
+    return ProxmoxPoller(am, alert_settings={}, alert_port=8080)
+
+
+_RAW_QEMU = {
+    "vmid": 108, "name": "haos13.2", "status": "running",
+    "cpu": 0.0243, "mem": 2046949088, "maxmem": 4294967296,
+    "cpus": 2, "uptime": 3891377,
+}
+_RAW_LXC = {
+    "vmid": 120, "name": "pihole", "type": "lxc", "status": "running",
+    "cpu": 0.003, "mem": 20336640, "maxmem": 536870912,
+    "cpus": 1, "uptime": 3891350,
+}
+_RAW_STOPPED = {
+    "vmid": 100, "name": "windows-11", "status": "stopped",
+    "cpu": 0, "mem": 0, "maxmem": 8589934592,
+    "cpus": 4, "uptime": 0,
+}
+_RAW_NODE = {
+    "node": "pve", "status": "online",
+    "cpu": 0.1209, "mem": 11170574336, "maxmem": 16147808256,
+    "uptime": 3891504,
+}
+
+
+def test_build_guest_qemu_type_inferred():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_QEMU, "qemu")
+    assert g["type"] == "qemu"
+    assert g["vmid"] == 108
+    assert g["name"] == "haos13.2"
+    assert g["status"] == "running"
+
+
+def test_build_guest_lxc_type_inferred():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_LXC, "lxc")
+    assert g["type"] == "lxc"
+
+
+def test_build_guest_cpu_fraction_to_percent():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_QEMU, "qemu")
+    assert g["cpu_percent"] == round(0.0243 * 100, 1)
+
+
+def test_build_guest_stopped_has_zero_cpu():
+    poller = _make_proxmox_poller()
+    g = poller._build_guest(_RAW_STOPPED, "qemu")
+    assert g["cpu_percent"] == 0.0
+    assert g["mem_used_bytes"] == 0
+
+
+def test_build_node_contains_guests():
+    poller = _make_proxmox_poller()
+    node = poller._build_node(_RAW_NODE, [_RAW_QEMU, _RAW_STOPPED], [_RAW_LXC])
+    assert node["name"] == "pve"
+    assert node["status"] == "online"
+    assert len(node["guests"]) == 3
+    assert node["guests"][0]["vmid"] == 100
+    assert node["guests"][1]["vmid"] == 108
+    assert node["guests"][2]["vmid"] == 120
+
+
+def test_build_node_cpu_fraction_to_percent():
+    poller = _make_proxmox_poller()
+    node = poller._build_node(_RAW_NODE, [], [])
+    assert node["cpu_percent"] == round(0.1209 * 100, 1)
+
+
+def test_pve_get_cache_returns_deepcopy():
+    poller = _make_proxmox_poller()
+    c1 = poller.get_cache()
+    c1["reachable"] = True
+    c2 = poller.get_cache()
+    assert c2["reachable"] is False
+
+
+def test_pve_poll_skipped_when_unconfigured():
+    am = MagicMock()
+    am.data = {}
+    poller = ProxmoxPoller(am)
+    poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is False
+    assert cache["error"] == "Proxmox not configured"
+
+
+# ============================================================================
+# ProxmoxPoller — alert logic
+# ============================================================================
+
+def _make_nodes(node_status="online", guest_status="running", vmid=108):
+    return [{
+        "name": "pve", "status": node_status,
+        "cpu_percent": 1.0, "mem_used_bytes": 0, "mem_total_bytes": 0, "uptime_seconds": 0,
+        "guests": [{"vmid": vmid, "name": "haos", "type": "qemu",
+                    "status": guest_status, "cpu_percent": 0.0,
+                    "mem_used_bytes": 0, "mem_total_bytes": 0}],
+    }]
+
+
+def test_pve_node_offline_alert_fires_once():
+    poller = _make_proxmox_poller()
+    nodes_offline = _make_nodes(node_status="offline")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(nodes_offline, [])
+        poller._check_alerts(nodes_offline, [])
+    assert mock_send.call_count == 1
+
+
+def test_pve_node_alert_rearmed_after_clear():
+    poller = _make_proxmox_poller()
+    offline = _make_nodes(node_status="offline")
+    online  = _make_nodes(node_status="online")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(offline, [])  # fires
+        poller._check_alerts(online, [])   # clears
+        poller._check_alerts(offline, [])  # re-arms → fires
+    assert mock_send.call_count == 2
+
+
+def test_pve_unexpected_stop_fires_alert():
+    poller = _make_proxmox_poller()
+    prev   = _make_nodes(guest_status="running")
+    now    = _make_nodes(guest_status="stopped")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(now, prev)
+    assert mock_send.call_count == 1
+    args = mock_send.call_args[0]
+    assert "stopped unexpectedly" in args[2]
+
+
+def test_pve_exempted_stop_does_not_alert():
+    poller = _make_proxmox_poller()
+    poller.exempt_vmid(108, seconds=60)
+    prev = _make_nodes(guest_status="running")
+    now  = _make_nodes(guest_status="stopped")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(now, prev)
+    assert mock_send.call_count == 0
+
+
+def test_pve_paused_guest_fires_alert():
+    poller = _make_proxmox_poller()
+    nodes = _make_nodes(guest_status="paused")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(nodes, [])
+    assert mock_send.call_count == 1
+    args = mock_send.call_args[0]
+    assert "paused" in args[2]
+
+
+# ============================================================================
+# /api/proxmox handler
+# ============================================================================
+
+from monitor import _h_get_proxmox
+
+
+def test_h_get_proxmox_when_poller_is_none():
+    status, body = _h_get_proxmox(None)
+    assert status == 503
+    assert body["reachable"] is False
+
+
+def test_h_get_proxmox_returns_cache():
+    poller = _make_proxmox_poller()
+    with poller._lock:
+        poller._cache = {
+            "reachable": True,
+            "last_updated": "2026-06-16T14:00:00",
+            "error": None,
+            "nodes": [{"name": "pve"}],
+        }
+    status, body = _h_get_proxmox(poller)
+    assert status == 200
+    assert body["reachable"] is True
+    assert body["nodes"][0]["name"] == "pve"
+
+
+# ============================================================================
+# /api/proxmox/action handler
+# ============================================================================
+
+from monitor import _h_post_proxmox_action
+
+
+def _make_auth_manager_with_pve():
+    am = MagicMock()
+    am.data = {
+        "proxmox_url": "https://pve.test:8006",
+        "proxmox_user": "root@pam",
+        "proxmox_token_id": "Netwatch",
+        "proxmox_token_secret": "test-uuid",
+    }
+    return am
+
+
+def test_pve_action_missing_node_returns_400():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"vmid": 108, "type": "qemu", "action": "stop"}, None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_invalid_action_returns_400():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"node": "pve", "vmid": 108, "type": "qemu", "action": "destroy"}, None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_invalid_type_returns_400():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"node": "pve", "vmid": 108, "type": "openvz", "action": "stop"}, None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_stop_exempts_vmid():
+    import time
+    am = _make_auth_manager_with_pve()
+    poller = _make_proxmox_poller()
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = b'{"data": "UPID:pve:..."}'
+        mock_open.return_value = mock_resp
+        status, body = _h_post_proxmox_action(
+            {"node": "pve", "vmid": 108, "type": "qemu", "action": "stop"},
+            poller, am
+        )
+    # Exemption should now be set
+    assert poller._exemptions.get(108, 0) > time.time()
+
+
+def test_pve_action_unconfigured_returns_503():
+    am = MagicMock()
+    am.data = {}
+    status, body = _h_post_proxmox_action(
+        {"node": "pve", "vmid": 108, "type": "qemu", "action": "stop"}, None, am
+    )
+    assert status == 503

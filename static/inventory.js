@@ -507,6 +507,7 @@ const INVENTORY_TYPE_PROPERTIES = {
     {key:"ram_alloc_gb",  type:"int",    label:"Allocated RAM (GB)"},
     {key:"disk_alloc_gb", type:"int",    label:"Allocated disk (GB)"},
     {key:"autostart",     type:"bool",   label:"Auto-starts with host"},
+    {key:"proxmox_vmid",  type:"int",    label:"Proxmox VMID"},
   ],
   network: [
     {key:"port_count",     type:"int",    label:"Port count"},
