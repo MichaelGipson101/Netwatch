@@ -260,17 +260,38 @@ def test_export_scope_defaults_to_hosts():
         hdb.close()
 
 
-def _ai_config_server(settings):
+class _FakeAuthManagerForAiConfig:
+    """Holds openrouter_api_key like a real AuthManager, and reports an
+    always-authenticated admin session so _require_auth() lets requests
+    through in HTTP-level tests without needing a real session cookie."""
+    has_users = True
+
+    def __init__(self, api_key):
+        self.data = {} if api_key is None else {"openrouter_api_key": api_key}
+        self.lock = MagicMock()
+        self.lock.__enter__ = MagicMock(return_value=None)
+        self.lock.__exit__ = MagicMock(return_value=False)
+
+    def verify_session_cookie(self, _cookie):
+        return "testuser", True
+
+
+def _make_am_with_openrouter(api_key="sk-or-test-123"):
+    return _FakeAuthManagerForAiConfig(api_key)
+
+
+def _ai_config_server(settings, auth_manager=None):
     """Spin up a single-request test server for /api/ai-config. Returns (server, port)."""
     hm = _FakeHostManager([])
-    handler = make_handler(hm, settings, "/dev/null", auth_manager=None)
+    handler = make_handler(hm, settings, "/dev/null", auth_manager=auth_manager)
     server = _THTS(("127.0.0.1", 0), handler)
     return server, server.server_address[1]
 
 
 def test_ai_config_returns_key_and_model():
-    settings = {"openrouter_api_key": "sk-or-test-123", "ai_model": "deepseek/deepseek-v4-flash:free"}
-    server, port = _ai_config_server(settings)
+    settings = {"ai_model": "deepseek/deepseek-v4-flash:free"}
+    am = _make_am_with_openrouter("sk-or-test-123")
+    server, port = _ai_config_server(settings, auth_manager=am)
     t = _threading.Thread(target=server.handle_request)
     t.start()
     try:
@@ -284,7 +305,7 @@ def test_ai_config_returns_key_and_model():
 
 
 def test_ai_config_missing_key_returns_404():
-    server, port = _ai_config_server({})
+    server, port = _ai_config_server({}, auth_manager=_make_am_with_openrouter(None))
     t = _threading.Thread(target=server.handle_request)
     t.start()
     try:
@@ -301,26 +322,28 @@ def test_ai_config_missing_key_returns_404():
 # ── _h_get_ai_config ─────────────────────────────────────────────────────────
 
 def test_h_get_ai_config_returns_key_and_model():
-    code, body = _h_get_ai_config({"openrouter_api_key": "sk-test", "ai_model": "gpt-4"})
+    am = _make_am_with_openrouter("sk-test")
+    code, body = _h_get_ai_config({"ai_model": "gpt-4"}, auth_manager=am)
     assert code == 200
     assert body["api_key"] == "sk-test"
     assert body["model"] == "gpt-4"
 
 
 def test_h_get_ai_config_missing_key_returns_404():
-    code, body = _h_get_ai_config({})
+    code, body = _h_get_ai_config({}, auth_manager=_make_am_with_openrouter(None))
     assert code == 404
     assert body["error"] == "ai_not_configured"
 
 
 def test_h_get_ai_config_blank_key_returns_404():
-    code, body = _h_get_ai_config({"openrouter_api_key": "   "})
+    code, body = _h_get_ai_config({}, auth_manager=_make_am_with_openrouter("   "))
     assert code == 404
     assert body["error"] == "ai_not_configured"
 
 
 def test_h_get_ai_config_default_model():
-    code, body = _h_get_ai_config({"openrouter_api_key": "sk-x"})
+    am = _make_am_with_openrouter("sk-x")
+    code, body = _h_get_ai_config({}, auth_manager=am)
     assert code == 200
     assert body["model"] == "openrouter/free"
 
@@ -1214,7 +1237,11 @@ def _make_am_with_proxmox():
 
 def test_proxmox_keys_in_auth_stored_keys():
     for k in ("proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret"):
-        assert k in _AUTH_STORED_KEYS, f"{k} not in _AUTH_STORED_KEYS"
+        assert k in _AUTH_STORED_KEYS
+
+
+def test_openrouter_key_in_auth_stored_keys():
+    assert "openrouter_api_key" in _AUTH_STORED_KEYS, f"{k} not in _AUTH_STORED_KEYS"
 
 
 def test_h_get_settings_reads_proxmox_creds_from_auth_manager():

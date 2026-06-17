@@ -3293,6 +3293,7 @@ _SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_wind
 _AUTH_STORED_KEYS = {
     "truenas_url", "truenas_api_key",
     "proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret",
+    "openrouter_api_key",
 }
 
 
@@ -3352,8 +3353,11 @@ def _h_get_status(host_manager, settings, incident_log, inventory_db) -> tuple:
     return 200, build_api_payload(host_manager, settings, incident_log, inventory_db)
 
 
-def _h_get_ai_config(settings: dict) -> tuple:
-    api_key = settings.get("openrouter_api_key", "")
+def _h_get_ai_config(settings: dict, auth_manager=None) -> tuple:
+    api_key = ""
+    if auth_manager:
+        with auth_manager.lock:
+            api_key = auth_manager.data.get("openrouter_api_key", "")
     if not api_key.strip():
         return 404, {"error": "ai_not_configured"}
     return 200, {
@@ -3962,7 +3966,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
             if self.path == "/api/ai-config":
                 if not self._require_auth(): return
-                self._send_json(*_h_get_ai_config(settings))
+                self._send_json(*_h_get_ai_config(settings, auth_manager))
                 return
             if self.path == "/api/settings":
                 if not self._require_auth(admin_only=True): return
