@@ -27,6 +27,42 @@
     }catch(e){}
   }
 
+  const _MIRA_STATES = ['idle', 'nominal', 'advisory', 'warning', 'critical'];
+
+  // Reflects live network health on Mira's avatar ring. Called from core.js
+  // after each /api/status refresh (and on fetch failure, with no args).
+  function updateMiraStatus(data){
+    let state = 'idle';
+    let line  = 'Waiting for data.';
+
+    if(data && data.hosts){
+      const downHosts = data.hosts.filter(h => !h.is_up && h.status === 'DOWN');
+      const down = downHosts.length;
+      const recentResolved = (data.events || []).filter(e =>
+        !e.ongoing && e.ended_iso && (Date.now() - new Date(e.ended_iso).getTime()) < 24 * 3600 * 1000
+      ).length;
+
+      if(down >= 2){
+        state = 'critical';
+        line = `Critical. ${down} hosts unreachable.`;
+      }else if(down === 1){
+        state = 'warning';
+        line = `Attention. ${downHosts[0].name} is not responding.`;
+      }else if(recentResolved > 0){
+        state = 'advisory';
+        line = `Minor advisory. ${recentResolved} incident${recentResolved === 1 ? '' : 's'} resolved recently.`;
+      }else{
+        state = 'nominal';
+        const up = data.summary ? data.summary.up : data.hosts.filter(h => h.is_up).length;
+        line = `All systems nominal. ${up} devices online.`;
+      }
+    }
+
+    for(const s of _MIRA_STATES) _btn.classList.toggle('mira-state-' + s, s === state);
+    _btn.title = line;
+  }
+  window.updateMiraStatus = updateMiraStatus;
+
   function _buildContext(){
     const tab = localStorage.getItem('nw-tab') || 'topology';
     if(tab === 'inventory'){
@@ -101,7 +137,7 @@
           'Authorization':'Bearer '+_aiKey,
           'Content-Type':'application/json',
           'HTTP-Referer':window.location.origin,
-          'X-Title':'Netwatch AI'
+          'X-Title':'Mira (Netwatch)'
         },
         body:JSON.stringify({model:_model.value, messages, stream:true, stream_options:{include_usage:true}})
       });
@@ -299,7 +335,11 @@
   }
 
   function _buildSystemPrompt(ctx){
-    const base = 'You are a helpful assistant embedded in Netwatch, a homelab network monitor. The user is the homelab owner and an experienced sysadmin. Be concise and direct.\n\n';
+    const base = 'You are Mira, the network intelligence persona embedded in Netwatch, a homelab monitoring dashboard. '
+      + 'You have been watching this network all night; you report what the data shows, not what you guess. '
+      + 'The user is the homelab owner and an experienced sysadmin. Be calm, precise, and concise — short sentences, '
+      + 'no filler, no markdown headers or bullet overload in conversational replies. Never say "Great question", '
+      + '"Certainly", "Of course", "I\'d be happy to", or "As an AI".\n\n';
     if(ctx.page === 'inventory'){
       return base
         + 'You have the full hardware inventory below. Each item includes:\n'

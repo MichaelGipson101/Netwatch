@@ -3162,6 +3162,7 @@ _STATIC_FILES = {
     'icon-192.png':    'image/png',
     'icon-512.png':    'image/png',
     'apple-touch-icon.png':'image/png',
+    'mira-avatar.png': 'image/png',
 }
 
 # ── Route handler functions (module-level; testable without HTTP) ─────────────

@@ -322,6 +322,7 @@ async function refresh(){
     if(!res.ok) throw new Error('bad');
     const data = await res.json();
     lastData = data;
+    if(window.updateMiraStatus) window.updateMiraStatus(data);
     const down = data.hosts.filter(h => !h.is_up && h.status === 'DOWN').length;
     const fav = document.getElementById('favicon-link');
     if(fav){
@@ -362,6 +363,7 @@ async function refresh(){
     pipEl.classList.add('stale');
     pipEl.querySelector('span:last-child').textContent = 'stale';
     lastOk = false;
+    if(window.updateMiraStatus) window.updateMiraStatus(null);
   }
 }
 
