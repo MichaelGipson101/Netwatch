@@ -13,6 +13,7 @@
   const _model  = document.getElementById('ai-model-select');
   const _usageBtn   = document.getElementById('ai-usage-btn');
   const _usageModal = document.getElementById('ai-usage-modal');
+  const _tooltip    = document.getElementById('mira-tooltip');
 
   async function _initAi(){
     try{
@@ -59,7 +60,7 @@
     }
 
     for(const s of _MIRA_STATES) _btn.classList.toggle('mira-state-' + s, s === state);
-    _btn.title = line;
+    _tooltip.textContent = line;
   }
   window.updateMiraStatus = updateMiraStatus;
 

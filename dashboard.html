@@ -671,9 +671,10 @@
 </div>
 
 <!-- Mira (AI Chat Bubble) -->
-<button id="ai-bubble-btn" class="mira-state-idle" title="Mira" aria-label="Open Mira, the Netwatch AI assistant" style="display:none">
+<button id="ai-bubble-btn" class="mira-state-idle" aria-label="Open Mira, the Netwatch AI assistant" aria-describedby="mira-tooltip" style="display:none">
   <img class="mira-avatar" src="/static/mira-avatar.png" alt="">
 </button>
+<div id="mira-tooltip" class="mira-tooltip" role="tooltip"></div>
 <div id="ai-panel" class="hidden" role="dialog" aria-label="Mira, the Netwatch AI assistant">
   <div class="ai-panel-header">
     <img class="mira-avatar mira-avatar-sm" src="/static/mira-avatar.png" alt="">
@@ -725,6 +726,7 @@
         <button class="stab-btn" data-tab="alerts" onclick="switchSettingsTab('alerts')" role="tab">Alerts</button>
         <button class="stab-btn" data-tab="integrations" onclick="switchSettingsTab('integrations')" role="tab">Integrations</button>
         <button class="stab-btn" data-tab="ai" onclick="switchSettingsTab('ai')" role="tab">AI</button>
+        <button class="stab-btn" data-tab="backups" onclick="switchSettingsTab('backups')" role="tab">Backups</button>
       </div>
 
       <div class="stab-content" id="stab-general">
@@ -785,6 +787,14 @@
             </div>
           </label>
           <label class="form-field">Model<input type="text" id="s-ai_model" placeholder="openrouter/free"></label>
+        </div>
+      </div>
+
+      <div class="stab-content" id="stab-backups" style="display:none">
+        <div class="form-stack">
+          <p class="form-hint">Status of the weekly off-box backup to your NAS, if configured.</p>
+          <div id="backup-status-card" class="backup-status-card">Loading…</div>
+          <button type="button" class="btn" onclick="loadBackupStatus()" style="align-self:flex-start">Refresh</button>
         </div>
       </div>
 

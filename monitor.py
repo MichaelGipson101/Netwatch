@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.43"
+VERSION = "3.44"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -3353,6 +3353,21 @@ def _h_get_status(host_manager, settings, incident_log, inventory_db) -> tuple:
     return 200, build_api_payload(host_manager, settings, incident_log, inventory_db)
 
 
+NAS_BACKUP_STATUS_PATH = "/mnt/nas-shared/netwatch/backup/_status.json"
+
+
+def _h_get_backup_status() -> tuple:
+    if not os.path.isfile(NAS_BACKUP_STATUS_PATH):
+        return 200, {"configured": False}
+    try:
+        with open(NAS_BACKUP_STATUS_PATH) as f:
+            status = json.load(f)
+    except (OSError, ValueError) as e:
+        return 200, {"configured": False, "error": f"could not read status file: {e}"}
+    status["configured"] = True
+    return 200, status
+
+
 def _h_get_ai_config(settings: dict, auth_manager=None) -> tuple:
     api_key = ""
     if auth_manager:
@@ -3963,6 +3978,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/status":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_status(host_manager, settings, incident_log, inventory_db))
+                return
+            if self.path == "/api/backup-status":
+                if not self._require_auth(admin_only=True): return
+                self._send_json(*_h_get_backup_status())
                 return
             if self.path == "/api/ai-config":
                 if not self._require_auth(): return

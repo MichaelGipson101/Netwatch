@@ -1136,6 +1136,11 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 #ai-bubble-btn.streaming{animation:ai-pulse 1.2s ease-in-out infinite}
 .mira-avatar{width:100%;height:100%;object-fit:cover;display:block;border-radius:50%}
 .mira-avatar-sm{width:22px;height:22px;flex-shrink:0}
+.mira-tooltip{position:fixed;bottom:144px;right:24px;z-index:36;max-width:220px;background:var(--surface);color:var(--text);font-size:12.5px;line-height:1.4;padding:8px 12px;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 16px rgba(0,0,0,.2);opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .15s,transform .15s;pointer-events:none}
+.mira-tooltip:empty{display:none}
+.mira-tooltip::after{content:'';position:absolute;bottom:-7px;right:17px;width:14px;height:14px;background:var(--surface);border:1px solid var(--border);border-top:none;border-left:none;transform:rotate(45deg);z-index:-1}
+#ai-bubble-btn:hover+.mira-tooltip,
+#ai-bubble-btn:focus+.mira-tooltip{opacity:1;visibility:visible;transform:translateY(0)}
 #ai-bubble-btn.mira-state-idle{--mira-ring-color:#4A4A4A;filter:grayscale(.6) brightness(.85)}
 #ai-bubble-btn.mira-state-nominal{--mira-ring-color:#00E5FF}
 #ai-bubble-btn.mira-state-advisory{--mira-ring-color:#00E5FF;animation:mira-pulse-aqua 3.5s ease-in-out infinite}
@@ -1319,6 +1324,13 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .field-with-toggle input{flex:1;min-width:0}
 .toggle-vis-btn{flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;padding:4px 8px;font-size:11px;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap}
 .toggle-vis-btn:hover{color:var(--text);border-color:var(--text)}
+.backup-status-card{font-size:13px;line-height:1.5}
+.backup-status-row{font-weight:600;padding:8px 10px;border-radius:6px;margin-bottom:4px}
+.backup-status-ok{background:var(--green-bg);color:var(--green-text)}
+.backup-status-warn{background:var(--amber-bg);color:var(--amber-text)}
+.backup-status-error{background:var(--red-bg);color:var(--red-text)}
+.backup-status-none{background:var(--subtle);color:var(--muted);font-weight:400}
+.backup-status-detail{color:var(--muted);font-size:12px;padding:0 10px}
 
 /* ── Wizard step indicator ───────────────────────────────────────────────── */
 .wizard-step-indicator{display:flex;justify-content:center;gap:8px;margin-bottom:20px}

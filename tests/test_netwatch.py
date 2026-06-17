@@ -12,7 +12,7 @@ from monitor import export_inventory_to_xlsx
 from monitor import NASPoller
 import monitor as _mon
 from monitor import (
-    _h_get_ai_config, _h_get_hosts,
+    _h_get_ai_config, _h_get_backup_status, _h_get_hosts,
     _h_get_auth_status, _h_get_auth_users,
     _h_get_inventory, _h_get_inventory_record,
     _h_get_topology, _h_get_connections, _h_get_connections_for_device,
@@ -346,6 +346,50 @@ def test_h_get_ai_config_default_model():
     code, body = _h_get_ai_config({}, auth_manager=am)
     assert code == 200
     assert body["model"] == "openrouter/free"
+
+
+# ── _h_get_backup_status ─────────────────────────────────────────────────────
+
+def test_h_get_backup_status_not_configured(monkeypatch, tmp_path):
+    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(tmp_path / "missing.json"))
+    code, body = _h_get_backup_status()
+    assert code == 200
+    assert body == {"configured": False}
+
+
+def test_h_get_backup_status_reads_success_file(monkeypatch, tmp_path):
+    status_path = tmp_path / "_status.json"
+    status_path.write_text(_json.dumps({
+        "ok": True, "checked_at": 1700000000,
+        "filename": "netwatch-backup-test.tar.gz", "size_bytes": 123,
+        "files": {"monitor.py": 10},
+    }))
+    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(status_path))
+    code, body = _h_get_backup_status()
+    assert code == 200
+    assert body["configured"] is True
+    assert body["ok"] is True
+    assert body["filename"] == "netwatch-backup-test.tar.gz"
+
+
+def test_h_get_backup_status_reads_failure_file(monkeypatch, tmp_path):
+    status_path = tmp_path / "_status.json"
+    status_path.write_text(_json.dumps({"ok": False, "checked_at": 1700000000, "error": "boom"}))
+    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(status_path))
+    code, body = _h_get_backup_status()
+    assert code == 200
+    assert body["configured"] is True
+    assert body["ok"] is False
+    assert body["error"] == "boom"
+
+
+def test_h_get_backup_status_handles_corrupt_file(monkeypatch, tmp_path):
+    status_path = tmp_path / "_status.json"
+    status_path.write_text("not valid json")
+    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(status_path))
+    code, body = _h_get_backup_status()
+    assert code == 200
+    assert body["configured"] is False
 
 
 # ── _h_get_hosts ─────────────────────────────────────────────────────────────

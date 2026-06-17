@@ -83,6 +83,60 @@ function switchSettingsTab(tab) {
   if (content) content.style.display = '';
   const btn = document.querySelector('.stab-btn[data-tab="' + tab + '"]');
   if (btn) btn.classList.add('active');
+  if (tab === 'backups') loadBackupStatus();
+}
+
+// ── Backup status ────────────────────────────────────────────────────────────
+
+const BACKUP_STALE_SECONDS = 8 * 86400; // weekly job; flag if older
+
+function _fmtBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = bytes;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+function _timeAgo(epochSeconds) {
+  const diff = Math.floor(Date.now() / 1000 - epochSeconds);
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+async function loadBackupStatus() {
+  const card = document.getElementById('backup-status-card');
+  if (!card) return;
+  card.textContent = 'Loading…';
+  try {
+    const res = await fetch('/api/backup-status');
+    if (!res.ok) { card.textContent = 'Could not load backup status.'; return; }
+    const data = await res.json();
+    card.innerHTML = _renderBackupStatus(data);
+  } catch (e) {
+    card.textContent = 'Network error loading backup status.';
+  }
+}
+
+function _renderBackupStatus(data) {
+  if (!data.configured) {
+    return '<div class="backup-status-row backup-status-none">No automated NAS backup detected.</div>';
+  }
+  const age = _timeAgo(data.checked_at);
+  const stale = (Date.now() / 1000 - data.checked_at) > BACKUP_STALE_SECONDS;
+  if (!data.ok) {
+    return '<div class="backup-status-row backup-status-error">✗ Last backup run FAILED — ' + age + '</div>'
+      + (data.error ? '<div class="backup-status-detail">' + escapeHtml(data.error) + '</div>' : '');
+  }
+  const sizeStr = _fmtBytes(data.size_bytes);
+  const fileCount = data.files ? Object.keys(data.files).length : 0;
+  let html = '<div class="backup-status-row ' + (stale ? 'backup-status-warn' : 'backup-status-ok') + '">'
+    + (stale ? '⚠ Last successful backup is overdue — ' : '✓ Last backup succeeded — ') + age + '</div>'
+    + '<div class="backup-status-detail">' + escapeHtml(data.filename || '') + ' · ' + sizeStr
+    + ' · ' + fileCount + ' file(s)</div>';
+  return html;
 }
 
 function toggleFieldVis(inputId) {
