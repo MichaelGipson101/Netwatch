@@ -794,7 +794,9 @@
         <div class="form-stack">
           <p class="form-hint">Status of the weekly off-box backup to your NAS, if configured.</p>
           <div id="backup-status-card" class="backup-status-card">Loading…</div>
-          <button type="button" class="btn" onclick="loadBackupStatus()" style="align-self:flex-start">Refresh</button>
+          <p class="form-hint">Status of the daily inventory export to your NAS, if configured.</p>
+          <div id="inventory-backup-status-card" class="backup-status-card">Loading…</div>
+          <button type="button" class="btn" onclick="loadBackupStatus();loadInventoryBackupStatus()" style="align-self:flex-start">Refresh</button>
         </div>
       </div>
 

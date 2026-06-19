@@ -83,12 +83,13 @@ function switchSettingsTab(tab) {
   if (content) content.style.display = '';
   const btn = document.querySelector('.stab-btn[data-tab="' + tab + '"]');
   if (btn) btn.classList.add('active');
-  if (tab === 'backups') loadBackupStatus();
+  if (tab === 'backups') { loadBackupStatus(); loadInventoryBackupStatus(); }
 }
 
 // ── Backup status ────────────────────────────────────────────────────────────
 
 const BACKUP_STALE_SECONDS = 8 * 86400; // weekly job; flag if older
+const INVENTORY_BACKUP_STALE_SECONDS = 2 * 86400; // daily job; flag if older
 
 function _fmtBytes(bytes) {
   if (!bytes) return '0 B';
@@ -107,25 +108,33 @@ function _timeAgo(epochSeconds) {
 }
 
 async function loadBackupStatus() {
-  const card = document.getElementById('backup-status-card');
+  await _loadBackupStatusInto('backup-status-card', '/api/backup-status', BACKUP_STALE_SECONDS);
+}
+
+async function loadInventoryBackupStatus() {
+  await _loadBackupStatusInto('inventory-backup-status-card', '/api/inventory-backup-status', INVENTORY_BACKUP_STALE_SECONDS);
+}
+
+async function _loadBackupStatusInto(elId, endpoint, staleSeconds) {
+  const card = document.getElementById(elId);
   if (!card) return;
   card.textContent = 'Loading…';
   try {
-    const res = await fetch('/api/backup-status');
+    const res = await fetch(endpoint);
     if (!res.ok) { card.textContent = 'Could not load backup status.'; return; }
     const data = await res.json();
-    card.innerHTML = _renderBackupStatus(data);
+    card.innerHTML = _renderBackupStatus(data, staleSeconds);
   } catch (e) {
     card.textContent = 'Network error loading backup status.';
   }
 }
 
-function _renderBackupStatus(data) {
+function _renderBackupStatus(data, staleSeconds) {
   if (!data.configured) {
     return '<div class="backup-status-row backup-status-none">No automated NAS backup detected.</div>';
   }
   const age = _timeAgo(data.checked_at);
-  const stale = (Date.now() / 1000 - data.checked_at) > BACKUP_STALE_SECONDS;
+  const stale = (Date.now() / 1000 - data.checked_at) > staleSeconds;
   if (!data.ok) {
     return '<div class="backup-status-row backup-status-error">✗ Last backup run FAILED — ' + age + '</div>'
       + (data.error ? '<div class="backup-status-detail">' + escapeHtml(data.error) + '</div>' : '');
@@ -135,7 +144,7 @@ function _renderBackupStatus(data) {
   let html = '<div class="backup-status-row ' + (stale ? 'backup-status-warn' : 'backup-status-ok') + '">'
     + (stale ? '⚠ Last successful backup is overdue — ' : '✓ Last backup succeeded — ') + age + '</div>'
     + '<div class="backup-status-detail">' + escapeHtml(data.filename || '') + ' · ' + sizeStr
-    + ' · ' + fileCount + ' file(s)</div>';
+    + (data.files ? ' · ' + fileCount + ' file(s)' : '') + '</div>';
   return html;
 }
 
