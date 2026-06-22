@@ -174,6 +174,15 @@ Data is stored next to `monitor.py`: `netwatch.db` (ping history, daily rollups,
 inventory, login lockouts), `auth.json` (users + Proxmox/TrueNAS/OpenRouter/ntfy
 credentials), `monitor.log` (rotating).
 
+**Security notes:**
+- The OpenRouter API key never reaches the browser — Mira's chat and usage
+  lookups are proxied server-side through `/api/ai/chat` and `/api/ai/usage`.
+- Proxmox API calls verify TLS certificates by default. If your Proxmox host
+  uses its stock self-signed cert, either give it a real one (Datacenter ->
+  ACME) or point the `proxmox_ca_cert` setting at Proxmox's own CA file
+  (e.g. `/etc/pve/pve-root-ca.pem`) — see `hosts.yaml.example`. Setting
+  `proxmox_verify_ssl: false` disables verification entirely if needed.
+
 ---
 
 ## Related

@@ -1,6 +1,6 @@
 // ── AI Chat Bubble ─────────────────────────────────────────────────────────
 (function(){
-  let _aiKey = null;
+  let _aiReady = false;
   let _aiStreaming = false;
   let _aiHistory = [];
 
@@ -20,7 +20,7 @@
       const r = await fetch('/api/ai-config');
       if(!r.ok) return;
       const cfg = await r.json();
-      _aiKey = cfg.api_key;
+      _aiReady = true;
       if(cfg.model && _model.querySelector(`option[value="${cfg.model}"]`)){
         _model.value = cfg.model;
       }
@@ -149,7 +149,7 @@
 
   async function _sendMessage(){
     const text = _input.value.trim();
-    if(!text || _aiStreaming || !_aiKey) return;
+    if(!text || _aiStreaming || !_aiReady) return;
     _input.value = '';
 
     _appendMsg('user', text);
@@ -164,20 +164,18 @@
     _setStreaming(true);
 
     try{
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions',{
+      const resp = await fetch('/api/ai/chat',{
         method:'POST',
-        headers:{
-          'Authorization':'Bearer '+_aiKey,
-          'Content-Type':'application/json',
-          'HTTP-Referer':window.location.origin,
-          'X-Title':'Mira (Netwatch)'
-        },
-        body:JSON.stringify({model:_model.value, messages, stream:true, stream_options:{include_usage:true}})
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:_model.value, messages})
       });
 
       if(!resp.ok){
         let errMsg = `Error ${resp.status}`;
-        try{ const e = await resp.json(); errMsg = e.error?.message || errMsg; }catch(e){}
+        try{
+          const e = await resp.json();
+          errMsg = (typeof e.error === 'string' ? e.error : e.error?.message) || errMsg;
+        }catch(e){}
         assistantDiv.className = 'ai-msg error';
         assistantDiv.textContent = errMsg;
         _aiHistory.pop();
@@ -283,9 +281,7 @@
     _usageModal.classList.remove('hidden');
     _renderUsageBody('Loading…');
     try{
-      const resp = await fetch('https://openrouter.ai/api/v1/auth/key', {
-        headers:{'Authorization':'Bearer ' + _aiKey}
-      });
+      const resp = await fetch('/api/ai/usage');
       const json = await resp.json();
       const d = json.data || {};
       const tier = d.is_free_tier ? 'Free tier' : 'Paid';

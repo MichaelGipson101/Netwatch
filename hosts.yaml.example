@@ -12,6 +12,16 @@ settings:
   # ntfy_topic: "your-topic-name"
   # ntfy_server: "https://ntfy.sh"
 
+  # Optional: Proxmox TLS verification. Defaults to true (verify certs).
+  # Proxmox ships with a self-signed cert by default, so a stock install will
+  # fail to connect until you either give Proxmox a real cert (Datacenter ->
+  # ACME, works with DNS-01 challenges even without exposing it publicly) or
+  # point proxmox_ca_cert at Proxmox's own CA (Datacenter -> Certificates ->
+  # download the CA cert, e.g. /etc/pve/pve-root-ca.pem) so it's trusted
+  # without disabling verification outright.
+  # proxmox_verify_ssl: true
+  # proxmox_ca_cert: "/path/to/pve-root-ca.pem"
+
 hosts:
   - name: Router
     ip: 192.168.1.1

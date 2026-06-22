@@ -13,7 +13,7 @@ Config: hosts.yaml in the same directory.
 Dashboard: http://<pi-ip>:8080
 """
 
-import os, time, json, shutil, subprocess, threading, curses, yaml, argparse, logging
+import os, time, json, re, shutil, subprocess, threading, curses, yaml, argparse, logging
 from datetime import datetime, timezone
 from collections import deque
 from dataclasses import dataclass, field
@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.44"
+VERSION = "3.45"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -2601,6 +2601,11 @@ class NASPoller:
 # Proxmox Poller (Proxmox VE REST API)
 # ============================================================================
 
+# Proxmox node names are short hostnames; reject anything else so a
+# crafted "node" value can't be used to traverse out of /api2/json/nodes/...
+PROXMOX_NODE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$')
+
+
 class ProxmoxPoller:
     POLL_INTERVAL_SECONDS = 60
 
@@ -2638,10 +2643,14 @@ class ProxmoxPoller:
 
     def _make_ssl_ctx(self):
         import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
+        verify = bool(self._alert_settings.get("proxmox_verify_ssl", True))
+        if not verify:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+        ca_cert = (self._alert_settings.get("proxmox_ca_cert") or "").strip()
+        return ssl.create_default_context(cafile=ca_cert or None)
 
     def _fetch(self, base_url, user, token_id, token_secret, path):
         import urllib.request
@@ -3273,6 +3282,8 @@ SETTINGS_EDITABLE_KEYS = {
     "proxmox_token_id":     str,
     "proxmox_token_secret": str,
     "proxmox_node":         str,
+    "proxmox_verify_ssl":   bool,
+    "proxmox_ca_cert":      str,
     "openrouter_api_key":   str,
     "ai_model":             str,
     "setup_wizard_complete": bool,
@@ -3378,6 +3389,8 @@ def _h_get_inventory_backup_status() -> tuple:
 
 
 def _h_get_ai_config(settings: dict, auth_manager=None) -> tuple:
+    # The OpenRouter API key never leaves the server; chat requests are
+    # proxied through /api/ai/chat so the key can't be lifted from the browser.
     api_key = ""
     if auth_manager:
         with auth_manager.lock:
@@ -3385,9 +3398,116 @@ def _h_get_ai_config(settings: dict, auth_manager=None) -> tuple:
     if not api_key.strip():
         return 404, {"error": "ai_not_configured"}
     return 200, {
-        "api_key": api_key,
         "model": settings.get("ai_model", "openrouter/free"),
     }
+
+
+ALLOWED_AI_MODELS = frozenset({
+    "openrouter/free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-v4-flash:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+})
+
+
+def _get_openrouter_key(auth_manager) -> str:
+    if not auth_manager:
+        return ""
+    with auth_manager.lock:
+        return auth_manager.data.get("openrouter_api_key", "")
+
+
+def _h_get_ai_usage(auth_manager) -> tuple:
+    api_key = _get_openrouter_key(auth_manager)
+    if not api_key.strip():
+        return 404, {"error": "ai_not_configured"}
+    import urllib.request, urllib.error as _urlerr
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/auth/key",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return 200, json.loads(r.read().decode())
+    except _urlerr.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode())
+        except (ValueError, TypeError):
+            return e.code, {"error": "openrouter request failed"}
+    except Exception as e:
+        logging.warning(f"AI usage proxy error: {e}")
+        return 502, {"error": str(e)}
+
+
+def _h_post_ai_chat(handler, data, auth_manager) -> None:
+    """Stream a chat completion from OpenRouter back to the client.
+
+    Writes directly to the handler's socket (unlike the other _h_* handlers)
+    because the response is a long-lived SSE stream, not a single JSON body.
+    The OpenRouter API key is read server-side only and never sent to the browser.
+    """
+    import urllib.request, urllib.error as _urlerr
+
+    api_key = _get_openrouter_key(auth_manager)
+    if not api_key.strip():
+        handler._send_json(404, {"error": "ai_not_configured"})
+        return
+
+    model = (data.get("model") or "").strip()
+    if model not in ALLOWED_AI_MODELS:
+        model = "openrouter/free"
+    messages = data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        handler._send_json(400, {"error": "messages required"})
+        return
+
+    payload = json.dumps({
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=payload, method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://netwatch.local",
+            "X-Title": "Mira (Netwatch)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as upstream:
+            handler.send_response(upstream.status)
+            handler.send_header("Content-Type", "text/event-stream")
+            handler.send_header("Cache-Control", "no-cache")
+            handler.end_headers()
+            while True:
+                chunk = upstream.read(1024)
+                if not chunk:
+                    break
+                try:
+                    handler.wfile.write(chunk)
+                    handler.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+    except _urlerr.HTTPError as e:
+        body = e.read()
+        try:
+            handler.send_response(e.code)
+            handler.send_header("Content-Type", "application/json")
+            handler.end_headers()
+            handler.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+    except Exception as e:
+        logging.warning(f"AI chat proxy error: {e}")
+        try:
+            handler._send_json(502, {"error": str(e)})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 def _h_get_settings(settings: dict, auth_manager=None) -> tuple:
@@ -3508,7 +3628,7 @@ def _h_get_proxmox(proxmox_poller) -> tuple:
 
 
 def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
-    import ssl, urllib.request, urllib.error as _urlerr
+    import urllib.request, urllib.error as _urlerr
     node   = (data.get("node") or "").strip()
     vmid   = data.get("vmid")
     gtype  = (data.get("type") or "").strip()
@@ -3517,6 +3637,9 @@ def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
     if not node or not vmid or gtype not in ("qemu", "lxc") \
             or action not in ("start", "stop", "reboot"):
         return 400, {"error": "Required: node, vmid, type (qemu/lxc), action (start/stop/reboot)"}
+
+    if not PROXMOX_NODE_RE.match(node):
+        return 400, {"error": "Invalid node name"}
 
     try:
         vmid = int(vmid)
@@ -3542,9 +3665,7 @@ def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
         url, data=b"", method="POST",
         headers={"Authorization": f"PVEAPIToken={token}"},
     )
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = proxmox_poller._make_ssl_ctx() if proxmox_poller else None
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=10):
             return 200, {"ok": True}
@@ -4000,6 +4121,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_ai_config(settings, auth_manager))
                 return
+            if self.path == "/api/ai/usage":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_ai_usage(auth_manager))
+                return
             if self.path == "/api/settings":
                 if not self._require_auth(admin_only=True): return
                 self._send_json(*_h_get_settings(settings, auth_manager))
@@ -4313,6 +4438,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_proxmox_action(data, proxmox_poller, auth_manager))
+                return
+
+            if self.path == "/api/ai/chat":
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                _h_post_ai_chat(self, data, auth_manager)
                 return
 
             if self.path == "/api/hosts":

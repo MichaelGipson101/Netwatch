@@ -21,6 +21,7 @@ from monitor import (
     _h_post_connection_create, _h_post_connection_update, _h_post_connection_delete,
     _h_post_detect_mac, _h_post_wake, _h_post_hosts,
     _h_post_auth_users, _h_post_auth_password, _h_post_auth_user_delete,
+    _h_get_ai_usage,
 )
 
 
@@ -288,7 +289,7 @@ def _ai_config_server(settings, auth_manager=None):
     return server, server.server_address[1]
 
 
-def test_ai_config_returns_key_and_model():
+def test_ai_config_returns_model_without_leaking_key():
     settings = {"ai_model": "deepseek/deepseek-v4-flash:free"}
     am = _make_am_with_openrouter("sk-or-test-123")
     server, port = _ai_config_server(settings, auth_manager=am)
@@ -297,7 +298,7 @@ def test_ai_config_returns_key_and_model():
     try:
         with _urlreq.urlopen(f"http://127.0.0.1:{port}/api/ai-config") as r:
             data = _json.loads(r.read())
-        assert data["api_key"] == "sk-or-test-123"
+        assert "api_key" not in data
         assert data["model"] == "deepseek/deepseek-v4-flash:free"
     finally:
         server.server_close()
@@ -321,11 +322,11 @@ def test_ai_config_missing_key_returns_404():
 
 # ── _h_get_ai_config ─────────────────────────────────────────────────────────
 
-def test_h_get_ai_config_returns_key_and_model():
+def test_h_get_ai_config_returns_model_without_leaking_key():
     am = _make_am_with_openrouter("sk-test")
     code, body = _h_get_ai_config({"ai_model": "gpt-4"}, auth_manager=am)
     assert code == 200
-    assert body["api_key"] == "sk-test"
+    assert "api_key" not in body
     assert body["model"] == "gpt-4"
 
 
@@ -337,6 +338,12 @@ def test_h_get_ai_config_missing_key_returns_404():
 
 def test_h_get_ai_config_blank_key_returns_404():
     code, body = _h_get_ai_config({}, auth_manager=_make_am_with_openrouter("   "))
+    assert code == 404
+    assert body["error"] == "ai_not_configured"
+
+
+def test_h_get_ai_usage_unconfigured_returns_404():
+    code, body = _h_get_ai_usage(auth_manager=_make_am_with_openrouter(None))
     assert code == 404
     assert body["error"] == "ai_not_configured"
 
@@ -1608,3 +1615,21 @@ def test_pve_action_unconfigured_returns_503():
         {"node": "pve", "vmid": 108, "type": "qemu", "action": "stop"}, None, am
     )
     assert status == 503
+
+
+def test_pve_action_rejects_path_traversal_node():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"node": "../../etc/passwd", "vmid": 108, "type": "qemu", "action": "stop"},
+        None, am
+    )
+    assert status == 400
+
+
+def test_pve_action_rejects_node_with_slash():
+    am = _make_auth_manager_with_pve()
+    status, body = _h_post_proxmox_action(
+        {"node": "pve/extra", "vmid": 108, "type": "qemu", "action": "stop"},
+        None, am
+    )
+    assert status == 400
