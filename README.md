@@ -182,6 +182,11 @@ credentials), `monitor.log` (rotating).
   ACME) or point the `proxmox_ca_cert` setting at Proxmox's own CA file
   (e.g. `/etc/pve/pve-root-ca.pem`) — see `hosts.yaml.example`. Setting
   `proxmox_verify_ssl: false` disables verification entirely if needed.
+- All `POST` requests require an `X-CSRF-Token` header matching a token
+  issued in the `/api/auth/login` or `/api/auth/setup` response body
+  (`csrf_token` field). The dashboard's own JS handles this automatically;
+  any external script calling the API must capture `csrf_token` at login
+  and send it back on every mutating request.
 
 ---
 
