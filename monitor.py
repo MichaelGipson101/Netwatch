@@ -13,7 +13,7 @@ Config: hosts.yaml in the same directory.
 Dashboard: http://<pi-ip>:8080
 """
 
-import os, time, json, re, shutil, subprocess, threading, curses, yaml, argparse, logging
+import os, sys, time, json, re, shutil, subprocess, threading, curses, yaml, argparse, logging
 from datetime import datetime, timezone
 from collections import deque
 from dataclasses import dataclass, field
@@ -2177,6 +2177,87 @@ def create_backup_tarball(config_path, auth_path):
         if snapshot_path:
             try: os.unlink(snapshot_path)
             except OSError: pass
+
+
+def restore_backup(tarball_path, config_path, force=False):
+    """Restore hosts.yaml, auth.json, and netwatch.db from a backup tarball
+    built by create_backup_tarball().
+
+    Deliberately does NOT extract the tarball's bundled monitor.py: the
+    tarball is meant to be a fully self-contained emergency artifact usable
+    on its own, but when --restore runs after a fresh git clone (the normal
+    redeploy path), overwriting freshly-cloned code with whatever version
+    made the backup would silently downgrade it.
+
+    Returns (ok, message). Never raises for expected failure conditions
+    (missing/invalid tarball, conflicting destination files) - callers can
+    print the message and exit without a traceback.
+    """
+    import tarfile
+
+    if not os.path.isfile(tarball_path):
+        return False, f"Backup file not found: {tarball_path}"
+
+    try:
+        tar = tarfile.open(tarball_path, "r:gz")
+    except (tarfile.TarError, OSError) as e:
+        return False, f"Could not open backup tarball: {e}"
+
+    with tar:
+        try:
+            manifest_member = tar.getmember("netwatch/metadata.json")
+        except KeyError:
+            return False, "Not a valid netwatch backup (missing netwatch/metadata.json)"
+
+        manifest = json.loads(tar.extractfile(manifest_member).read().decode("utf-8"))
+
+        warning = ""
+        backup_version = manifest.get("manifest_version", 0)
+        if backup_version > BACKUP_MANIFEST_VERSION:
+            warning = (
+                f"Warning: this backup was made by a newer netwatch version "
+                f"(manifest v{backup_version}, this is v{BACKUP_MANIFEST_VERSION}) "
+                f"- restore may be incomplete.\n"
+            )
+
+        config_dir = os.path.dirname(os.path.abspath(config_path))
+        targets = {
+            "netwatch/hosts.yaml":  os.path.join(config_dir, "hosts.yaml"),
+            "netwatch/auth.json":   os.path.join(config_dir, "auth.json"),
+            "netwatch/netwatch.db": os.path.join(config_dir, "netwatch.db"),
+        }
+
+        if not force:
+            existing = [dest for dest in targets.values() if os.path.exists(dest)]
+            if existing:
+                listing = "\n".join(f"  - {p}" for p in existing)
+                return False, (
+                    "Refusing to overwrite existing files (use --force to overwrite):\n"
+                    f"{listing}"
+                )
+
+        os.makedirs(config_dir, exist_ok=True)
+        restored = []
+        for arcname, dest in targets.items():
+            try:
+                member = tar.getmember(arcname)
+            except KeyError:
+                continue  # e.g. auth.json may be absent if no admin was ever set up
+            with tar.extractfile(member) as src, open(dest, "wb") as out:
+                out.write(src.read())
+            if arcname == "netwatch/auth.json":
+                os.chmod(dest, 0o600)
+            restored.append(dest)
+
+    files_listing = "\n".join(f"  - {p}" for p in restored)
+    message = (
+        f"{warning}"
+        f"Restored backup from {manifest.get('source_hostname', 'unknown')}, "
+        f"created {manifest.get('created_iso', 'unknown')}, "
+        f"netwatch v{manifest.get('netwatch_version', 'unknown')}\n"
+        f"Files written:\n{files_listing}"
+    )
+    return True, message
 
 
 # ============================================================================

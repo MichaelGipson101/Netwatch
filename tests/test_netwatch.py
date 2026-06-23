@@ -1777,3 +1777,126 @@ def test_pve_action_rejects_node_with_slash():
         None, am
     )
     assert status == 400
+
+
+# ── restore_backup ───────────────────────────────────────────────────────────
+
+def _build_fixture_backup(tmp_path):
+    """Build a real backup tarball via create_backup_tarball, for restore tests."""
+    from monitor import create_backup_tarball
+    src_dir = tmp_path / "source"
+    src_dir.mkdir()
+    config_path = str(src_dir / "hosts.yaml")
+    auth_path = str(src_dir / "auth.json")
+    db_path = str(src_dir / "netwatch.db")
+    monitor_path = str(src_dir / "monitor.py")
+
+    with open(config_path, "w") as f:
+        f.write("hosts: []\n")
+    with open(auth_path, "w") as f:
+        f.write('{"secret_key": "abc123", "users": {}}')
+    with open(monitor_path, "w") as f:
+        f.write("# fake monitor.py for fixture purposes\n")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE t (a INTEGER)")
+    conn.commit()
+    conn.close()
+
+    data, filename, manifest = create_backup_tarball(config_path, auth_path)
+    tarball_path = tmp_path / filename
+    tarball_path.write_bytes(data)
+    return str(tarball_path), manifest
+
+
+def test_restore_backup_happy_path(tmp_path):
+    from monitor import restore_backup
+    tarball_path, manifest = _build_fixture_backup(tmp_path)
+
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    dest_config_path = str(dest_dir / "hosts.yaml")
+
+    ok, message = restore_backup(tarball_path, dest_config_path)
+
+    assert ok is True
+    assert (dest_dir / "hosts.yaml").exists()
+    assert (dest_dir / "auth.json").exists()
+    assert (dest_dir / "netwatch.db").exists()
+    assert manifest["source_hostname"] in message
+    assert oct(os.stat(dest_dir / "auth.json").st_mode)[-3:] == "600"
+    # The bundled monitor.py in the tarball must NOT be extracted
+    assert not (dest_dir / "monitor.py").exists()
+
+
+def test_restore_backup_refuses_to_overwrite_without_force(tmp_path):
+    from monitor import restore_backup
+    tarball_path, _ = _build_fixture_backup(tmp_path)
+
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    dest_config_path = str(dest_dir / "hosts.yaml")
+    with open(dest_config_path, "w") as f:
+        f.write("hosts: []\n")  # pre-existing file in the way
+
+    ok, message = restore_backup(tarball_path, dest_config_path)
+
+    assert ok is False
+    assert "hosts.yaml" in message
+    assert "--force" in message
+
+
+def test_restore_backup_force_overwrites(tmp_path):
+    from monitor import restore_backup
+    tarball_path, _ = _build_fixture_backup(tmp_path)
+
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    dest_config_path = str(dest_dir / "hosts.yaml")
+    with open(dest_config_path, "w") as f:
+        f.write("hosts: [{name: stale}]\n")
+
+    ok, message = restore_backup(tarball_path, dest_config_path, force=True)
+
+    assert ok is True
+    with open(dest_config_path) as f:
+        assert "stale" not in f.read()
+
+
+def test_restore_backup_rejects_invalid_tarball(tmp_path):
+    from monitor import restore_backup
+    not_a_backup = tmp_path / "not-a-backup.tar.gz"
+    import tarfile
+    with tarfile.open(str(not_a_backup), "w:gz") as tar:
+        info = tarfile.TarInfo(name="some-other-file.txt")
+        data = b"hello"
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+    dest_config_path = str(tmp_path / "dest" / "hosts.yaml")
+    ok, message = restore_backup(str(not_a_backup), dest_config_path)
+
+    assert ok is False
+    assert "not a valid netwatch backup" in message.lower()
+
+
+def test_restore_backup_missing_tarball_file(tmp_path):
+    from monitor import restore_backup
+    ok, message = restore_backup(str(tmp_path / "does-not-exist.tar.gz"), str(tmp_path / "hosts.yaml"))
+    assert ok is False
+    assert "not found" in message.lower()
+
+
+def test_restore_backup_warns_on_newer_manifest_version(tmp_path, monkeypatch):
+    from monitor import restore_backup
+    import monitor as _mon
+    tarball_path, _ = _build_fixture_backup(tmp_path)
+
+    # Pretend this monitor.py is older than the backup's manifest version
+    monkeypatch.setattr(_mon, "BACKUP_MANIFEST_VERSION", 0)
+
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    ok, message = restore_backup(tarball_path, str(dest_dir / "hosts.yaml"))
+
+    assert ok is True
+    assert "newer netwatch version" in message.lower()
