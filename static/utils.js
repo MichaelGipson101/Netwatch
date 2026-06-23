@@ -112,6 +112,18 @@ function macValid(m){
   return /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/.test(m.trim()) || /^[0-9a-fA-F]{12}$/.test(m.trim());
 }
 
+// Drop-in replacement for fetch() that attaches the CSRF token (captured in
+// _authState by auth.js) to mutating requests. _authState may not exist yet
+// if this is called before auth.js loads, hence the typeof guard.
+function apiFetch(url, options){
+  options = options || {};
+  const method = (options.method || 'GET').toUpperCase();
+  if(method === 'POST' && typeof _authState !== 'undefined' && _authState.csrf_token){
+    options.headers = Object.assign({}, options.headers, { 'X-CSRF-Token': _authState.csrf_token });
+  }
+  return fetch(url, options);
+}
+
 function setStatus(msg, kind){
   const el = document.getElementById('save-status');
   el.textContent = msg;

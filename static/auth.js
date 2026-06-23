@@ -1,5 +1,5 @@
 // ── Auth state ──
-let _authState = { logged_in: false, username: null, admin: false, setup_required: false };
+let _authState = { logged_in: false, username: null, admin: false, setup_required: false, csrf_token: null };
 
 async function fetchAuthState(){
   try {
@@ -138,7 +138,7 @@ async function submitLandingLogin(ev){
     });
     const data = await res.json();
     if(!res.ok){ err.textContent = data.error || 'Login failed'; return; }
-    _authState = { logged_in: true, username: data.username, admin: data.admin, setup_required: false };
+    _authState = { logged_in: true, username: data.username, admin: data.admin, setup_required: false, csrf_token: data.csrf_token };
     updateAuthUI();
     hideLanding();
     refresh();
@@ -161,7 +161,7 @@ async function submitLandingSetup(ev){
     });
     const data = await res.json();
     if(!res.ok){ err.textContent = data.error || 'Setup failed'; return; }
-    _authState = { logged_in: true, username: data.username, admin: true, setup_required: false };
+    _authState = { logged_in: true, username: data.username, admin: true, setup_required: false, csrf_token: data.csrf_token };
     updateAuthUI();
     hideLanding();
     refresh();
@@ -197,7 +197,7 @@ async function submitLogin(ev){
     });
     const data = await res.json();
     if(!res.ok){ err.textContent = data.error || 'Login failed'; return; }
-    _authState = { logged_in: true, username: data.username, admin: data.admin, setup_required: false };
+    _authState = { logged_in: true, username: data.username, admin: data.admin, setup_required: false, csrf_token: data.csrf_token };
     updateAuthUI();
     closeLogin();
     if(_afterLogin){ _afterLogin(); _afterLogin = null; }
@@ -269,7 +269,7 @@ async function submitSetup(ev){
     });
     const data = await res.json();
     if(!res.ok){ err.textContent = data.error || 'Setup failed'; return; }
-    _authState = { logged_in: true, username: data.username, admin: true, setup_required: false };
+    _authState = { logged_in: true, username: data.username, admin: true, setup_required: false, csrf_token: data.csrf_token };
     updateAuthUI();
     closeSetup();
     if(typeof checkAndOpenWizard === 'function') checkAndOpenWizard();
