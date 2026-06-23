@@ -443,7 +443,7 @@ def test_h_get_hosts_missing_file_returns_500():
 # ── _h_get_auth_status ───────────────────────────────────────────────────────
 
 def test_h_get_auth_status_no_auth_manager():
-    code, body = _h_get_auth_status(None, lambda: (None, False))
+    code, body = _h_get_auth_status(None, lambda: (None, False), "")
     assert code == 200
     assert body["logged_in"] is False
     assert body["setup_required"] is False
@@ -452,19 +452,32 @@ def test_h_get_auth_status_no_auth_manager():
 def test_h_get_auth_status_logged_in():
     class FakeAM:
         has_users = True
-    code, body = _h_get_auth_status(FakeAM(), lambda: ("alice", True))
+        def csrf_token_for_cookie(self, cookie_value):
+            return "deadbeef"
+    code, body = _h_get_auth_status(FakeAM(), lambda: ("alice", True), "some-cookie")
     assert code == 200
     assert body["logged_in"] is True
     assert body["username"] == "alice"
     assert body["admin"] is True
+    assert body["csrf_token"] == "deadbeef"
 
 
 def test_h_get_auth_status_setup_required():
     class FakeAM:
         has_users = False
-    code, body = _h_get_auth_status(FakeAM(), lambda: (None, False))
+    code, body = _h_get_auth_status(FakeAM(), lambda: (None, False), "")
     assert code == 200
     assert body["setup_required"] is True
+    assert "csrf_token" not in body
+
+
+def test_h_get_auth_status_logged_out_no_csrf_token():
+    class FakeAM:
+        has_users = True
+    code, body = _h_get_auth_status(FakeAM(), lambda: (None, False), "")
+    assert code == 200
+    assert body["logged_in"] is False
+    assert "csrf_token" not in body
 
 
 # ── _h_get_auth_users ────────────────────────────────────────────────────────

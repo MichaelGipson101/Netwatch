@@ -3686,14 +3686,17 @@ def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
         return 500, {"error": str(e)}
 
 
-def _h_get_auth_status(auth_manager, current_user_fn) -> tuple:
+def _h_get_auth_status(auth_manager, current_user_fn, cookie_value) -> tuple:
     user, is_admin = current_user_fn() if auth_manager else (None, False)
-    return 200, {
+    result = {
         "logged_in":      bool(user),
         "username":       user,
         "admin":          is_admin,
         "setup_required": bool(auth_manager and not auth_manager.has_users),
     }
+    if user and auth_manager:
+        result["csrf_token"] = auth_manager.csrf_token_for_cookie(cookie_value)
+    return 200, result
 
 
 def _h_get_auth_users(auth_manager) -> tuple:
@@ -4012,12 +4015,15 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             # Just use the direct connection IP - no proxy support for now
             return self.client_address[0] if self.client_address else "unknown"
 
+        def _session_cookie_value(self):
+            cookies = parse_cookies(self.headers.get("Cookie", ""))
+            return cookies.get("nw_session", "")
+
         def _current_user(self):
             """Returns (username, is_admin) or (None, False) if not logged in."""
             if not auth_manager:
                 return None, False
-            cookies = parse_cookies(self.headers.get("Cookie", ""))
-            return auth_manager.verify_session_cookie(cookies.get("nw_session", ""))
+            return auth_manager.verify_session_cookie(self._session_cookie_value())
 
         def _require_auth(self, admin_only=False):
             """Returns True if request is authorised, else writes 401 and returns False.
@@ -4156,7 +4162,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self._send_json(*_h_get_proxmox(proxmox_poller))
                 return
             if self.path == "/api/auth/status":
-                self._send_json(*_h_get_auth_status(auth_manager, self._current_user))
+                self._send_json(*_h_get_auth_status(auth_manager, self._current_user, self._session_cookie_value()))
                 return
             if self.path == "/api/auth/users":
                 if not self._require_auth(admin_only=True): return
