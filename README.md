@@ -89,12 +89,21 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling
 
 ---
 
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MichaelGipson101/Netwatch/main/install.sh | bash
+```
+
+This installs dependencies, clones the repo, seeds `hosts.yaml`, optionally restores from a backup tarball if you have one, and sets up the systemd service — then open the dashboard URL it prints and complete the first-run admin setup. See below for what it's doing under the hood, or to do it by hand.
+
+---
+
 ## Setup
 
 **1. Dependencies**
 ```bash
-sudo apt install python3 python3-pip nmap sqlite3
-pip3 install pyyaml openpyxl
+sudo apt install python3 nmap sqlite3 python3-yaml python3-openpyxl
 ```
 
 **2. Configure hosts**
