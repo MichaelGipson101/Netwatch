@@ -951,6 +951,24 @@ def test_post_hosts_requires_admin(tmp_path):
         t.join()
 
 
+def test_login_response_includes_csrf_token(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    server, port, t = _auth_test_server(auth)
+    try:
+        body = _json.dumps({"username": "root", "password": "password123"}).encode()
+        req = _urlreq.Request(f"http://127.0.0.1:{port}/api/auth/login", data=body,
+                              method="POST", headers={"Content-Type": "application/json"})
+        resp = _urlreq.urlopen(req)
+        data = _json.loads(resp.read())
+        assert data["ok"] is True
+        assert "csrf_token" in data
+        assert len(data["csrf_token"]) == 64
+    finally:
+        server.server_close()
+        t.join()
+
+
 def test_non_dict_json_body_rejected(tmp_path):
     auth = AuthManager(str(tmp_path / "auth.json"))
     auth.create_user("root", "password123", admin=True)

@@ -4049,6 +4049,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             max_age = auth_manager.SESSION_DAYS * 86400
             self.send_header("Set-Cookie",
                 f"nw_session={cookie}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict")
+            return cookie
 
         def _clear_session_cookie(self):
             self.send_header("Set-Cookie",
@@ -4274,12 +4275,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                         is_admin = auth_manager.is_admin(username.strip().lower())
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")
-                        self._set_session_cookie(username.strip().lower())
+                        cookie = self._set_session_cookie(username.strip().lower())
                         self.end_headers()
                         self.wfile.write(json.dumps({
                             "ok": True,
                             "username": username.strip().lower(),
                             "admin": is_admin,
+                            "csrf_token": auth_manager.csrf_token_for_cookie(cookie),
                         }).encode())
                     else:
                         auth_manager.record_failed_attempt(ip)
