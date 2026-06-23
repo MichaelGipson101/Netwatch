@@ -4801,7 +4801,17 @@ def main():
     parser.add_argument("--no-web", action="store_true", help="Disable web dashboard")
     parser.add_argument("--port",   type=int, default=8080, help="Web server port")
     parser.add_argument("--log",    default="monitor.log")
+    parser.add_argument("--restore", metavar="TARBALL",
+                         help="Restore hosts.yaml/auth.json/netwatch.db from a backup tarball, then exit")
+    parser.add_argument("--force", action="store_true",
+                         help="With --restore, overwrite existing hosts.yaml/auth.json/netwatch.db")
     args = parser.parse_args()
+
+    if args.restore:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), args.config)
+        ok, message = restore_backup(args.restore, config_path, force=args.force)
+        print(message)
+        sys.exit(0 if ok else 1)
 
     from logging.handlers import RotatingFileHandler
     _log_handler = RotatingFileHandler(args.log, maxBytes=10 * 1024 * 1024, backupCount=3)

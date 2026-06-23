@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import sys
 import re
 import io
 import json as _json
@@ -1900,3 +1901,23 @@ def test_restore_backup_warns_on_newer_manifest_version(tmp_path, monkeypatch):
 
     assert ok is True
     assert "newer netwatch version" in message.lower()
+
+
+def test_restore_cli_exits_before_server_startup(tmp_path):
+    """--restore should print a message and exit without ever importing/starting
+    AuthManager, HistoryDB, etc. Run as a subprocess so we observe the real
+    argparse + main() path, not just the restore_backup() function in isolation."""
+    import subprocess
+    tarball_path, _ = _build_fixture_backup(tmp_path)
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+
+    monitor_py = os.path.join(os.path.dirname(os.path.abspath(_mon.__file__)), "monitor.py")
+    result = subprocess.run(
+        [sys.executable, monitor_py, "--restore", tarball_path, "--config",
+         str(dest_dir / "hosts.yaml")],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert "Restored backup from" in result.stdout
+    assert (dest_dir / "hosts.yaml").exists()
