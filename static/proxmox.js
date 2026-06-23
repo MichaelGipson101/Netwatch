@@ -215,7 +215,7 @@
     var btns = row ? Array.from(row.querySelectorAll('.pve-btn')) : [];
     btns.forEach(function (b) { b.disabled = true; b.classList.add('pve-btn-loading'); });
 
-    fetch('/api/proxmox/action', {
+    apiFetch('/api/proxmox/action', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ node: node, vmid: vmid, type: type, action: action }),

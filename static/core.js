@@ -827,7 +827,7 @@ async function sendWake(ip){
   status.className = 'd-action-status';
   status.textContent = 'Sending magic packet...';
   try {
-    const res = await fetch('/api/wake', {
+    const res = await apiFetch('/api/wake', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ ip })
@@ -938,7 +938,7 @@ async function saveAddHost(){
       return;
     }
 
-    const res = await fetch('/api/hosts', {
+    const res = await apiFetch('/api/hosts', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ hosts })
@@ -1030,7 +1030,7 @@ async function detectMac(btn){
   const origText = btn.textContent;
   btn.disabled = true; btn.textContent = '...';
   try {
-    const res = await fetch('/api/detect-mac', {
+    const res = await apiFetch('/api/detect-mac', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ ip })
@@ -1099,7 +1099,7 @@ async function startDiscover(){
   document.getElementById('discover-list').innerHTML = '';
   document.getElementById('discover-results').style.display = 'none';
   try {
-    const res = await fetch('/api/discover', { method: 'POST' });
+    const res = await apiFetch('/api/discover', { method: 'POST' });
     const data = await res.json();
     if(!res.ok){
       statusEl.textContent = 'Error: ' + (data.error || 'could not start scan');
@@ -1209,7 +1209,7 @@ async function addDiscovered(){
     additions.push(entry);
   });
   const merged = existing.concat(additions);
-  const res = await fetch('/api/hosts', {
+  const res = await apiFetch('/api/hosts', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ hosts: merged })
@@ -1323,7 +1323,7 @@ async function saveHosts(){
   if(hasError){ setStatus('Fix the highlighted fields and try again', 'error'); return; }
   setStatus('Saving...', '');
   try {
-    const res = await fetch('/api/hosts', {
+    const res = await apiFetch('/api/hosts', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ hosts })

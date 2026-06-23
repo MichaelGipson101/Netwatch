@@ -799,7 +799,7 @@ async function submitInventory(ev){
   if(!data.system){ err.textContent = 'System name is required'; return; }
   try {
     const url = _editingInvId ? '/api/inventory/' + _editingInvId : '/api/inventory';
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(data)
@@ -815,7 +815,7 @@ async function deleteInventory(){
   if(!_editingInvId) return;
   if(!confirm('Delete this inventory record? This cannot be undone.')) return;
   try {
-    const res = await fetch('/api/inventory/' + _editingInvId + '/delete', { method: 'POST' });
+    const res = await apiFetch('/api/inventory/' + _editingInvId + '/delete', { method: 'POST' });
     if(res.ok){
       closeInventoryEditor();
       closeDrawer();
@@ -1123,7 +1123,7 @@ async function submitConnection(deviceId){
     to_port:         tpEl ? (tpEl.value || '').trim() : '',
   };
   try {
-    const res = await fetch('/api/inventory/' + deviceId + '/connections', {
+    const res = await apiFetch('/api/inventory/' + deviceId + '/connections', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(data),
@@ -1144,7 +1144,7 @@ async function submitConnection(deviceId){
 async function deleteConnection(connId, deviceId){
   if(!confirm('Remove this connection?')) return;
   try {
-    const res = await fetch('/api/connections/' + connId + '/delete', {method: 'POST'});
+    const res = await apiFetch('/api/connections/' + connId + '/delete', {method: 'POST'});
     if(!res.ok){
       let msg = 'Failed (HTTP ' + res.status + ')';
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
@@ -1251,7 +1251,7 @@ async function sendWakeFromInventory(ip, btn){
     status.textContent = 'Sending magic packet...';
   }
   try {
-    const res = await fetch('/api/wake', {
+    const res = await apiFetch('/api/wake', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ ip })
@@ -1359,7 +1359,7 @@ async function submitImport(){
   fd.append('file', file);
   fd.append('mode', mode);
   try {
-    const res = await fetch('/api/inventory-import', { method: 'POST', body: fd });
+    const res = await apiFetch('/api/inventory-import', { method: 'POST', body: fd });
     const data = await res.json();
     if(!res.ok){
       showImportResult('err', data.error || 'Import failed');

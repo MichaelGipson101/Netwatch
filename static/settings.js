@@ -63,7 +63,7 @@ async function saveSettings() {
   const errEl = document.getElementById('settings-error');
   errEl.textContent = '';
   try {
-    const res = await fetch('/api/settings', {
+    const res = await apiFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -259,7 +259,7 @@ async function _wizardFinish() {
   const errEl = document.getElementById('wizard-error');
   errEl.textContent = '';
   try {
-    const res = await fetch('/api/settings', {
+    const res = await apiFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(_wizardData),

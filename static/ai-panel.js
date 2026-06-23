@@ -164,7 +164,7 @@
     _setStreaming(true);
 
     try{
-      const resp = await fetch('/api/ai/chat',{
+      const resp = await apiFetch('/api/ai/chat',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model:_model.value, messages})

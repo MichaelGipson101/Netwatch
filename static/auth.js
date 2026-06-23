@@ -217,7 +217,7 @@ async function downloadBackup(){
   const origText = btn ? btn.textContent : null;
   if(btn){ btn.disabled = true; btn.textContent = 'Building...'; }
   try {
-    const res = await fetch('/api/backup', { method: 'POST' });
+    const res = await apiFetch('/api/backup', { method: 'POST' });
     if(!res.ok){
       let msg = 'Backup failed (HTTP ' + res.status + ')';
       try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
