@@ -205,7 +205,7 @@ async function submitLogin(ev){
 }
 async function logout(){
   await fetch('/api/auth/logout', { method: 'POST' });
-  _authState = { logged_in: false, username: null, admin: false, setup_required: false };
+  _authState = { logged_in: false, username: null, admin: false, setup_required: false, csrf_token: null };
   updateAuthUI();
   showLanding('login');
 }

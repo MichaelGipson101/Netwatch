@@ -995,6 +995,8 @@ def test_post_with_wrong_csrf_token_rejected(tmp_path):
 def test_post_with_correct_csrf_token_accepted(tmp_path):
     from monitor import HostManager
 
+    # Uses a real HostManager/tmp config instead of _auth_test_server, whose hardcoded
+    # /dev/null config path can't survive this test's successful (200) config-writing POST.
     auth = AuthManager(str(tmp_path / "auth.json"))
     auth.create_user("root", "password123", admin=True)
     config_path = str(tmp_path / "hosts.yaml")
