@@ -976,6 +976,16 @@ class AuthManager:
                 return None, False
             return username, bool(user.get("admin"))
 
+    def csrf_token_for_cookie(self, cookie_value):
+        """Derive a CSRF token from a session cookie value.
+
+        Stateless by design: no separate token store. The token changes
+        whenever the underlying session cookie does (new login, password
+        change bumping session_gen), so it can't outlive the session it
+        belongs to."""
+        secret = self.data["secret_key"].encode()
+        return hmac.new(secret, f"csrf:{cookie_value}".encode(), hashlib.sha256).hexdigest()
+
 
 def parse_cookies(cookie_header):
     """Parse a Cookie: header into a dict. Stdlib does this but we keep it tiny."""

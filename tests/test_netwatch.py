@@ -861,6 +861,30 @@ def test_legacy_two_part_cookie_rejected():
         assert auth.verify_session_cookie(f"{token}.{sig}") == (None, False)
 
 
+def test_csrf_token_for_cookie_deterministic():
+    with tempfile.TemporaryDirectory() as td:
+        auth = _make_auth(td)
+        token1 = auth.csrf_token_for_cookie("some-cookie-value")
+        token2 = auth.csrf_token_for_cookie("some-cookie-value")
+        assert token1 == token2
+        assert len(token1) == 64  # hex sha256 digest
+
+
+def test_csrf_token_for_cookie_differs_per_cookie():
+    with tempfile.TemporaryDirectory() as td:
+        auth = _make_auth(td)
+        token_a = auth.csrf_token_for_cookie("cookie-a")
+        token_b = auth.csrf_token_for_cookie("cookie-b")
+        assert token_a != token_b
+
+
+def test_csrf_token_for_cookie_differs_per_secret():
+    with tempfile.TemporaryDirectory() as td1, tempfile.TemporaryDirectory() as td2:
+        auth1 = _make_auth(td1)
+        auth2 = _make_auth(td2)
+        assert auth1.csrf_token_for_cookie("same-cookie") != auth2.csrf_token_for_cookie("same-cookie")
+
+
 # ── /api/status settings allowlist ───────────────────────────────────────────
 
 def test_api_payload_settings_allowlist():
