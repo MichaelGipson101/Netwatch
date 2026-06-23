@@ -4256,9 +4256,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                         self._send_json(400, {"error": err}); return
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
-                    self._set_session_cookie(username)
+                    cookie = self._set_session_cookie(username)
                     self.end_headers()
-                    self.wfile.write(json.dumps({"ok": True, "username": username}).encode())
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "username": username,
+                        "csrf_token": auth_manager.csrf_token_for_cookie(cookie),
+                    }).encode())
                 except json.JSONDecodeError:
                     self._send_json(400, {"error": "invalid JSON"})
                 except Exception as e:
