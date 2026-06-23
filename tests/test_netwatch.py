@@ -951,6 +951,74 @@ def test_post_hosts_requires_admin(tmp_path):
         t.join()
 
 
+def test_post_without_csrf_token_rejected(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    server, port, t = _auth_test_server(auth)
+    try:
+        cookie = auth.make_session_cookie("root")
+        req = _urlreq.Request(f"http://127.0.0.1:{port}/api/hosts", data=b'{"hosts": []}',
+                              method="POST", headers={"Cookie": f"nw_session={cookie}"})
+        try:
+            _urlreq.urlopen(req)
+            assert False, "expected 403"
+        except _urlerr.HTTPError as e:
+            assert e.code == 403
+            body = _json.loads(e.read())
+            assert body["error"] == "csrf_required"
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_post_with_wrong_csrf_token_rejected(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    server, port, t = _auth_test_server(auth)
+    try:
+        cookie = auth.make_session_cookie("root")
+        req = _urlreq.Request(f"http://127.0.0.1:{port}/api/hosts", data=b'{"hosts": []}',
+                              method="POST", headers={"Cookie": f"nw_session={cookie}",
+                                                       "X-CSRF-Token": "wrong-token"})
+        try:
+            _urlreq.urlopen(req)
+            assert False, "expected 403"
+        except _urlerr.HTTPError as e:
+            assert e.code == 403
+            body = _json.loads(e.read())
+            assert body["error"] == "csrf_required"
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_post_with_correct_csrf_token_accepted(tmp_path):
+    from monitor import HostManager
+
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    config_path = str(tmp_path / "hosts.yaml")
+    host_manager = HostManager(config_path, ping_timeout=1, history_window=10,
+                               global_stop=_threading.Event())
+    handler = make_handler(host_manager, {}, config_path, auth_manager=auth)
+    server = _THTS(("127.0.0.1", 0), handler)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    port = server.server_address[1]
+    try:
+        cookie = auth.make_session_cookie("root")
+        token = auth.csrf_token_for_cookie(cookie)
+        req = _urlreq.Request(f"http://127.0.0.1:{port}/api/hosts", data=b'{"hosts": []}',
+                              method="POST", headers={"Cookie": f"nw_session={cookie}",
+                                                       "X-CSRF-Token": token,
+                                                       "Content-Type": "application/json"})
+        resp = _urlreq.urlopen(req)
+        assert resp.status == 200
+    finally:
+        server.server_close()
+        t.join()
+
+
 def test_login_response_includes_csrf_token(tmp_path):
     auth = AuthManager(str(tmp_path / "auth.json"))
     auth.create_user("root", "password123", admin=True)
@@ -975,8 +1043,10 @@ def test_non_dict_json_body_rejected(tmp_path):
     server, port, t = _auth_test_server(auth)
     try:
         cookie = auth.make_session_cookie("root")
+        token = auth.csrf_token_for_cookie(cookie)
         req = _urlreq.Request(f"http://127.0.0.1:{port}/api/hosts", data=b'[1,2,3]',
-                              method="POST", headers={"Cookie": f"nw_session={cookie}"})
+                              method="POST", headers={"Cookie": f"nw_session={cookie}",
+                                                       "X-CSRF-Token": token})
         try:
             _urlreq.urlopen(req)
             assert False, "expected 400"

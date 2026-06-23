@@ -4026,9 +4026,11 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             return auth_manager.verify_session_cookie(self._session_cookie_value())
 
         def _require_auth(self, admin_only=False):
-            """Returns True if request is authorised, else writes 401 and returns False.
-            If no users exist yet, returns False with a 'setup_required' response so
-            the frontend can prompt for first-run setup."""
+            """Returns True if request is authorised, else writes an error
+            response and returns False. If no users exist yet, returns False
+            with a 'setup_required' response so the frontend can prompt for
+            first-run setup. POST requests additionally require a valid
+            X-CSRF-Token header matching the session cookie."""
             if not auth_manager:
                 return True  # auth disabled entirely
             if not auth_manager.has_users:
@@ -4042,6 +4044,12 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if admin_only and not is_admin:
                 self._send_json(403, {"error": "admin_required"})
                 return False
+            if self.command == "POST":
+                expected = auth_manager.csrf_token_for_cookie(self._session_cookie_value())
+                provided = self.headers.get("X-CSRF-Token", "")
+                if not provided or not hmac.compare_digest(expected, provided):
+                    self._send_json(403, {"error": "csrf_required"})
+                    return False
             return True
 
         def _set_session_cookie(self, username):
