@@ -3792,6 +3792,27 @@ def _h_post_settings(data: dict, config_path: str, settings: dict, auth_manager=
     return 200, {"ok": True, "settings": result}
 
 
+def _h_post_nas_ignore_alert(data: dict, config_path: str, settings: dict, auth_manager=None) -> tuple:
+    klass = (data.get("klass") or "").strip()
+    if not klass:
+        return 400, {"error": "klass is required"}
+    current = [k.strip() for k in (settings.get("truenas_ignored_alert_klasses") or "").split(",") if k.strip()]
+    if klass not in current:
+        current.append(klass)
+    return _h_post_settings({"truenas_ignored_alert_klasses": ",".join(current)},
+                             config_path, settings, auth_manager)
+
+
+def _h_post_nas_unignore_alert(data: dict, config_path: str, settings: dict, auth_manager=None) -> tuple:
+    klass = (data.get("klass") or "").strip()
+    if not klass:
+        return 400, {"error": "klass is required"}
+    current = [k.strip() for k in (settings.get("truenas_ignored_alert_klasses") or "").split(",") if k.strip()]
+    current = [k for k in current if k != klass]
+    return _h_post_settings({"truenas_ignored_alert_klasses": ",".join(current)},
+                             config_path, settings, auth_manager)
+
+
 def _h_get_hosts(config_path: str) -> tuple:
     try:
         cfg = load_yaml(config_path) or {}
@@ -4669,6 +4690,20 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_hosts(data, config_path, host_manager, settings))
+                return
+
+            if self.path == "/api/nas/ignore-alert":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_nas_ignore_alert(data, config_path, settings, auth_manager))
+                return
+
+            if self.path == "/api/nas/unignore-alert":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_nas_unignore_alert(data, config_path, settings, auth_manager))
                 return
 
             if self.path == "/api/settings":

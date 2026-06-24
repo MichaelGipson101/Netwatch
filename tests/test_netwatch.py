@@ -1618,6 +1618,75 @@ def test_filter_alerts_empty_ignore_list_string():
     assert len(result) == 2  # WARNING + CRITICAL, INFO excluded
 
 
+# ── _h_post_nas_ignore_alert / _h_post_nas_unignore_alert ────────────────────
+
+from monitor import _h_post_nas_ignore_alert, _h_post_nas_unignore_alert
+
+
+def test_ignore_alert_requires_klass():
+    code, body = _h_post_nas_ignore_alert({}, "/dev/null", {})
+    assert code == 400
+    assert "klass" in body["error"]
+
+
+def test_ignore_alert_adds_to_empty_list(tmp_path):
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        f.write("settings: {}\nhosts: []\n")
+    settings = {}
+    code, body = _h_post_nas_ignore_alert({"klass": "PoolUSBDisks"}, config_path, settings)
+    assert code == 200
+    assert settings["truenas_ignored_alert_klasses"] == "PoolUSBDisks"
+
+
+def test_ignore_alert_dedupes_repeated_calls(tmp_path):
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        f.write("settings: {}\nhosts: []\n")
+    settings = {}
+    _h_post_nas_ignore_alert({"klass": "PoolUSBDisks"}, config_path, settings)
+    code, body = _h_post_nas_ignore_alert({"klass": "PoolUSBDisks"}, config_path, settings)
+    assert code == 200
+    assert settings["truenas_ignored_alert_klasses"] == "PoolUSBDisks"
+
+
+def test_ignore_alert_appends_to_existing_list(tmp_path):
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        f.write("settings: {}\nhosts: []\n")
+    settings = {"truenas_ignored_alert_klasses": "SomeOtherKlass"}
+    code, body = _h_post_nas_ignore_alert({"klass": "PoolUSBDisks"}, config_path, settings)
+    assert code == 200
+    assert "SomeOtherKlass" in settings["truenas_ignored_alert_klasses"]
+    assert "PoolUSBDisks" in settings["truenas_ignored_alert_klasses"]
+
+
+def test_unignore_alert_requires_klass():
+    code, body = _h_post_nas_unignore_alert({}, "/dev/null", {})
+    assert code == 400
+
+
+def test_unignore_alert_removes_klass(tmp_path):
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        f.write("settings: {}\nhosts: []\n")
+    settings = {"truenas_ignored_alert_klasses": "PoolUSBDisks,SomeOtherKlass"}
+    code, body = _h_post_nas_unignore_alert({"klass": "PoolUSBDisks"}, config_path, settings)
+    assert code == 200
+    assert "PoolUSBDisks" not in settings.get("truenas_ignored_alert_klasses", "")
+    assert "SomeOtherKlass" in settings["truenas_ignored_alert_klasses"]
+
+
+def test_unignore_alert_clears_key_when_list_becomes_empty(tmp_path):
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        f.write("settings: {}\nhosts: []\n")
+    settings = {"truenas_ignored_alert_klasses": "PoolUSBDisks"}
+    code, body = _h_post_nas_unignore_alert({"klass": "PoolUSBDisks"}, config_path, settings)
+    assert code == 200
+    assert "truenas_ignored_alert_klasses" not in settings
+
+
 def test_get_cache_returns_copy():
     poller = _make_nas_poller()
     cache1 = poller.get_cache()
