@@ -212,12 +212,6 @@ credentials), `monitor.log` (rotating).
 
 ---
 
-## Related
-
-- **[Hearthboard](https://github.com/MichaelGipson101/hearthboard)** — a wall-mounted kiosk dashboard that reads Netwatch's API to display live network topology, host health, and incident history alongside weather and a clock. Runs on a Raspberry Pi; displayed on a Surface Pro 4 in fullscreen kiosk mode.
-
----
-
 ## License
 
 [MIT](LICENSE)
