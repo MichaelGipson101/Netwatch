@@ -4781,7 +4781,7 @@ def draw_tui(stdscr, host_manager, refresh_rate, port, stop_event):
                 safe_addstr(stdscr, row, COL_NAME, f"{name:<18}",    nm_attr)
                 safe_addstr(stdscr, row, COL_IP,   f"{ip:<16}",      C_MUTED)
                 safe_addstr(stdscr, row, COL_STAT, f"{status:<9}",   st_attr)
-                safe_addstr(stdscr, row, COL_LAT,  f"{latency:<11}", C_LATC if is_up else C_MUTED)
+                safe_addstr(stdscr, row, COL_LAT,  f" {latency:<10}", C_LATC if is_up else C_MUTED)
                 safe_addstr(stdscr, row, COL_BAR,  bar_str,          bar_attr)
                 safe_addstr(stdscr, row, COL_PCT,  f" {uptime:<6}",  bar_attr)
                 if max_x > COL_SPK + 10:
