@@ -4673,6 +4673,13 @@ def draw_tui(stdscr, host_manager, refresh_rate, port, stop_event):
     C_TEXT  = curses.color_pair(6)
     C_LATC  = curses.color_pair(7)
     C_SPARK = curses.color_pair(8)
+    ROLE_ATTRS = {
+        "wait":     (C_WAIT,  C_WAIT,  C_TEXT),
+        "degraded": (C_WAIT,  C_WAIT,  C_TEXT),
+        "up":       (C_UP,    C_UP,    C_TEXT),
+        "idle":     (C_MUTED, C_MUTED, C_MUTED),
+        "down":     (C_DOWN,  C_DOWN,  C_DOWN),
+    }
     curses.curs_set(0)
     stdscr.nodelay(True)
     COL_IND, COL_NAME, COL_IP, COL_STAT, COL_LAT, COL_BAR, COL_PCT, COL_SPK, COL_CHK = 1, 4, 24, 42, 50, 62, 74, 82, 105
@@ -4759,14 +4766,8 @@ def draw_tui(stdscr, host_manager, refresh_rate, port, stop_event):
                     uptime  = host.uptime_str
                     spark   = host.spark_str(20)
                     checked = host.checked_str
-                if pend:
-                    ind_attr = C_WAIT; st_attr = C_WAIT; nm_attr = C_TEXT
-                elif is_up:
-                    ind_attr = C_UP;   st_attr = C_UP;   nm_attr = C_TEXT
-                elif status == "IDLE":
-                    ind_attr = C_MUTED; st_attr = C_MUTED; nm_attr = C_MUTED
-                else:
-                    ind_attr = C_DOWN; st_attr = C_DOWN; nm_attr = C_DOWN
+                role = _tui_status_role(pend, is_up, status)
+                ind_attr, st_attr, nm_attr = ROLE_ATTRS[role]
                 bar_str = uptime_bar(upct, 10)
                 if upct is None:
                     bar_attr = C_MUTED
@@ -4779,7 +4780,7 @@ def draw_tui(stdscr, host_manager, refresh_rate, port, stop_event):
                 safe_addstr(stdscr, row, COL_IND,  "\u25cf",         ind_attr)
                 safe_addstr(stdscr, row, COL_NAME, f"{name:<18}",    nm_attr)
                 safe_addstr(stdscr, row, COL_IP,   f"{ip:<16}",      C_MUTED)
-                safe_addstr(stdscr, row, COL_STAT, f"{status:<7}",   st_attr)
+                safe_addstr(stdscr, row, COL_STAT, f"{status:<9}",   st_attr)
                 safe_addstr(stdscr, row, COL_LAT,  f"{latency:<11}", C_LATC if is_up else C_MUTED)
                 safe_addstr(stdscr, row, COL_BAR,  bar_str,          bar_attr)
                 safe_addstr(stdscr, row, COL_PCT,  f" {uptime:<6}",  bar_attr)
