@@ -1298,6 +1298,40 @@ def test_parse_pool_basic():
     assert pool["next_scrub"] is not None  # cron produced a date
 
 
+def test_next_cron_run_uses_local_timezone_not_utc():
+    """Regression: TrueNAS's schedule hour/minute are in the NAS's configured
+    local timezone, not UTC. A schedule of hour=0 in America/New_York (UTC-4
+    in summer DST) must resolve to 04:00 UTC, not 00:00 UTC."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    start = datetime(2026, 6, 1, tzinfo=timezone.utc)  # a Monday
+    result = NASPoller._next_cron_run(
+        "0", "0", "*", "*", "1",  # Mondays at 00:00 local
+        start=start, tz=ZoneInfo("America/New_York"),
+    )
+    dt = datetime.fromisoformat(result)
+    assert dt.utcoffset().total_seconds() == -4 * 3600  # EDT
+    assert dt.hour == 0 and dt.minute == 0
+    # The same wall-clock moment expressed in UTC is 4 hours later.
+    assert dt.astimezone(timezone.utc).hour == 4
+
+
+def test_parse_pool_uses_tz_name_for_next_scrub():
+    """_parse_pool's tz_name parameter must actually thread through to
+    _next_cron_run, not just be accepted and ignored."""
+    raw = dict(_POOL_RAW)
+    raw["scan"] = None
+    scrub_tasks = [
+        {"pool": 1, "pool_name": "tank",
+         "schedule": {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "*"}}
+    ]
+    pool_utc = NASPoller._parse_pool(raw, scrub_tasks, tz_name=None)
+    pool_ny = NASPoller._parse_pool(raw, scrub_tasks, tz_name="America/New_York")
+    from datetime import datetime
+    assert datetime.fromisoformat(pool_utc["next_scrub"]).utcoffset().total_seconds() == 0
+    assert datetime.fromisoformat(pool_ny["next_scrub"]).utcoffset().total_seconds() != 0
+
+
 def test_parse_pool_matches_scrub_task_by_pool_name_not_numeric_id():
     """Regression: TrueNAS's scrub-task API returns pool as a numeric ID and
     pool_name as the string name. _parse_pool must match on pool_name - an
@@ -1307,6 +1341,37 @@ def test_parse_pool_matches_scrub_task_by_pool_name_not_numeric_id():
         {"pool": 999, "pool_name": "tank", "schedule": {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "*"}}
     ]
     pool = NASPoller._parse_pool(_POOL_RAW, scrub_tasks)
+    assert pool["next_scrub"] is not None
+
+
+def test_parse_pool_next_scrub_respects_threshold_past_cron_interval():
+    """Regression: a scrub task's "schedule" (e.g. weekly) just says how often
+    to check; "threshold" is the minimum number of days since the last scrub
+    before TrueNAS actually lets it run again. When threshold (e.g. 35 days)
+    outlasts the cron interval, next_scrub must reflect the threshold date,
+    not the next bare weekly cron occurrence."""
+    from datetime import datetime
+    raw = dict(_POOL_RAW)
+    raw["scan"] = {"state": "FINISHED", "end_time": "2026-06-07T09:35:53+00:00", "errors": 0}
+    scrub_tasks = [
+        {"pool": 1, "pool_name": "tank", "threshold": 35,
+         "schedule": {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "7"}}
+    ]
+    pool = NASPoller._parse_pool(raw, scrub_tasks)
+    next_dt = datetime.fromisoformat(pool["next_scrub"])
+    last_dt = datetime.fromisoformat("2026-06-07T09:35:53+00:00")
+    assert (next_dt - last_dt).days >= 35
+
+
+def test_parse_pool_next_scrub_without_threshold_uses_plain_cron():
+    """No threshold field (or 0) - fall back to the old plain-cron behavior."""
+    raw = dict(_POOL_RAW)
+    raw["scan"] = {"state": "FINISHED", "end_time": "2026-06-07T09:35:53+00:00", "errors": 0}
+    scrub_tasks = [
+        {"pool": 1, "pool_name": "tank",
+         "schedule": {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "*"}}
+    ]
+    pool = NASPoller._parse_pool(raw, scrub_tasks)
     assert pool["next_scrub"] is not None
 
 

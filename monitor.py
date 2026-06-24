@@ -2537,10 +2537,18 @@ class NASPoller:
         return {"status": scan.get("state"), "end_time": end_str, "errors": scan.get("errors", 0)}
 
     @staticmethod
-    def _next_cron_run(minute, hour, dom, month, dow):
-        """Return next ISO datetime string for a simple cron expression (no ranges/steps/lists)."""
+    def _next_cron_run(minute, hour, dom, month, dow, start=None, tz=None):
+        """Return next ISO datetime string for a simple cron expression (no ranges/steps/lists).
+
+        TrueNAS's schedule hour/minute are in the NAS's configured local
+        timezone, not UTC - `tz` (a tzinfo) must reflect that or the matched
+        wall-clock time will be off by the NAS's UTC offset. `start` lets the
+        search begin later than "now" - used to fold in a scrub task's
+        threshold (the minimum days TrueNAS enforces between actual runs,
+        independent of how often the cron itself fires)."""
         from datetime import timedelta, timezone
-        now = datetime.now(tz=timezone.utc).replace(second=0, microsecond=0)
+        tz = tz or timezone.utc
+        now = (start or datetime.now(tz=timezone.utc)).astimezone(tz).replace(second=0, microsecond=0)
         t = now + timedelta(minutes=1)
         for _ in range(366 * 24 * 60):
             if (month == "*" or t.month == int(month)) and \
@@ -2553,15 +2561,38 @@ class NASPoller:
         return None
 
     @classmethod
-    def _parse_pool(cls, raw, scrub_tasks):
+    def _parse_pool(cls, raw, scrub_tasks, tz_name=None):
+        from datetime import timedelta, timezone
+        from zoneinfo import ZoneInfo
+        try:
+            tz = ZoneInfo(tz_name) if tz_name else timezone.utc
+        except Exception:
+            tz = timezone.utc
         name = raw.get("name", "")
         next_scrub = None
+        last_scrub = cls._parse_scrub(raw.get("scan"))
         for st in scrub_tasks:
             if st.get("pool_name") == name:
                 sch = st.get("schedule", {}) or {}
                 def _f(k): v = sch.get(k); return "*" if v is None else str(v)
+                # TrueNAS's schedule says how often to *check* (e.g. every
+                # Sunday); "threshold" is the minimum days since the last
+                # scrub before it's actually allowed to run again. Without
+                # this, next_scrub understates the real wait whenever the
+                # threshold is longer than the schedule's own interval.
+                search_start = None
+                threshold_days = st.get("threshold")
+                if threshold_days and last_scrub.get("end_time"):
+                    try:
+                        last_end = datetime.fromisoformat(last_scrub["end_time"])
+                        eligible = last_end + timedelta(days=int(threshold_days))
+                        now = datetime.now(tz=timezone.utc)
+                        search_start = eligible if eligible > now else now
+                    except (ValueError, TypeError):
+                        search_start = None
                 next_scrub = cls._next_cron_run(
                     _f("minute"), _f("hour"), _f("dom"), _f("month"), _f("dow"),
+                    start=search_start, tz=tz,
                 )
                 break
         return {
@@ -2570,7 +2601,7 @@ class NASPoller:
             "capacity_used_bytes": raw.get("allocated", 0),
             "capacity_total_bytes": raw.get("size", 0),
             "vdevs": cls._parse_vdevs(raw.get("topology", {}).get("data", [])),
-            "last_scrub": cls._parse_scrub(raw.get("scan")),
+            "last_scrub": last_scrub,
             "next_scrub": next_scrub,
         }
 
@@ -2618,7 +2649,9 @@ class NASPoller:
             pools_raw = self._fetch(url, api_key, "/api/v2.0/pool")
             scrub_tasks = self._fetch(url, api_key, "/api/v2.0/pool/scrub")
             replication_raw = self._fetch(url, api_key, "/api/v2.0/replication")
-            pools = [self._parse_pool(p, scrub_tasks) for p in pools_raw]
+            system_info = self._fetch(url, api_key, "/api/v2.0/system/info")
+            tz_name = system_info.get("timezone") or "UTC"
+            pools = [self._parse_pool(p, scrub_tasks, tz_name) for p in pools_raw]
             tasks = [self._parse_replication(r) for r in replication_raw]
             with self._lock:
                 self._cache = {
