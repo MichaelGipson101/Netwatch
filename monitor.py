@@ -4981,6 +4981,9 @@ def main():
                 curses.wrapper(draw_tui, host_manager, refresh_rate, args.port, stop_event)
             except KeyboardInterrupt:
                 pass
+            except (curses.error, ValueError):
+                print("\n[netwatch] Terminal doesn't support the TUI's required features. Try --no-tui.")
+                sys.exit(1)
             finally:
                 stop_event.set()
                 print("\n[netwatch] Stopped.")
