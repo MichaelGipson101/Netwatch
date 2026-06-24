@@ -727,6 +727,7 @@
         <button class="stab-btn" data-tab="integrations" onclick="switchSettingsTab('integrations')" role="tab">Integrations</button>
         <button class="stab-btn" data-tab="ai" onclick="switchSettingsTab('ai')" role="tab">AI</button>
         <button class="stab-btn" data-tab="backups" onclick="switchSettingsTab('backups')" role="tab">Backups</button>
+        <button class="stab-btn" data-tab="system" onclick="switchSettingsTab('system')" role="tab">System</button>
       </div>
 
       <div class="stab-content" id="stab-general">
@@ -802,6 +803,13 @@
           <p class="form-hint">Status of the daily inventory export to your NAS, if configured.</p>
           <div id="inventory-backup-status-card" class="backup-status-card">Loading…</div>
           <button type="button" class="btn" onclick="loadBackupStatus();loadInventoryBackupStatus()" style="align-self:flex-start">Refresh</button>
+        </div>
+      </div>
+
+      <div class="stab-content" id="stab-system" style="display:none">
+        <div class="form-stack">
+          <p class="form-hint">Restarts the netwatch process. Ping monitoring and the dashboard will be briefly unavailable.</p>
+          <button type="button" class="btn" id="restart-netwatch-btn" onclick="restartNetwatch()" style="align-self:flex-start">Restart netwatch</button>
         </div>
       </div>
 

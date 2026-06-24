@@ -90,6 +90,32 @@ function switchSettingsTab(tab) {
   if (tab === 'backups') { loadBackupStatus(); loadInventoryBackupStatus(); }
 }
 
+async function restartNetwatch() {
+  if (!confirm('Restart netwatch now? The dashboard will be unavailable for a few seconds.')) return;
+  const btn = document.getElementById('restart-netwatch-btn');
+  btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/system/restart', { method: 'POST' });
+    if (!res.ok) { toast('Could not restart netwatch.', 'error'); btn.disabled = false; return; }
+  } catch (e) {
+    // A network error here is expected - the process may already be restarting.
+  }
+  toast('Restarting netwatch…', 'info');
+  _pollForRestart();
+}
+
+function _pollForRestart() {
+  let attempts = 0;
+  const interval = setInterval(async () => {
+    attempts++;
+    try {
+      const res = await fetch('/api/auth/status');
+      if (res.ok) { clearInterval(interval); location.reload(); return; }
+    } catch (e) { /* still down, keep polling */ }
+    if (attempts >= 15) clearInterval(interval); // ~30s timeout, give up silently
+  }, 2000);
+}
+
 // ── Backup status ────────────────────────────────────────────────────────────
 
 const BACKUP_STALE_SECONDS = 8 * 86400; // weekly job; flag if older
