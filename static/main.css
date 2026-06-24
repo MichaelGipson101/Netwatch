@@ -1310,7 +1310,15 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .nas-rep-meta{font-size:11px;color:var(--hint);margin-right:8px}
 .nas-muted{font-size:12px;color:var(--hint)}
 .nas-refresh-btn{font-size:12px;padding:5px 12px}
-@media(max-width:600px){.nas-metrics{grid-template-columns:repeat(2,1fr)}}
+.nas-alert-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nas-alert-row:last-child{border-bottom:none}
+.nas-alert-msg{flex:1;font-size:13px;min-width:0}
+.nas-alert-actions{margin-left:auto;display:flex;gap:8px;flex-shrink:0}
+.nas-alert-dismiss{margin-left:8px}
+@media(max-width:600px){.nas-metrics{grid-template-columns:repeat(2,1fr)}
+.nas-alert-msg{flex:1 1 100%}
+.nas-alert-actions{margin-left:0;width:100%;justify-content:flex-end}
+.nas-alert-dismiss{margin-left:0}}
 
 /* ── Settings panel tabs ─────────────────────────────────────────────────── */
 .stab-bar{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px}
