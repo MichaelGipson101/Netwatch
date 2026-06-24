@@ -1963,3 +1963,53 @@ def test_tui_status_role_idle_when_down_and_not_always_on():
 def test_tui_status_role_down_when_down_and_always_on():
     from monitor import _tui_status_role
     assert _tui_status_role(pend=False, is_up=False, status="DOWN") == "down"
+
+
+# ── ProxmoxPoller._make_ssl_ctx ──────────────────────────────────────────────
+
+def _make_self_signed_ca(path, extra_args=()):
+    """Generate a throwaway self-signed CA cert for SSL context tests.
+
+    Proxmox's own cluster CA commonly omits the Key Usage extension, which
+    OpenSSL 3.x's strict X.509 policy rejects as an issuer. extra_args lets
+    a test add/omit extensions to reproduce that exact shape."""
+    import subprocess
+    key_path = str(path) + ".key"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+         "-keyout", key_path, "-out", str(path), "-days", "1",
+         "-subj", "/CN=Test CA"] + list(extra_args),
+        check=True, capture_output=True,
+    )
+
+
+def test_make_ssl_ctx_pinned_ca_without_key_usage_disables_x509_strict(tmp_path):
+    import ssl
+    ca_path = tmp_path / "ca.pem"
+    _make_self_signed_ca(ca_path, ["-addext", "basicConstraints=critical,CA:TRUE"])
+    poller = ProxmoxPoller(MagicMock(), alert_settings={"proxmox_ca_cert": str(ca_path)})
+
+    ctx = poller._make_ssl_ctx()
+
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        assert not (ctx.verify_flags & ssl.VERIFY_X509_STRICT)
+
+
+def test_make_ssl_ctx_without_pinned_ca_keeps_default_strict_flag():
+    import ssl
+    poller = ProxmoxPoller(MagicMock(), alert_settings={})
+
+    ctx = poller._make_ssl_ctx()
+
+    default_ctx = ssl.create_default_context()
+    assert ctx.verify_flags == default_ctx.verify_flags
+
+
+def test_make_ssl_ctx_verify_disabled_ignores_ca_cert():
+    import ssl
+    poller = ProxmoxPoller(MagicMock(), alert_settings={"proxmox_verify_ssl": False,
+                                                         "proxmox_ca_cert": "/nonexistent.pem"})
+
+    ctx = poller._make_ssl_ctx()
+
+    assert ctx.verify_mode == ssl.CERT_NONE

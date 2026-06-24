@@ -2741,7 +2741,17 @@ class ProxmoxPoller:
             ctx.verify_mode = ssl.CERT_NONE
             return ctx
         ca_cert = (self._alert_settings.get("proxmox_ca_cert") or "").strip()
-        return ssl.create_default_context(cafile=ca_cert or None)
+        ctx = ssl.create_default_context(cafile=ca_cert or None)
+        if ca_cert and hasattr(ssl, "VERIFY_X509_STRICT"):
+            # Proxmox's self-generated cluster CA commonly omits the Key Usage
+            # extension on its root cert; OpenSSL 3.x's strict X.509 policy
+            # rejects that as an issuer even though the chain is otherwise
+            # genuinely valid. Relax just that one RFC-strictness check for a
+            # pinned self-managed CA - full chain-of-trust verification still
+            # applies, this only stops a non-compliant-but-legitimate CA from
+            # being rejected on a technicality.
+            ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        return ctx
 
     def _fetch(self, base_url, user, token_id, token_secret, path):
         import urllib.request
