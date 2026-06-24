@@ -9,6 +9,10 @@
 > Homelab ping monitor · inventory CMDB · topology visualizer · Proxmox/TrueNAS dashboard  
 > Runs on a Raspberry Pi. Single Python file. No dependencies beyond stdlib + PyYAML + openpyxl.
 
+*Built collaboratively with AI assistance and hasn't had a formal third-party security audit.
+Review the code yourself, especially around auth and credential handling, before exposing it
+beyond a trusted LAN.*
+
 ---
 
 ## What it does
