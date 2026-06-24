@@ -4961,6 +4961,12 @@ def main():
     ping_timeout     = settings.get("ping_timeout", 2)
     history_window   = settings.get("history_window", 100)
     refresh_rate     = settings.get("refresh_rate", 5)
+    # Make sure default_interval is always present on `settings` itself - the
+    # rest of this function passes this exact dict object (not a copy) to
+    # HostManager, NASPoller, ProxmoxPoller, and the web server, so that
+    # POST /api/settings's in-place mutations are visible to all of them
+    # immediately, without a restart.
+    settings["default_interval"] = default_interval
 
     stop_event = threading.Event()
 
@@ -5018,10 +5024,9 @@ def main():
         print(f"[netwatch] Proxmox poller -> polling every {ProxmoxPoller.POLL_INTERVAL_SECONDS}s")
 
     if not args.no_web:
-        web_settings = {**settings, "default_interval": default_interval}
         wt = threading.Thread(
             target=start_web_server,
-            args=(host_manager, web_settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
+            args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
             kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller},
             daemon=True
         )
