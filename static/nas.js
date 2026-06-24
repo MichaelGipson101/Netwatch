@@ -51,14 +51,18 @@ function renderNasAlerts(alerts) {
   if (!alerts || !alerts.length) return '';
   var rows = alerts.map(function(a) {
     var badgeCls = (a.level === 'WARNING') ? 'nas-badge-warn' : 'nas-badge-err';
-    var dismissBtn = (typeof _authState !== 'undefined' && _authState.admin)
-      ? '<button class="btn" style="margin-left:auto" data-klass="' + escapeHtml(a.klass) +
-        '" onclick="dismissNasAlert(this)">Dismiss</button>'
-      : '';
+    var actions = '';
+    if (typeof _authState !== 'undefined' && _authState.admin) {
+      actions =
+        '<button class="btn" data-id="' + escapeHtml(a.id) +
+        '" onclick="acknowledgeNasAlert(this)">Acknowledge</button>' +
+        '<button class="btn" style="margin-left:8px" data-klass="' + escapeHtml(a.klass) +
+        '" onclick="dismissNasAlert(this)">Dismiss</button>';
+    }
     return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
       '<span class="nas-badge ' + badgeCls + '">' + escapeHtml(a.level) + '</span>' +
       '<span style="flex:1;font-size:13px">' + escapeHtml(a.message) + '</span>' +
-      dismissBtn +
+      '<span style="margin-left:auto;display:flex">' + actions + '</span>' +
       '</div>';
   }).join('');
   return '<div class="nas-section-label">TrueNAS Alerts</div>' +
@@ -78,6 +82,22 @@ async function dismissNasAlert(btn) {
     var row = btn.closest('div[style*="border-bottom"]');
     if (row) row.remove();
     toast('Alert category dismissed.', 'success');
+  } catch (e) { toast('Network error', 'error'); btn.disabled = false; }
+}
+
+async function acknowledgeNasAlert(btn) {
+  var id = btn.dataset.id;
+  btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/nas/acknowledge-alert', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: id}),
+    });
+    if (!res.ok) { toast('Could not acknowledge alert.', 'error'); btn.disabled = false; return; }
+    var row = btn.closest('div[style*="border-bottom"]');
+    if (row) row.remove();
+    toast('Alert acknowledged.', 'success');
   } catch (e) { toast('Network error', 'error'); btn.disabled = false; }
 }
 
