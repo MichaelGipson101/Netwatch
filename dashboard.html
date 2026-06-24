@@ -774,6 +774,11 @@
             </div>
           </label>
           <label class="form-field">Node name<input type="text" id="s-proxmox_node" placeholder="pve"></label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="s-proxmox_verify_ssl" checked> Verify Proxmox's TLS certificate</label>
+          <label class="form-field">Proxmox CA cert path
+            <input type="text" id="s-proxmox_ca_cert" placeholder="/etc/pve/pve-root-ca.pem (optional)">
+          </label>
+          <p class="form-hint">Proxmox ships with a self-signed cert by default. Either point this at Proxmox's own CA file (Datacenter &rarr; Certificates, or <code>/etc/pve/pve-root-ca.pem</code> on the Proxmox host), or uncheck "Verify Proxmox's TLS certificate" above to disable verification entirely.</p>
         </div>
       </div>
 
@@ -872,6 +877,11 @@
             </div>
           </label>
           <label class="form-field">Node name<input type="text" id="w-proxmox_node" placeholder="pve"></label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="w-proxmox_verify_ssl" checked> Verify Proxmox's TLS certificate</label>
+          <label class="form-field">Proxmox CA cert path
+            <input type="text" id="w-proxmox_ca_cert" placeholder="/etc/pve/pve-root-ca.pem (optional)">
+          </label>
+          <p class="form-hint">Proxmox ships with a self-signed cert by default. Either point this at Proxmox's own CA file, or uncheck "Verify Proxmox's TLS certificate" above to disable verification entirely.</p>
         </div>
       </div>
 

@@ -28,13 +28,15 @@ function _fillSettingsForm(s) {
     'ntfy_topic', 'ntfy_server',
     'truenas_url', 'truenas_api_key',
     'proxmox_url', 'proxmox_user', 'proxmox_password',
-    'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node',
+    'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_ca_cert',
     'openrouter_api_key', 'ai_model',
   ];
   for (const k of keys) {
     const el = _settingsField(k);
     if (el) el.value = (s[k] != null) ? s[k] : '';
   }
+  const verifyEl = _settingsField('proxmox_verify_ssl');
+  if (verifyEl) verifyEl.checked = (s.proxmox_verify_ssl !== false);
 }
 
 function _collectSettingsForm() {
@@ -43,7 +45,7 @@ function _collectSettingsForm() {
     'ntfy_topic', 'ntfy_server',
     'truenas_url', 'truenas_api_key',
     'proxmox_url', 'proxmox_user', 'proxmox_password',
-    'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node',
+    'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_ca_cert',
     'openrouter_api_key', 'ai_model',
   ];
   const out = {};
@@ -55,6 +57,8 @@ function _collectSettingsForm() {
     const el = _settingsField(k);
     if (el) out[k] = el.value.trim();
   }
+  const verifyEl = _settingsField('proxmox_verify_ssl');
+  if (verifyEl) out.proxmox_verify_ssl = verifyEl.checked;
   return out;
 }
 
@@ -166,9 +170,10 @@ const _WIZARD_TITLES  = ['Monitoring', 'Push Alerts', 'Integrations', 'AI Assist
 const _WIZARD_INTKEYS = { 1: ['default_interval','ping_timeout','history_window','refresh_rate','history_days'] };
 const _WIZARD_STRKEYS = {
   2: ['ntfy_topic','ntfy_server'],
-  3: ['truenas_url','truenas_api_key','proxmox_url','proxmox_user','proxmox_password','proxmox_token_id','proxmox_token_secret','proxmox_node'],
+  3: ['truenas_url','truenas_api_key','proxmox_url','proxmox_user','proxmox_password','proxmox_token_id','proxmox_token_secret','proxmox_node','proxmox_ca_cert'],
   4: ['openrouter_api_key','ai_model'],
 };
+const _WIZARD_BOOLKEYS = { 3: ['proxmox_verify_ssl'] };
 
 async function openWizard() {
   closeSettings();
@@ -220,6 +225,10 @@ function _wizardFillStep(step) {
     const el = document.getElementById('w-' + k);
     if (el) el.value = (src[k] != null) ? src[k] : '';
   }
+  for (const k of (_WIZARD_BOOLKEYS[step] || [])) {
+    const el = document.getElementById('w-' + k);
+    if (el) el.checked = (src[k] !== false);
+  }
 }
 
 function _wizardCollectStep(step) {
@@ -231,6 +240,10 @@ function _wizardCollectStep(step) {
   for (const k of (_WIZARD_STRKEYS[step] || [])) {
     const el = document.getElementById('w-' + k);
     if (el) out[k] = el.value.trim();
+  }
+  for (const k of (_WIZARD_BOOLKEYS[step] || [])) {
+    const el = document.getElementById('w-' + k);
+    if (el) out[k] = el.checked;
   }
   return out;
 }
