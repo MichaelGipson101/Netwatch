@@ -28,7 +28,8 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling
 **Servers tab (Proxmox / TrueNAS)**
 - Pill toggle between Proxmox and TrueNAS panels
 - Proxmox: per-node cards (CPU/RAM bars, uptime), guest table (VMs + LXCs) with live CPU/RAM, start/stop/reboot actions, and a link dot back to the matching inventory host
-- TrueNAS: pool health metrics and replication task status
+- TrueNAS: pool health metrics, vdev layout (including cache/log/spare/special/dedup devices), replication task status, and next-scrub estimate (accounts for the pool's own threshold setting and the NAS's configured timezone, not just its cron schedule)
+- TrueNAS Alerts card: surfaces TrueNAS's own alert feed (WARNING and above), with an admin-only Dismiss button per alert category — dismissed categories (e.g. an intentional USB-enclosure pool warning) are silenced permanently for this deployment, stored in `hosts.yaml`'s `truenas_ignored_alert_klasses` setting
 - Background pollers (60s Proxmox, 900s TrueNAS) drive alerting via ntfy
 - Credentials managed through the Settings panel / config wizard, stored server-side in `auth.json`
 
@@ -78,7 +79,7 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling
 - Inventory table with sort, filter, type chips
 - Host drawer with uptime history sparkline
 - Inventory drawer with full record detail and edit
-- Settings panel + setup wizard for credentials (Proxmox, TrueNAS, OpenRouter, ntfy)
+- Settings panel + setup wizard for credentials (Proxmox, TrueNAS, OpenRouter, ntfy) and Proxmox TLS verification options (verify toggle + CA cert path)
 - Self-hosted fonts and D3 — no CDN calls, works on a fully isolated LAN
 
 **Security**
@@ -189,8 +190,13 @@ credentials), `monitor.log` (rotating).
 - Proxmox API calls verify TLS certificates by default. If your Proxmox host
   uses its stock self-signed cert, either give it a real one (Datacenter ->
   ACME) or point the `proxmox_ca_cert` setting at Proxmox's own CA file
-  (e.g. `/etc/pve/pve-root-ca.pem`) — see `hosts.yaml.example`. Setting
-  `proxmox_verify_ssl: false` disables verification entirely if needed.
+  (e.g. `/etc/pve/pve-root-ca.pem`) — see `hosts.yaml.example`, or set it from
+  the Settings panel directly. Setting `proxmox_verify_ssl: false` (also a
+  Settings panel toggle) disables verification entirely if needed.
+  Note: Proxmox's own cluster CA commonly omits the X.509 Key Usage
+  extension, which OpenSSL 3.x's strict validation policy would otherwise
+  reject even with the correct CA pinned — netwatch already relaxes that one
+  specific check for a pinned Proxmox CA, so this should just work.
 - All `POST` requests require an `X-CSRF-Token` header matching a token
   issued in the `/api/auth/login` or `/api/auth/setup` response body
   (`csrf_token` field). The dashboard's own JS handles this automatically;
