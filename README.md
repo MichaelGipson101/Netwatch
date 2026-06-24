@@ -16,7 +16,7 @@
 Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling Proxmox and TrueNAS, and serving a web dashboard (dark or light) with live status, a full inventory database, an interactive network topology graph, and an AI assistant that can answer questions about all of it.
 
 ```
-192.168.6.90:8080  ←  open in any browser
+<pi-ip>:8080  ←  open in any browser
 ```
 
 ---
@@ -35,7 +35,7 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling
 - Pill toggle between Proxmox and TrueNAS panels
 - Proxmox: per-node cards (CPU/RAM bars, uptime), guest table (VMs + LXCs) with live CPU/RAM, start/stop/reboot actions, and a link dot back to the matching inventory host
 - TrueNAS: pool health metrics, vdev layout (including cache/log/spare/special/dedup devices), replication task status, and next-scrub estimate (accounts for the pool's own threshold setting and the NAS's configured timezone, not just its cron schedule)
-- TrueNAS Alerts card: surfaces TrueNAS's own alert feed (WARNING and above), with an admin-only Dismiss button per alert category — dismissed categories (e.g. an intentional USB-enclosure pool warning) are silenced permanently for this deployment, stored in `hosts.yaml`'s `truenas_ignored_alert_klasses` setting
+- TrueNAS Alerts card: surfaces TrueNAS's own alert feed (WARNING and above), with an admin-only Dismiss button per alert category (silenced permanently via `hosts.yaml`'s `truenas_ignored_alert_klasses` setting) and an Acknowledge button for one-off per-instance dismissal proxied straight to TrueNAS's own alert API
 - Background pollers (60s Proxmox, 900s TrueNAS) drive alerting via ntfy
 - Credentials managed through the Settings panel / config wizard, stored server-side in `auth.json`
 
@@ -86,6 +86,7 @@ Netwatch watches your homelab 24/7 — pinging hosts, logging incidents, polling
 - Host drawer with uptime history sparkline
 - Inventory drawer with full record detail and edit
 - Settings panel + setup wizard for credentials (Proxmox, TrueNAS, OpenRouter, ntfy) and Proxmox TLS verification options (verify toggle + CA cert path)
+- Settings > System tab with a Restart netwatch button (re-execs the process in place, no SSH needed)
 - Self-hosted fonts and D3 — no CDN calls, works on a fully isolated LAN
 
 **Security**
@@ -150,9 +151,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=mgipson
-WorkingDirectory=/home/mgipson/netwatch
-ExecStart=/usr/bin/python3 /home/mgipson/netwatch/monitor.py --no-tui --port 8080
+User=<your-user>
+WorkingDirectory=/home/<your-user>/netwatch
+ExecStart=/usr/bin/python3 /home/<your-user>/netwatch/monitor.py --no-tui --port 8080
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -175,7 +176,7 @@ HTTP access log: `tail -f monitor.log`
 ## Files
 
 ```
-monitor.py          — application core (~4,600 lines)
+monitor.py          — application core (~5,200 lines)
 dashboard.html      — frontend shell (served by the Python server)
 static/             — dashboard CSS/JS (main.css, core.js, topology.js, inventory.js,
                        proxmox.js, nas.js, ai-panel.js, settings.js, auth.js, utils.js,
