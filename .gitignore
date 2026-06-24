@@ -34,3 +34,6 @@ Thumbs.db
 
 # Brainstorm sessions
 .superpowers/
+
+# Internal planning docs (may contain example secrets, not for public repo)
+docs/superpowers/
