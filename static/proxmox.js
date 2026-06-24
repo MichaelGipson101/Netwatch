@@ -7,8 +7,8 @@
 
   /* ── Public API ─────────────────────────────────────────────────────────── */
 
-  window.fetchProxmox = function () {
-    fetch('/api/proxmox')
+  window.fetchProxmox = function (force) {
+    fetch(force ? '/api/proxmox?refresh=1' : '/api/proxmox')
       .then(function (r) { return r.json(); })
       .then(function (data) {
         window.nwLastProxmox = data;
@@ -86,7 +86,7 @@
       ? '<span class="pve-meta">Last updated ' + ago + ' \xB7 polls every 60s</span>'
       : '<span class="pve-warn">Proxmox unreachable \xB7 last data ' + ago + '</span>';
     return '<div class="pve-action-bar">'
-      + '<button class="btn pve-refresh-btn" onclick="fetchProxmox()">↻ Refresh now</button>'
+      + '<button class="btn pve-refresh-btn" onclick="fetchProxmox(true)">↻ Refresh now</button>'
       + info + '</div>';
   }
 

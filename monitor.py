@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.46"
+VERSION = "3.47"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -3829,15 +3829,22 @@ def _h_get_pi_health() -> tuple:
         return 500, {"error": str(e)}
 
 
-def _h_get_nas(nas_poller) -> tuple:
+def _h_get_nas(nas_poller, force=False) -> tuple:
     if nas_poller is None:
         return 503, {"reachable": False, "error": "NAS poller not available"}
+    if force:
+        # "Refresh now" in the UI - without this, the button just re-reads
+        # whatever the last background poll (every 15 min) happened to cache,
+        # which can look like it did nothing for most of that window.
+        nas_poller._poll()
     return 200, nas_poller.get_cache()
 
 
-def _h_get_proxmox(proxmox_poller) -> tuple:
+def _h_get_proxmox(proxmox_poller, force=False) -> tuple:
     if proxmox_poller is None:
         return 503, {"reachable": False, "error": "Proxmox poller not running"}
+    if force:
+        proxmox_poller._poll()
     cache = proxmox_poller.get_cache()
     url, _, _, _ = proxmox_poller._get_config()
     if not url and not cache.get("nodes"):
@@ -4370,13 +4377,17 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_pi_health())
                 return
-            if self.path == "/api/nas":
+            if self.path == "/api/nas" or self.path.startswith("/api/nas?"):
                 if not self._require_auth(): return
-                self._send_json(*_h_get_nas(nas_poller))
+                from urllib.parse import urlparse as _up_nas, parse_qs as _pqs_nas
+                force = _pqs_nas(_up_nas(self.path).query).get("refresh", ["0"])[0] == "1"
+                self._send_json(*_h_get_nas(nas_poller, force=force))
                 return
-            if self.path == "/api/proxmox":
+            if self.path == "/api/proxmox" or self.path.startswith("/api/proxmox?"):
                 if not self._require_auth(): return
-                self._send_json(*_h_get_proxmox(proxmox_poller))
+                from urllib.parse import urlparse as _up_pve, parse_qs as _pqs_pve
+                force = _pqs_pve(_up_pve(self.path).query).get("refresh", ["0"])[0] == "1"
+                self._send_json(*_h_get_proxmox(proxmox_poller, force=force))
                 return
             if self.path == "/api/auth/status":
                 self._send_json(*_h_get_auth_status(auth_manager, self._current_user, self._session_cookie_value()))

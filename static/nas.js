@@ -1,5 +1,5 @@
-function fetchNas() {
-  fetch('/api/nas')
+function fetchNas(force) {
+  fetch(force ? '/api/nas?refresh=1' : '/api/nas')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       window.nwLastNas = data;
@@ -44,7 +44,7 @@ function renderNasActionBar(data) {
   var info = data.reachable
     ? '<span class="nas-meta">Last updated ' + ago + ' \xB7 polls every 15 min</span>'
     : '<span class="nas-warn">TrueNAS unreachable \xB7 last data ' + ago + '</span>';
-  return '<div class="nas-action-bar"><button class="btn nas-refresh-btn" onclick="fetchNas()">&#8635; Refresh now</button>' + info + '</div>';
+  return '<div class="nas-action-bar"><button class="btn nas-refresh-btn" onclick="fetchNas(true)">&#8635; Refresh now</button>' + info + '</div>';
 }
 
 function renderNasAlerts(alerts) {

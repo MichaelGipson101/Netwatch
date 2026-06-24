@@ -1725,6 +1725,24 @@ def test_h_get_nas_returns_cache():
     assert body["pools"][0]["name"] == "tank"
 
 
+def test_h_get_nas_force_triggers_poll():
+    """Regression: "Refresh now" in the UI just re-read whatever the last
+    background poll (every 15 min) happened to cache - clicking it did
+    nothing until the next scheduled poll. force=True must trigger a real
+    poll immediately."""
+    poller = _make_nas_poller()
+    with patch.object(poller, "_poll") as mock_poll:
+        _h_get_nas(poller, force=True)
+    mock_poll.assert_called_once()
+
+
+def test_h_get_nas_without_force_does_not_poll():
+    poller = _make_nas_poller()
+    with patch.object(poller, "_poll") as mock_poll:
+        _h_get_nas(poller, force=False)
+    mock_poll.assert_not_called()
+
+
 def test_poll_skipped_when_unconfigured():
     am = MagicMock()
     am.data = {}  # no truenas_url or api_key
@@ -1992,6 +2010,20 @@ def test_h_get_proxmox_returns_cache():
     assert status == 200
     assert body["reachable"] is True
     assert body["nodes"][0]["name"] == "pve"
+
+
+def test_h_get_proxmox_force_triggers_poll():
+    poller = _make_proxmox_poller()
+    with patch.object(poller, "_poll") as mock_poll:
+        _h_get_proxmox(poller, force=True)
+    mock_poll.assert_called_once()
+
+
+def test_h_get_proxmox_without_force_does_not_poll():
+    poller = _make_proxmox_poller()
+    with patch.object(poller, "_poll") as mock_poll:
+        _h_get_proxmox(poller, force=False)
+    mock_poll.assert_not_called()
 
 
 # ============================================================================

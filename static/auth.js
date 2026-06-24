@@ -43,6 +43,15 @@ function updateAuthUI(){
   } else {
     navAuth.innerHTML = '<button class="btn" onclick="openLogin()" style="font-size:12px">Log in</button>';
   }
+  // Re-render the NAS panel from its last-fetched data whenever admin status
+  // changes (login, logout, or fetchAuthState resolving after a fresh page
+  // load) - it's the only panel with an admin-gated action (Dismiss), and it
+  // only re-renders on its own when the TrueNAS pill is (re-)selected. Without
+  // this, a user who lands on the TrueNAS panel before fetchAuthState resolves
+  // sees a permanently stale "not admin" render until they switch panels.
+  if (window.nwLastNas && typeof renderNas === 'function') {
+    renderNas(window.nwLastNas);
+  }
 }
 
 let _userMenuOutsideClick = null;
