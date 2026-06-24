@@ -2595,12 +2595,22 @@ class NASPoller:
                     start=search_start, tz=tz,
                 )
                 break
+        topology = raw.get("topology", {}) or {}
         return {
             "name": name,
             "status": raw.get("status", "UNKNOWN"),
             "capacity_used_bytes": raw.get("allocated", 0),
             "capacity_total_bytes": raw.get("size", 0),
-            "vdevs": cls._parse_vdevs(raw.get("topology", {}).get("data", [])),
+            "vdevs": cls._parse_vdevs(topology.get("data", [])),
+            # Non-data vdevs (cache/L2ARC, log/SLOG, spares, special, dedup)
+            # were previously dropped entirely - a failed one would never
+            # show up anywhere, since pool "status" doesn't always reflect
+            # a non-critical device like a cache disk failing.
+            "cache_vdevs": cls._parse_vdevs(topology.get("cache", [])),
+            "log_vdevs": cls._parse_vdevs(topology.get("log", [])),
+            "spare_vdevs": cls._parse_vdevs(topology.get("spare", [])),
+            "special_vdevs": cls._parse_vdevs(topology.get("special", [])),
+            "dedup_vdevs": cls._parse_vdevs(topology.get("dedup", [])),
             "last_scrub": last_scrub,
             "next_scrub": next_scrub,
         }
@@ -2623,6 +2633,7 @@ class NASPoller:
         return {
             "id": raw.get("id"),
             "name": raw.get("name", ""),
+            "enabled": bool(raw.get("enabled", True)),
             "last_run": last_run,
             "last_state": state.get("state") or "UNKNOWN",
         }
@@ -2699,7 +2710,13 @@ class NASPoller:
         now = datetime.now(tz=timezone.utc)
         stale_delta = timedelta(hours=self.REPLICATION_STALE_HOURS)
         for task in tasks:
-            cid = f"replication_{task['id'] or task['name']}"
+            task_key = task["id"] if task["id"] is not None else task["name"]
+            cid = f"replication_{task_key}"
+            if not task.get("enabled", True):
+                # A deliberately disabled task has no reason to alert as
+                # stale/failed forever - clear any existing alert and skip.
+                self._clear_alert(cid)
+                continue
             ok_states = ("SUCCESS", "FINISHED", "PENDING", "RUNNING")
             failed = task["last_state"] not in ok_states
             stale = False

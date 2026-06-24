@@ -1383,6 +1383,25 @@ def test_parse_pool_null_scan():
     assert pool["last_scrub"]["errors"] == 0
 
 
+def test_parse_pool_surfaces_non_data_vdev_types():
+    """Regression: cache/log/spare/special/dedup vdevs were silently dropped -
+    a failed cache (L2ARC) or log (SLOG) device would never show up anywhere,
+    since pool "status" doesn't necessarily reflect a non-critical device
+    like a cache disk failing."""
+    raw = dict(_POOL_RAW)
+    raw["topology"] = dict(_POOL_RAW["topology"])
+    raw["topology"]["cache"] = [
+        {"type": "DISK", "name": "nvme0", "status": "FAULTED", "children": [], "disk": "nvme0"}
+    ]
+    pool = NASPoller._parse_pool(raw, [])
+    assert len(pool["cache_vdevs"]) == 1
+    assert pool["cache_vdevs"][0]["status"] == "FAULTED"
+    assert pool["log_vdevs"] == []
+    assert pool["spare_vdevs"] == []
+    assert pool["special_vdevs"] == []
+    assert pool["dedup_vdevs"] == []
+
+
 def test_parse_vdevs_mirror():
     vdevs = NASPoller._parse_vdevs(_POOL_RAW["topology"]["data"])
     assert len(vdevs) == 1
@@ -1397,6 +1416,14 @@ def test_parse_replication_basic():
     assert task["name"] == "tank → backup"
     assert task["last_state"] == "FINISHED"
     assert task["last_run"] == "2026-06-14T02:00:00"
+    assert task["enabled"] is True  # _REP_RAW has no "enabled" key - defaults True
+
+
+def test_parse_replication_captures_enabled_false():
+    raw = dict(_REP_RAW)
+    raw["enabled"] = False
+    task = NASPoller._parse_replication(raw)
+    assert task["enabled"] is False
 
 
 def test_parse_replication_ms_epoch():
@@ -1459,10 +1486,48 @@ def test_replication_stale_alert():
     poller = _make_nas_poller()
     from datetime import datetime, timezone, timedelta
     old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=30)).isoformat()
-    tasks = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "FINISHED"}]
+    tasks = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "FINISHED", "enabled": True}]
     with patch("monitor._send_alert_async") as mock_send:
         poller._check_alerts([], tasks)
     assert mock_send.call_count == 1
+
+
+def test_replication_disabled_task_does_not_alert_when_stale():
+    """Regression: a deliberately disabled replication task must not alert
+    as stale/failed forever - there's no reason to expect it to have run."""
+    poller = _make_nas_poller()
+    from datetime import datetime, timezone, timedelta
+    old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=200)).isoformat()
+    tasks = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "ERROR", "enabled": False}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts([], tasks)
+    assert mock_send.call_count == 0
+
+
+def test_replication_disabled_task_clears_existing_alert():
+    poller = _make_nas_poller()
+    from datetime import datetime, timezone, timedelta
+    old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=200)).isoformat()
+    enabled_task = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "ERROR", "enabled": True}]
+    disabled_task = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "ERROR", "enabled": False}]
+    with patch("monitor._send_alert_async"):
+        poller._check_alerts([], enabled_task)  # fires, alert_state[cid] = True
+    assert poller._alert_state.get("replication_1") is True
+    with patch("monitor._send_alert_async"):
+        poller._check_alerts([], disabled_task)  # disabling must clear it
+    assert poller._alert_state.get("replication_1") is False
+
+
+def test_replication_cid_uses_explicit_none_check_for_id_zero():
+    """Regression: cid construction used `task['id'] or task['name']`, which
+    would wrongly fall back to the name for a falsy id of 0. Must use an
+    explicit `is not None` check instead."""
+    poller = _make_nas_poller()
+    tasks = [{"id": 0, "name": "tank→backup", "last_run": None, "last_state": "ERROR", "enabled": True}]
+    with patch("monitor._send_alert_async"):
+        poller._check_alerts([], tasks)
+    assert "replication_0" in poller._alert_state
+    assert "replication_tank→backup" not in poller._alert_state
 
 
 def test_get_cache_returns_copy():
