@@ -21,6 +21,7 @@ function renderNas(data) {
   }
 
   var html = renderNasActionBar(data);
+  html += renderNasAlerts(data.alerts);
   if (data.reachable && (!data.pools || !data.pools.length)) {
     html += '<div class="nas-unavailable">No pools found on TrueNAS.</div>';
   }
@@ -44,6 +45,40 @@ function renderNasActionBar(data) {
     ? '<span class="nas-meta">Last updated ' + ago + ' \xB7 polls every 15 min</span>'
     : '<span class="nas-warn">TrueNAS unreachable \xB7 last data ' + ago + '</span>';
   return '<div class="nas-action-bar"><button class="btn nas-refresh-btn" onclick="fetchNas()">&#8635; Refresh now</button>' + info + '</div>';
+}
+
+function renderNasAlerts(alerts) {
+  if (!alerts || !alerts.length) return '';
+  var rows = alerts.map(function(a) {
+    var badgeCls = (a.level === 'WARNING') ? 'nas-badge-warn' : 'nas-badge-err';
+    var dismissBtn = (typeof _authState !== 'undefined' && _authState.admin)
+      ? '<button class="btn" style="margin-left:auto" data-klass="' + escapeHtml(a.klass) +
+        '" onclick="dismissNasAlert(this)">Dismiss</button>'
+      : '';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+      '<span class="nas-badge ' + badgeCls + '">' + escapeHtml(a.level) + '</span>' +
+      '<span style="flex:1;font-size:13px">' + escapeHtml(a.message) + '</span>' +
+      dismissBtn +
+      '</div>';
+  }).join('');
+  return '<div class="nas-section-label">TrueNAS Alerts</div>' +
+    '<div class="nas-card">' + rows + '</div>';
+}
+
+async function dismissNasAlert(btn) {
+  var klass = btn.dataset.klass;
+  btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/nas/ignore-alert', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({klass: klass}),
+    });
+    if (!res.ok) { toast('Could not dismiss alert.', 'error'); btn.disabled = false; return; }
+    var row = btn.closest('div[style*="border-bottom"]');
+    if (row) row.remove();
+    toast('Alert category dismissed.', 'success');
+  } catch (e) { toast('Network error', 'error'); btn.disabled = false; }
 }
 
 function renderPoolSection(pool) {
