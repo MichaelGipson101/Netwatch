@@ -4633,6 +4633,26 @@ def uptime_bar(pct, width=10):
     return "\u2588" * filled + "\u2591" * (width - filled)
 
 
+def _tui_status_role(pend, is_up, status):
+    """Pure decision logic for which color role applies to a host's TUI row.
+
+    Decoupled from curses attr objects so this is testable without a real
+    screen. status == "DEGRADED" implies is_up is True (see Host.status_str),
+    so this must be checked before the generic "up" branch - that ordering
+    is the actual bug fix this function exists for: a naive is_up check
+    alone misclassifies a degraded host as healthy.
+    """
+    if pend:
+        return "wait"
+    if status == "DEGRADED":
+        return "degraded"
+    if is_up:
+        return "up"
+    if status == "IDLE":
+        return "idle"
+    return "down"
+
+
 def draw_tui(stdscr, host_manager, refresh_rate, port, stop_event):
     curses.start_color()
     curses.use_default_colors()
