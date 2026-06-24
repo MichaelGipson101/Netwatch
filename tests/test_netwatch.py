@@ -2027,6 +2027,60 @@ def test_h_get_proxmox_without_force_does_not_poll():
 
 
 # ============================================================================
+# /api/nas/acknowledge-alert handler
+# ============================================================================
+
+from monitor import _h_post_nas_acknowledge_alert
+
+
+def test_acknowledge_alert_requires_id():
+    code, body = _h_post_nas_acknowledge_alert({}, _make_nas_poller())
+    assert code == 400
+    assert "id" in body["error"]
+
+
+def test_acknowledge_alert_poller_none():
+    code, body = _h_post_nas_acknowledge_alert({"id": "abc"}, None)
+    assert code == 503
+
+
+def test_acknowledge_alert_not_configured():
+    am = MagicMock()
+    am.data = {}
+    poller = NASPoller(am, alert_settings={}, alert_port=8080)
+    code, body = _h_post_nas_acknowledge_alert({"id": "abc"}, poller)
+    assert code == 503
+
+
+def test_acknowledge_alert_calls_truenas_dismiss_and_repolls():
+    poller = _make_nas_poller()
+    fake_response = MagicMock()
+    fake_response.__enter__.return_value = fake_response
+    fake_response.__exit__.return_value = False
+    with patch("urllib.request.urlopen", return_value=fake_response) as mock_urlopen, \
+         patch.object(poller, "_poll") as mock_poll:
+        code, body = _h_post_nas_acknowledge_alert({"id": "bf046f61-72b1-43a3-9192-3047833abf1b"}, poller)
+    assert code == 200
+    assert body["ok"] is True
+    mock_poll.assert_called_once()
+    sent_req = mock_urlopen.call_args[0][0]
+    assert sent_req.data == _json.dumps("bf046f61-72b1-43a3-9192-3047833abf1b").encode()
+    assert sent_req.get_method() == "POST"
+    assert sent_req.full_url == "http://truenas.test/api/v2.0/alert/dismiss"
+
+
+def test_acknowledge_alert_handles_http_error_and_skips_repoll():
+    poller = _make_nas_poller()
+    import urllib.error as _urlerr
+    err = _urlerr.HTTPError(url="x", code=404, msg="not found", hdrs=None,
+                             fp=io.BytesIO(b'{"error":"no such alert"}'))
+    with patch("urllib.request.urlopen", side_effect=err), patch.object(poller, "_poll") as mock_poll:
+        code, body = _h_post_nas_acknowledge_alert({"id": "bad-id"}, poller)
+    assert code == 404
+    mock_poll.assert_not_called()
+
+
+# ============================================================================
 # /api/proxmox/action handler
 # ============================================================================
 
