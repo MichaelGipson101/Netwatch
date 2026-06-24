@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.47"
+VERSION = "3.48"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -3813,6 +3813,35 @@ def _h_post_nas_unignore_alert(data: dict, config_path: str, settings: dict, aut
                              config_path, settings, auth_manager)
 
 
+def _h_post_nas_acknowledge_alert(data: dict, nas_poller) -> tuple:
+    if nas_poller is None:
+        return 503, {"error": "NAS poller not available"}
+    alert_id = (data.get("id") or "").strip()
+    if not alert_id:
+        return 400, {"error": "id is required"}
+    url, api_key = nas_poller._get_config()
+    if not url or not api_key:
+        return 503, {"error": "NAS not configured"}
+    import urllib.request, urllib.error as _urlerr
+    req = urllib.request.Request(
+        url.rstrip("/") + "/api/v2.0/alert/dismiss",
+        data=json.dumps(alert_id).encode(),
+        method="POST",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except _urlerr.HTTPError as e:
+        return e.code, {"error": e.read().decode(errors="replace")}
+    except Exception as e:
+        return 500, {"error": str(e)}
+    # Reflect the change immediately rather than waiting up to 15 minutes
+    # for the next scheduled poll - same force-repoll pattern as "Refresh now".
+    nas_poller._poll()
+    return 200, {"ok": True}
+
+
 def _h_get_hosts(config_path: str) -> tuple:
     try:
         cfg = load_yaml(config_path) or {}
@@ -4715,6 +4744,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_nas_unignore_alert(data, config_path, settings, auth_manager))
+                return
+
+            if self.path == "/api/nas/acknowledge-alert":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_nas_acknowledge_alert(data, nas_poller))
                 return
 
             if self.path == "/api/settings":
