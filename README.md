@@ -4,6 +4,7 @@
 ![Single file](https://img.shields.io/badge/deploy-single%20file-success)
 ![Raspberry Pi](https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a?logo=raspberrypi&logoColor=white)
 ![No web framework](https://img.shields.io/badge/dependencies-stdlib%20%2B%20PyYAML%20%2B%20openpyxl-informational)
+![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
 
 > Homelab ping monitor · inventory CMDB · topology visualizer · Proxmox/TrueNAS dashboard  
 > Runs on a Raspberry Pi. Single Python file. No dependencies beyond stdlib + PyYAML + openpyxl.
@@ -218,4 +219,4 @@ credentials), `monitor.log` (rotating).
 
 ## License
 
-Personal project — not currently distributed.
+[MIT](LICENSE)
