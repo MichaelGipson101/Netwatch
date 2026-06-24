@@ -2638,6 +2638,34 @@ class NASPoller:
             "last_state": state.get("state") or "UNKNOWN",
         }
 
+    _ALERT_SEVERITY_ORDER = ["INFO", "NOTICE", "WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY"]
+    _ALERT_MIN_LEVEL = "WARNING"
+
+    @staticmethod
+    def _filter_alerts(raw_alerts, ignored_klasses):
+        """Keep only WARNING-and-above TrueNAS alerts, excluding any klass
+        the user has chosen to permanently ignore (comma-separated string).
+        An unrecognized level is kept rather than dropped - better to show
+        something unexpected than silently hide it."""
+        ignored = {k.strip() for k in (ignored_klasses or "").split(",") if k.strip()}
+        min_idx = NASPoller._ALERT_SEVERITY_ORDER.index(NASPoller._ALERT_MIN_LEVEL)
+        kept = []
+        for a in raw_alerts:
+            klass = a.get("klass", "")
+            if klass in ignored:
+                continue
+            level = (a.get("level") or "").upper()
+            if level in NASPoller._ALERT_SEVERITY_ORDER:
+                if NASPoller._ALERT_SEVERITY_ORDER.index(level) < min_idx:
+                    continue
+            kept.append({
+                "id": a.get("id"),
+                "klass": klass,
+                "level": level or "UNKNOWN",
+                "message": a.get("formatted") or a.get("text") or "",
+            })
+        return kept
+
     def start(self, stop_event):
         t = threading.Thread(target=self._loop, args=(stop_event,), daemon=True, name="nas-poller")
         t.start()

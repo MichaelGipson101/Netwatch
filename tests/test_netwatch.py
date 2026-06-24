@@ -1530,6 +1530,56 @@ def test_replication_cid_uses_explicit_none_check_for_id_zero():
     assert "replication_tank→backup" not in poller._alert_state
 
 
+# ── NASPoller._filter_alerts ──────────────────────────────────────────────────
+
+_RAW_ALERTS = [
+    {"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING",
+     "formatted": "'ArchiveBackup' is consuming USB devices 'sde'.", "text": "fallback"},
+    {"id": "a2", "klass": "AppUpdate", "level": "INFO",
+     "formatted": "An update is available for \"plex\".", "text": "fallback"},
+    {"id": "a3", "klass": "PoolDegraded", "level": "CRITICAL",
+     "formatted": None, "text": "Pool tank is DEGRADED"},
+]
+
+
+def test_filter_alerts_excludes_info_level():
+    result = NASPoller._filter_alerts(_RAW_ALERTS, "")
+    klasses = [a["klass"] for a in result]
+    assert "AppUpdate" not in klasses
+    assert "PoolUSBDisks" in klasses
+    assert "PoolDegraded" in klasses
+
+
+def test_filter_alerts_excludes_ignored_klass():
+    result = NASPoller._filter_alerts(_RAW_ALERTS, "PoolUSBDisks")
+    klasses = [a["klass"] for a in result]
+    assert "PoolUSBDisks" not in klasses
+    assert "PoolDegraded" in klasses
+
+
+def test_filter_alerts_ignore_list_handles_multiple_comma_separated():
+    result = NASPoller._filter_alerts(_RAW_ALERTS, "PoolUSBDisks, PoolDegraded")
+    assert result == []
+
+
+def test_filter_alerts_falls_back_to_text_when_formatted_missing():
+    result = NASPoller._filter_alerts(_RAW_ALERTS, "")
+    degraded = next(a for a in result if a["klass"] == "PoolDegraded")
+    assert degraded["message"] == "Pool tank is DEGRADED"
+
+
+def test_filter_alerts_unrecognized_level_is_kept():
+    raw = [{"id": "x", "klass": "SomethingNew", "level": "WEIRD_FUTURE_LEVEL",
+            "formatted": "something", "text": "fallback"}]
+    result = NASPoller._filter_alerts(raw, "")
+    assert len(result) == 1
+
+
+def test_filter_alerts_empty_ignore_list_string():
+    result = NASPoller._filter_alerts(_RAW_ALERTS, None)
+    assert len(result) == 2  # WARNING + CRITICAL, INFO excluded
+
+
 def test_get_cache_returns_copy():
     poller = _make_nas_poller()
     cache1 = poller.get_cache()
