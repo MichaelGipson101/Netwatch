@@ -1530,6 +1530,44 @@ def test_replication_cid_uses_explicit_none_check_for_id_zero():
     assert "replication_tank→backup" not in poller._alert_state
 
 
+def test_truenas_alert_fires_once():
+    poller = _make_nas_poller()
+    alerts = [{"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING", "message": "USB disk warning"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts([], [], alerts)
+        poller._check_alerts([], [], alerts)
+    assert mock_send.call_count == 1
+
+
+def test_truenas_alert_clears_when_no_longer_present():
+    poller = _make_nas_poller()
+    alerts = [{"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING", "message": "USB disk warning"}]
+    with patch("monitor._send_alert_async"):
+        poller._check_alerts([], [], alerts)  # fires, sets alert_state["truenas_alert_a1"] = True
+    assert poller._alert_state.get("truenas_alert_a1") is True
+    with patch("monitor._send_alert_async"):
+        poller._check_alerts([], [], [])  # alert resolved/disappeared from TrueNAS's list
+    assert poller._alert_state.get("truenas_alert_a1") is False
+
+
+def test_truenas_alert_rearmed_after_clear():
+    poller = _make_nas_poller()
+    alerts = [{"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING", "message": "USB disk warning"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts([], [], alerts)   # fires
+        poller._check_alerts([], [], [])        # clears
+        poller._check_alerts([], [], alerts)   # re-arms -> fires again
+    assert mock_send.call_count == 2
+
+
+def test_check_alerts_without_alerts_arg_still_works():
+    """Backward compatibility: existing call sites pass only (pools, tasks)."""
+    poller = _make_nas_poller()
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts([], [])
+    assert mock_send.call_count == 0
+
+
 # ── NASPoller._filter_alerts ──────────────────────────────────────────────────
 
 _RAW_ALERTS = [

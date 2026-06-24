@@ -2689,9 +2689,12 @@ class NASPoller:
             scrub_tasks = self._fetch(url, api_key, "/api/v2.0/pool/scrub")
             replication_raw = self._fetch(url, api_key, "/api/v2.0/replication")
             system_info = self._fetch(url, api_key, "/api/v2.0/system/info")
+            alerts_raw = self._fetch(url, api_key, "/api/v2.0/alert/list")
             tz_name = system_info.get("timezone") or "UTC"
             pools = [self._parse_pool(p, scrub_tasks, tz_name) for p in pools_raw]
             tasks = [self._parse_replication(r) for r in replication_raw]
+            ignored_klasses = self._alert_settings.get("truenas_ignored_alert_klasses", "")
+            alerts = self._filter_alerts(alerts_raw, ignored_klasses)
             with self._lock:
                 self._cache = {
                     "reachable": True,
@@ -2699,8 +2702,9 @@ class NASPoller:
                     "error": None,
                     "pools": pools,
                     "replication_tasks": tasks,
+                    "alerts": alerts,
                 }
-            self._check_alerts(pools, tasks)
+            self._check_alerts(pools, tasks, alerts)
         except Exception as e:
             logging.warning(f"NASPoller: poll failed: {e}")
             with self._lock:
@@ -2718,7 +2722,7 @@ class NASPoller:
     def _clear_alert(self, condition_id):
         self._alert_state[condition_id] = False
 
-    def _check_alerts(self, pools, tasks):
+    def _check_alerts(self, pools, tasks, alerts=None):
         from datetime import timezone, timedelta
         for pool in pools:
             cid = f"pool_health_{pool['name']}"
@@ -2763,6 +2767,19 @@ class NASPoller:
                 self._fire_alert(cid, "Netwatch · NAS Alert",
                                  f"Replication \"{task['name']}\" {reason}")
             else:
+                self._clear_alert(cid)
+
+        alerts = alerts or []
+        current_alert_cids = set()
+        for alert in alerts:
+            cid = f"truenas_alert_{alert['id']}"
+            current_alert_cids.add(cid)
+            self._fire_alert(cid, "Netwatch · NAS Alert", f"TrueNAS: {alert['message']}")
+        # An alert that resolved (or got newly ignored) simply disappears from
+        # TrueNAS's own list rather than arriving with a "resolved" state, so
+        # clear any previously-firing TrueNAS alert no longer present here.
+        for cid in list(self._alert_state.keys()):
+            if cid.startswith("truenas_alert_") and cid not in current_alert_cids:
                 self._clear_alert(cid)
 
 
