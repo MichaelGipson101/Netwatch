@@ -3842,6 +3842,15 @@ def _h_post_nas_acknowledge_alert(data: dict, nas_poller) -> tuple:
     return 200, {"ok": True}
 
 
+def _h_post_system_restart(history_db, auth_manager) -> tuple:
+    if history_db is not None:
+        history_db.close()
+    if auth_manager is not None:
+        auth_manager.close()
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+    return 200, {"ok": True}  # unreachable; satisfies callers/tests when os.execv is mocked
+
+
 def _h_get_hosts(config_path: str) -> tuple:
     try:
         cfg = load_yaml(config_path) or {}
@@ -4751,6 +4760,12 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_nas_acknowledge_alert(data, nas_poller))
+                return
+
+            if self.path == "/api/system/restart":
+                if not self._require_auth(admin_only=True): return
+                self._send_json(200, {"ok": True})
+                _h_post_system_restart(history_db, auth_manager)
                 return
 
             if self.path == "/api/settings":

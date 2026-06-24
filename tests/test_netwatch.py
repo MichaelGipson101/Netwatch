@@ -2081,6 +2081,41 @@ def test_acknowledge_alert_handles_http_error_and_skips_repoll():
 
 
 # ============================================================================
+# /api/system/restart handler
+# ============================================================================
+
+from monitor import _h_post_system_restart
+
+
+def test_system_restart_closes_resources_then_execs_in_order():
+    history_db = MagicMock()
+    auth_manager = MagicMock()
+    manager = MagicMock()
+    manager.attach_mock(history_db.close, "history_close")
+    manager.attach_mock(auth_manager.close, "auth_close")
+    with patch("os.execv") as mock_execv:
+        manager.attach_mock(mock_execv, "execv")
+        _h_post_system_restart(history_db, auth_manager)
+    assert [c[0] for c in manager.mock_calls] == ["history_close", "auth_close", "execv"]
+
+
+def test_system_restart_execs_with_current_interpreter_and_argv():
+    with patch("os.execv") as mock_execv, \
+         patch.object(_mon.sys, "argv", ["monitor.py", "--no-tui", "--port", "8080"]):
+        _h_post_system_restart(MagicMock(), MagicMock())
+    mock_execv.assert_called_once_with(
+        _mon.sys.executable,
+        [_mon.sys.executable, "monitor.py", "--no-tui", "--port", "8080"],
+    )
+
+
+def test_system_restart_tolerates_missing_history_db_and_auth_manager():
+    with patch("os.execv") as mock_execv:
+        _h_post_system_restart(None, None)
+    mock_execv.assert_called_once()
+
+
+# ============================================================================
 # /api/proxmox/action handler
 # ============================================================================
 
