@@ -3483,6 +3483,7 @@ SETTINGS_EDITABLE_KEYS = {
     "openrouter_api_key":   str,
     "ai_model":             str,
     "setup_wizard_complete": bool,
+    "truenas_ignored_alert_klasses": str,
 }
 
 _SETTINGS_INT_RANGES = {
