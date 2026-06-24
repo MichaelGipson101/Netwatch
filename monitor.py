@@ -4633,6 +4633,68 @@ def uptime_bar(pct, width=10):
     return "\u2588" * filled + "\u2591" * (width - filled)
 
 
+def _init_tui_colors():
+    """Initialize curses color pairs for the TUI, with graceful fallback.
+
+    Tries the full 256-color palette first; falls back to an 8-color-safe
+    palette if the terminal can't do 256 colors; falls back further to an
+    all-default (monochrome) attribute set if even basic color pairs fail.
+    Never raises - draw_tui can always render *something* in this terminal.
+    """
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, 82,  -1)
+        curses.init_pair(2, 196, -1)
+        curses.init_pair(3, 214, -1)
+        curses.init_pair(4, 39,  -1)
+        curses.init_pair(5, 243, -1)
+        curses.init_pair(6, 255, -1)
+        curses.init_pair(7, 208, -1)
+        curses.init_pair(8, 51,  -1)
+        return {
+            "C_UP":    curses.color_pair(1) | curses.A_BOLD,
+            "C_DOWN":  curses.color_pair(2) | curses.A_BOLD,
+            "C_WAIT":  curses.color_pair(3) | curses.A_BOLD,
+            "C_HDR":   curses.color_pair(4),
+            "C_HDRB":  curses.color_pair(4) | curses.A_BOLD,
+            "C_MUTED": curses.color_pair(5),
+            "C_TEXT":  curses.color_pair(6),
+            "C_LATC":  curses.color_pair(7),
+            "C_SPARK": curses.color_pair(8),
+        }
+    except (curses.error, ValueError):
+        pass
+
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_GREEN,  -1)
+        curses.init_pair(2, curses.COLOR_RED,    -1)
+        curses.init_pair(3, curses.COLOR_YELLOW, -1)
+        curses.init_pair(4, curses.COLOR_CYAN,   -1)
+        curses.init_pair(5, curses.COLOR_WHITE,  -1)
+        return {
+            "C_UP":    curses.color_pair(1) | curses.A_BOLD,
+            "C_DOWN":  curses.color_pair(2) | curses.A_BOLD,
+            "C_WAIT":  curses.color_pair(3) | curses.A_BOLD,
+            "C_HDR":   curses.color_pair(4),
+            "C_HDRB":  curses.color_pair(4) | curses.A_BOLD,
+            "C_MUTED": curses.color_pair(5),
+            "C_TEXT":  0,
+            "C_LATC":  curses.color_pair(3),
+            "C_SPARK": curses.color_pair(4),
+        }
+    except (curses.error, ValueError):
+        pass
+
+    return {
+        "C_UP": 0, "C_DOWN": 0, "C_WAIT": 0, "C_HDR": 0,
+        "C_HDRB": curses.A_BOLD, "C_MUTED": 0, "C_TEXT": 0,
+        "C_LATC": 0, "C_SPARK": 0,
+    }
+
+
 def _tui_status_role(pend, is_up, status):
     """Pure decision logic for which color role applies to a host's TUI row.
 
@@ -4654,25 +4716,16 @@ def _tui_status_role(pend, is_up, status):
 
 
 def draw_tui(stdscr, host_manager, refresh_rate, port, stop_event):
-    curses.start_color()
-    curses.use_default_colors()
-    curses.init_pair(1,  82,  -1)
-    curses.init_pair(2,  196, -1)
-    curses.init_pair(3,  214, -1)
-    curses.init_pair(4,  39,  -1)
-    curses.init_pair(5,  243, -1)
-    curses.init_pair(6,  255, -1)
-    curses.init_pair(7,  208, -1)
-    curses.init_pair(8,  51,  -1)
-    C_UP    = curses.color_pair(1) | curses.A_BOLD
-    C_DOWN  = curses.color_pair(2) | curses.A_BOLD
-    C_WAIT  = curses.color_pair(3) | curses.A_BOLD
-    C_HDR   = curses.color_pair(4)
-    C_HDRB  = curses.color_pair(4) | curses.A_BOLD
-    C_MUTED = curses.color_pair(5)
-    C_TEXT  = curses.color_pair(6)
-    C_LATC  = curses.color_pair(7)
-    C_SPARK = curses.color_pair(8)
+    colors  = _init_tui_colors()
+    C_UP    = colors["C_UP"]
+    C_DOWN  = colors["C_DOWN"]
+    C_WAIT  = colors["C_WAIT"]
+    C_HDR   = colors["C_HDR"]
+    C_HDRB  = colors["C_HDRB"]
+    C_MUTED = colors["C_MUTED"]
+    C_TEXT  = colors["C_TEXT"]
+    C_LATC  = colors["C_LATC"]
+    C_SPARK = colors["C_SPARK"]
     ROLE_ATTRS = {
         "wait":     (C_WAIT,  C_WAIT,  C_TEXT),
         "degraded": (C_WAIT,  C_WAIT,  C_TEXT),
