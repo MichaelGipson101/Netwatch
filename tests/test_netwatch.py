@@ -1275,7 +1275,9 @@ _POOL_RAW = {
 }
 
 _SCRUB_TASKS = [
-    {"pool": "tank", "schedule": {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "*"}}
+    # Matches TrueNAS's real /api/v2.0/pool/scrub shape: "pool" is the
+    # numeric pool ID, "pool_name" is the string name _parse_pool matches on.
+    {"pool": 1, "pool_name": "tank", "schedule": {"minute": "0", "hour": "0", "dom": "1", "month": "*", "dow": "*"}}
 ]
 
 _REP_RAW = {
@@ -1294,6 +1296,18 @@ def test_parse_pool_basic():
     assert pool["last_scrub"]["errors"] == 0
     assert pool["last_scrub"]["status"] == "FINISHED"
     assert pool["next_scrub"] is not None  # cron produced a date
+
+
+def test_parse_pool_matches_scrub_task_by_pool_name_not_numeric_id():
+    """Regression: TrueNAS's scrub-task API returns pool as a numeric ID and
+    pool_name as the string name. _parse_pool must match on pool_name - an
+    earlier bug matched on pool (the int), which never equals the pool's
+    name string, so next_scrub silently stayed None for every real pool."""
+    scrub_tasks = [
+        {"pool": 999, "pool_name": "tank", "schedule": {"minute": "0", "hour": "0", "dom": "*", "month": "*", "dow": "*"}}
+    ]
+    pool = NASPoller._parse_pool(_POOL_RAW, scrub_tasks)
+    assert pool["next_scrub"] is not None
 
 
 def test_parse_pool_null_scan():

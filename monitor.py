@@ -2557,7 +2557,7 @@ class NASPoller:
         name = raw.get("name", "")
         next_scrub = None
         for st in scrub_tasks:
-            if st.get("pool") == name:
+            if st.get("pool_name") == name:
                 sch = st.get("schedule", {}) or {}
                 def _f(k): v = sch.get(k); return "*" if v is None else str(v)
                 next_scrub = cls._next_cron_run(
