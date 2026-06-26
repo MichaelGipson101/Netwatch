@@ -4159,6 +4159,24 @@ def _h_get_discover(config_path: str) -> tuple:
         return 500, {"error": str(e)}
 
 
+def _h_post_brief(db, data: dict) -> tuple:
+    for field in ("subject", "stats", "narrative"):
+        if field not in data:
+            return 400, {"error": f"missing required field: {field}"}
+    db.insert_brief(
+        created_ts=int(time.time()),
+        subject=str(data["subject"])[:500],
+        stats_json=json.dumps(data["stats"]),
+        narrative=str(data["narrative"]),
+        analysis_json=json.dumps(data["analysis"]) if data.get("analysis") else None,
+    )
+    return 200, {"ok": True}
+
+
+def _h_get_briefs(db) -> tuple:
+    return 200, {"briefs": db.get_briefs(days=7)}
+
+
 def _h_get_history(path: str, history_db) -> tuple:
     if history_db is None:
         return 500, {"error": "history not available"}
@@ -4585,6 +4603,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_history(self.path, history_db))
                 return
+            if self.path == "/api/brief":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_briefs(history_db))
+                return
             self.send_response(404)
             self.end_headers()
 
@@ -4870,6 +4892,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_settings(data, config_path, settings, auth_manager))
+                return
+
+            if self.path == "/api/brief":
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_brief(history_db, data))
                 return
 
             self.send_response(404)

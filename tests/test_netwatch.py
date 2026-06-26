@@ -850,6 +850,57 @@ def test_prune_deletes_old_briefs(tmp_path):
     hdb.close()
 
 
+
+# ── Brief API handlers ────────────────────────────────────────────────────────
+
+def test_h_post_brief_stores_and_returns_ok(tmp_path):
+    import json
+    from monitor import HistoryDB, _h_post_brief
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    data = {
+        "subject": "BRIEF // Today",
+        "stats": {"up": 18, "down": 0, "idle": 1},
+        "narrative": "All quiet tonight.",
+        "analysis": {"fleet_summary": {"up": 18}},
+    }
+    status, body = _h_post_brief(hdb, data)
+    assert status == 200
+    assert body == {"ok": True}
+    briefs = hdb.get_briefs(days=7)
+    assert len(briefs) == 1
+    assert briefs[0]["narrative"] == "All quiet tonight."
+    hdb.close()
+
+
+def test_h_post_brief_missing_field_returns_400(tmp_path):
+    from monitor import HistoryDB, _h_post_brief
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    # missing 'narrative'
+    status, body = _h_post_brief(hdb, {"subject": "X", "stats": {}})
+    assert status == 400
+    assert "error" in body
+    hdb.close()
+
+
+def test_h_get_briefs_returns_list_without_analysis(tmp_path):
+    import json
+    from monitor import HistoryDB, _h_post_brief, _h_get_briefs
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    _h_post_brief(hdb, {
+        "subject": "BRIEF",
+        "stats": {"up": 5, "down": 0, "idle": 0},
+        "narrative": "Quiet.",
+        "analysis": {"secret": "data"},
+    })
+    status, body = _h_get_briefs(hdb)
+    assert status == 200
+    briefs = body["briefs"]
+    assert len(briefs) == 1
+    assert "analysis" not in briefs[0]
+    assert briefs[0]["stats"]["up"] == 5
+    hdb.close()
+
+
 # ── Batched ping inserts ─────────────────────────────────────────────────────
 
 def test_record_ping_buffers_until_flush(tmp_path):
