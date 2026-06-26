@@ -792,6 +792,64 @@ def test_prune_deletes_old_keeps_recent_no_vacuum(tmp_path):
     hdb.close()
 
 
+# ── Brief CRUD ───────────────────────────────────────────────────────────────
+
+def test_insert_brief_and_get_briefs(tmp_path):
+    from monitor import HistoryDB
+    import json
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    ts = int(time.time())
+    hdb.insert_brief(ts, "BRIEF // Today", json.dumps({"up": 18, "down": 0, "idle": 1}), "All quiet.", None)
+    briefs = hdb.get_briefs(days=7)
+    assert len(briefs) == 1
+    b = briefs[0]
+    assert b["subject"] == "BRIEF // Today"
+    assert b["narrative"] == "All quiet."
+    assert b["stats"]["up"] == 18
+    assert b["stats"]["down"] == 0
+    assert "analysis" not in b
+    hdb.close()
+
+
+def test_get_briefs_returns_newest_first(tmp_path):
+    from monitor import HistoryDB
+    import json
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    now = int(time.time())
+    hdb.insert_brief(now - 86400, "older", json.dumps({}), "older narrative", None)
+    hdb.insert_brief(now, "newer", json.dumps({}), "newer narrative", None)
+    briefs = hdb.get_briefs(days=7)
+    assert briefs[0]["subject"] == "newer"
+    assert briefs[1]["subject"] == "older"
+    hdb.close()
+
+
+def test_get_briefs_excludes_old(tmp_path):
+    from monitor import HistoryDB
+    import json
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    now = int(time.time())
+    hdb.insert_brief(now - 8 * 86400, "ancient", json.dumps({}), "old text", None)
+    hdb.insert_brief(now, "recent", json.dumps({}), "new text", None)
+    briefs = hdb.get_briefs(days=7)
+    assert len(briefs) == 1
+    assert briefs[0]["subject"] == "recent"
+    hdb.close()
+
+
+def test_prune_deletes_old_briefs(tmp_path):
+    from monitor import HistoryDB
+    import json
+    hdb = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
+    now = int(time.time())
+    hdb.insert_brief(now - 8 * 86400, "old", json.dumps({}), "old", None)
+    hdb.insert_brief(now, "new", json.dumps({}), "new", None)
+    hdb.prune()
+    remaining = hdb.conn.execute("SELECT COUNT(*) FROM briefs").fetchone()[0]
+    assert remaining == 1
+    hdb.close()
+
+
 # ── Batched ping inserts ─────────────────────────────────────────────────────
 
 def test_record_ping_buffers_until_flush(tmp_path):

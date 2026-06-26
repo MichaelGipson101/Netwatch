@@ -1052,6 +1052,16 @@ class HistoryDB:
         latency_max  REAL,
         PRIMARY KEY (day, host_ip)
     );
+
+    CREATE TABLE IF NOT EXISTS briefs (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_ts    INTEGER NOT NULL,
+        subject       TEXT    NOT NULL,
+        stats_json    TEXT    NOT NULL,
+        narrative     TEXT    NOT NULL,
+        analysis_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_briefs_ts ON briefs(created_ts);
     """
 
     FLUSH_MAX = 200          # safety flush if the 30s flusher falls behind
@@ -1344,6 +1354,40 @@ class HistoryDB:
             return None
         return bool(row[0])
 
+    # ── Briefs ──────────────────────────────────────────────────────────────
+
+    def insert_brief(self, created_ts, subject, stats_json, narrative, analysis_json=None):
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO briefs (created_ts, subject, stats_json, narrative, analysis_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (created_ts, subject, stats_json, narrative, analysis_json),
+            )
+
+    def get_briefs(self, days=7):
+        cutoff = int(time.time()) - days * 86400
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT id, created_ts, subject, stats_json, narrative "
+                "FROM briefs WHERE created_ts >= ? ORDER BY created_ts DESC",
+                (cutoff,),
+            )
+            rows = cur.fetchall()
+        result = []
+        for id_, created_ts, subject, stats_json, narrative in rows:
+            try:
+                stats = json.loads(stats_json)
+            except Exception:
+                stats = {}
+            result.append({
+                "id": id_,
+                "created_ts": created_ts,
+                "subject": subject,
+                "stats": stats,
+                "narrative": narrative,
+            })
+        return result
+
     # ── Pruning ─────────────────────────────────────────────────────────────
 
     def prune(self):
@@ -1358,15 +1402,21 @@ class HistoryDB:
                 "DELETE FROM incidents WHERE ended IS NOT NULL AND ended < ?", (cutoff,)
             )
             incidents_deleted = r2.rowcount
+            r3 = self.conn.execute(
+                "DELETE FROM briefs WHERE created_ts < ?",
+                (int(time.time()) - 7 * 86400,),
+            )
+            briefs_deleted = r3.rowcount
             # No VACUUM: with fixed retention the DB is steady-state and
             # freed pages get reused. Daily VACUUM rewrote the whole DB
             # through the WAL (~300MB/day of SD writes) for nothing.
             # Manual reclaim if ever needed: sqlite3 netwatch.db VACUUM.
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        if pings_deleted or incidents_deleted:
+        if pings_deleted or incidents_deleted or briefs_deleted:
             logging.info(
                 f"HistoryDB: pruned {pings_deleted} pings, "
-                f"{incidents_deleted} incidents older than {self.retention_days}d"
+                f"{incidents_deleted} incidents, "
+                f"{briefs_deleted} briefs"
             )
         return pings_deleted, incidents_deleted
 
