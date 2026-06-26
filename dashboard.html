@@ -672,12 +672,12 @@
 
 <!-- Mira (AI Chat Bubble) -->
 <button id="ai-bubble-btn" class="mira-state-idle" aria-label="Open Mira, the Netwatch AI assistant" aria-describedby="mira-tooltip" style="display:none">
-  <img class="mira-avatar" src="/static/mira-avatar.png" alt="">
+  <img class="mira-avatar" src="/static/mira-avatar.png?v={{VERSION}}" alt="">
 </button>
 <div id="mira-tooltip" class="mira-tooltip" role="tooltip"></div>
 <div id="ai-panel" class="hidden" role="dialog" aria-label="Mira, the Netwatch AI assistant">
   <div class="ai-panel-header">
-    <img class="mira-avatar mira-avatar-sm" src="/static/mira-avatar.png" alt="">
+    <img class="mira-avatar mira-avatar-sm" src="/static/mira-avatar.png?v={{VERSION}}" alt="">
     <span class="ai-panel-title">Mira</span>
     <select id="ai-model-select" class="ai-model-select" title="Model">
       <option value="openrouter/free">Auto (Free)</option>
