@@ -1964,6 +1964,17 @@ def test_pve_node_offline_alert_fires_once():
     assert mock_send.call_count == 1
 
 
+def test_pve_node_offline_alert_message_mentions_corosync():
+    from monitor import ProxmoxPoller
+    poller = _make_proxmox_poller()
+    nodes_offline = _make_nodes(node_status="offline")
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(nodes_offline, [])
+    args = mock_send.call_args[0]
+    assert "corosync" in args[2]
+    assert "cluster heartbeat" in args[2]
+
+
 def test_pve_node_alert_rearmed_after_clear():
     poller = _make_proxmox_poller()
     offline = _make_nodes(node_status="offline")

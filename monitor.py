@@ -2912,7 +2912,7 @@ class ProxmoxPoller:
 
             cid_node = f"node:{name}"
             if node["status"] != "online":
-                self._fire_alert(cid_node, f'Proxmox node "{name}" is offline')
+                self._fire_alert(cid_node, f'Proxmox node "{name}" lost cluster heartbeat — check corosync if it persists')
             else:
                 self._clear_alert(cid_node)
 
