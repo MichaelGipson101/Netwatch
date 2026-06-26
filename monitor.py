@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.51"
+VERSION = "3.52"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -473,19 +473,20 @@ class HostManager:
                     existing = current_by_ip[ip]
                     name_changed = existing.name != name or existing.group != group
                     monitoring_disabled = existing.always_on and not always_on
-                    existing.name = name
-                    existing.group = group
-                    existing.interval = interval
-                    existing.always_on = always_on
-                    existing.specs = specs
-                    existing.notes = notes
-                    existing.links = links
-                    # Reset service_results for ports that have been removed
                     new_ports = {s.get("port") for s in services if s.get("port") is not None}
-                    existing.service_results = {p: v for p, v in existing.service_results.items() if p in new_ports}
-                    existing.services = services
-                    existing.strict = strict
-                    existing.alert = alert
+                    with existing.lock:
+                        existing.name = name
+                        existing.group = group
+                        existing.interval = interval
+                        existing.always_on = always_on
+                        existing.specs = specs
+                        existing.notes = notes
+                        existing.links = links
+                        # Reset service_results for ports that have been removed
+                        existing.service_results = {p: v for p, v in existing.service_results.items() if p in new_ports}
+                        existing.services = services
+                        existing.strict = strict
+                        existing.alert = alert
                     if name_changed and self.incident_log:
                         self.incident_log.update_host_info(existing)
                     if monitoring_disabled and self.incident_log:
@@ -1390,14 +1391,17 @@ def _prune_loop(history_db, stop_event):
     elapsed = SECONDS_PER_DAY - 60
     while not stop_event.is_set():
         if elapsed >= SECONDS_PER_DAY:
+            rollup_ok = True
             try:
                 history_db.rollup_days()
             except Exception as e:
                 logging.warning(f"HistoryDB rollup failed: {e}")
-            try:
-                history_db.prune()
-            except Exception as e:
-                logging.warning(f"HistoryDB prune failed: {e}")
+                rollup_ok = False
+            if rollup_ok:
+                try:
+                    history_db.prune()
+                except Exception as e:
+                    logging.warning(f"HistoryDB prune failed: {e}")
             elapsed = 0
         time.sleep(5)
         elapsed += 5
@@ -1624,22 +1628,25 @@ class InventoryDB:
                 return None, f"a record with MAC {clean['mac']} already exists ({existing['system']})"
         ts = int(time.time())
         with self.lock:
-            cur = self.conn.execute(
-                "INSERT INTO inventory (category, system, role, cpu, ram_gb, gpu, "
-                "architecture, os, cpu_score, tdp_watts, tpm, mac, ip, serial, notes, "
-                "device_type, properties, "
-                "created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (clean.get("category"), clean["system"], clean.get("role"),
-                 clean.get("cpu"), clean.get("ram_gb"), clean.get("gpu"),
-                 clean.get("architecture"), clean.get("os"), clean.get("cpu_score"),
-                 clean.get("tdp_watts"), clean.get("tpm"), clean.get("mac"),
-                 clean.get("ip"), clean.get("serial"), clean.get("notes"),
-                 clean.get("device_type") or "host",
-                 clean.get("properties"),
-                 ts, ts)
-            )
-            return cur.lastrowid, None
+            try:
+                cur = self.conn.execute(
+                    "INSERT INTO inventory (category, system, role, cpu, ram_gb, gpu, "
+                    "architecture, os, cpu_score, tdp_watts, tpm, mac, ip, serial, notes, "
+                    "device_type, properties, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (clean.get("category"), clean["system"], clean.get("role"),
+                     clean.get("cpu"), clean.get("ram_gb"), clean.get("gpu"),
+                     clean.get("architecture"), clean.get("os"), clean.get("cpu_score"),
+                     clean.get("tdp_watts"), clean.get("tpm"), clean.get("mac"),
+                     clean.get("ip"), clean.get("serial"), clean.get("notes"),
+                     clean.get("device_type") or "host",
+                     clean.get("properties"),
+                     ts, ts)
+                )
+                return cur.lastrowid, None
+            except sqlite3.IntegrityError:
+                return None, f"a record with MAC {clean.get('mac')} already exists"
 
     def update(self, inv_id, data):
         clean = self._clean_input(data)
@@ -1793,16 +1800,54 @@ class InventoryDB:
         return True, None
 
     def replace_all(self, records):
-        """Wipe inventory and bulk-insert. Used by 'Replace all' import mode."""
-        with self.lock:
-            self.conn.execute("DELETE FROM inventory")
+        """Wipe inventory and bulk-insert atomically. Used by 'Replace all' import mode.
+
+        DELETE and all INSERTs run inside a single BEGIN/COMMIT while holding
+        self.lock so concurrent readers never see a partially-empty table.
+        """
         ok, fail = 0, []
+        ts = int(time.time())
+        # Pre-validate and clean records before acquiring the lock so the
+        # locked section is as short as possible.
+        cleaned = []
         for rec in records:
-            inv_id, err = self.create(rec)
-            if err:
-                fail.append({"system": rec.get("system", "?"), "error": err})
+            clean = self._clean_input(rec)
+            if not clean.get("system"):
+                fail.append({"system": rec.get("system", "?"), "error": "system name is required"})
             else:
-                ok += 1
+                cleaned.append((rec, clean))
+        with self.lock:
+            self.conn.execute("BEGIN")
+            try:
+                self.conn.execute("DELETE FROM inventory")
+                for rec, clean in cleaned:
+                    if clean.get("mac"):
+                        row = self.conn.execute(
+                            "SELECT system FROM inventory WHERE mac = ?", (clean["mac"],)
+                        ).fetchone()
+                        if row:
+                            fail.append({"system": clean["system"],
+                                         "error": f"MAC {clean['mac']} already used by '{row[0]}'"})
+                            continue
+                    self.conn.execute(
+                        "INSERT INTO inventory (category, system, role, cpu, ram_gb, gpu, "
+                        "architecture, os, cpu_score, tdp_watts, tpm, mac, ip, serial, notes, "
+                        "device_type, properties, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (clean.get("category"), clean["system"], clean.get("role"),
+                         clean.get("cpu"), clean.get("ram_gb"), clean.get("gpu"),
+                         clean.get("architecture"), clean.get("os"), clean.get("cpu_score"),
+                         clean.get("tdp_watts"), clean.get("tpm"), clean.get("mac"),
+                         clean.get("ip"), clean.get("serial"), clean.get("notes"),
+                         clean.get("device_type") or "host", clean.get("properties"),
+                         ts, ts),
+                    )
+                    ok += 1
+                self.conn.execute("COMMIT")
+            except Exception:
+                try: self.conn.execute("ROLLBACK")
+                except Exception: pass
+                raise
         return ok, fail
 
     def _clean_input(self, data):
@@ -4537,10 +4582,9 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 ip = self._client_ip()
                 if auth_manager.is_locked_out(ip):
                     self._send_json(429, {"error": "too many failed attempts, try again in 15 minutes"}); return
+                data, err = self._read_json_body()
+                if err: return
                 try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode()
-                    data = json.loads(body)
                     username = data.get("username", "")
                     password = data.get("password", "")
                     if auth_manager.verify_password(username, password):
@@ -4559,14 +4603,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                     else:
                         auth_manager.record_failed_attempt(ip)
                         self._send_json(401, {"error": "invalid username or password"})
-                except json.JSONDecodeError:
-                    self._send_json(400, {"error": "invalid JSON"})
                 except Exception as e:
                     logging.exception("login error")
                     self._send_json(500, {"error": str(e)})
                 return
 
             if self.path == "/api/auth/logout":
+                if not self._require_auth(): return
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self._clear_session_cookie()

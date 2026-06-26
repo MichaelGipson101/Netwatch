@@ -66,7 +66,7 @@ function renderInventoryMetrics(){
     '<div class="inv-metric"><div class="inv-metric-label">Hosts</div><div class="inv-metric-val">' + hostsCount + '</div><div class="inv-metric-sub">' + active + ' currently online</div></div>',
     '<div class="inv-metric"><div class="inv-metric-label">Est. live power</div><div class="inv-metric-val">' + totalPower + '<span class="unit">W</span></div><div class="inv-metric-sub">across ' + active + ' active hosts</div></div>',
     '<div class="inv-metric"><div class="inv-metric-label">Total CPU score</div><div class="inv-metric-val">' + Math.round(totalScore).toLocaleString() + '</div><div class="inv-metric-sub">across hosts</div></div>',
-    '<div class="inv-metric"><div class="inv-metric-label">Architectures</div><div class="inv-metric-val" style="font-size:14px">' + (Array.from(new Set(hostsOnly.map(i => i.architecture).filter(Boolean))).join(', ') || '-') + '</div><div class="inv-metric-sub">across hosts</div></div>',
+    '<div class="inv-metric"><div class="inv-metric-label">Architectures</div><div class="inv-metric-val" style="font-size:14px">' + (Array.from(new Set(hostsOnly.map(i => i.architecture).filter(Boolean))).map(escapeHtml).join(', ') || '-') + '</div><div class="inv-metric-sub">across hosts</div></div>',
   ].join('');
   document.getElementById('inv-metrics').innerHTML = html;
 }

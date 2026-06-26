@@ -166,7 +166,7 @@
       stopped: ['pve-badge-stopped', 'Stopped'],
       paused:  ['pve-badge-paused',  'Paused'],
     };
-    var pair = map[status] || ['pve-badge-stopped', status];
+    var pair = map[status] || ['pve-badge-stopped', escapeHtml(status)];
     return '<span class="pve-badge ' + pair[0] + '">' + pair[1] + '</span>';
   }
 
