@@ -565,13 +565,22 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .events-day-hdr{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--hint);padding:12px 18px 6px;border-bottom:1px solid var(--border-light);background:var(--subtle)}
 
 /* ── Daily Briefs ─────────────────────────────────────────────────────────── */
-.brief-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-1)}
-.brief-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--subtle);border-bottom:1px solid var(--border-light)}
+#briefs-list{padding:16px}
+.briefs-date-label{font-size:0.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);padding:8px 4px 6px;margin-top:8px}
+.briefs-date-label:first-child{margin-top:0}
+.brief-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;overflow:hidden;box-shadow:var(--shadow-1)}
+.brief-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--subtle);cursor:pointer;user-select:none;border-bottom:none;transition:background .15s}
+.brief-header:hover{background:var(--hover)}
+.brief-card.open .brief-header{border-bottom:1px solid var(--border-light)}
+.brief-header-left{display:flex;align-items:center;gap:10px}
+.brief-time{font-family:'DM Mono',monospace;font-size:0.75rem;color:var(--hint)}
 .brief-stats{display:flex;gap:6px;flex-shrink:0}
-.brief-narrative{padding:16px 20px}
+.brief-chevron{font-size:0.7rem;color:var(--hint);transition:transform .2s;margin-left:8px;flex-shrink:0}
+.brief-card.open .brief-chevron{transform:rotate(180deg)}
+.brief-narrative{display:none;padding:16px 20px}
+.brief-card.open .brief-narrative{display:block}
 .brief-para{margin:0 0 12px;font-size:0.875rem;line-height:1.7;color:var(--text)}
 .brief-para:last-child{margin-bottom:0}
-#briefs-list{padding:16px}
 
 .footer{margin-top:28px;display:flex;justify-content:space-between;align-items:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);padding-top:16px;border-top:1px solid var(--border)}
 

@@ -4163,8 +4163,12 @@ def _h_post_brief(db, data: dict) -> tuple:
     for field in ("subject", "stats", "narrative"):
         if field not in data:
             return 400, {"error": f"missing required field: {field}"}
+    try:
+        created_ts = int(data["ts"]) if data.get("ts") else int(time.time())
+    except (TypeError, ValueError):
+        created_ts = int(time.time())
     db.insert_brief(
-        created_ts=int(time.time()),
+        created_ts=created_ts,
         subject=str(data["subject"])[:500],
         stats_json=json.dumps(data["stats"]),
         narrative=str(data["narrative"]),
@@ -4174,7 +4178,7 @@ def _h_post_brief(db, data: dict) -> tuple:
 
 
 def _h_get_briefs(db) -> tuple:
-    return 200, {"briefs": db.get_briefs(days=7)}
+    return 200, {"briefs": db.get_briefs(days=30)}
 
 
 def _h_get_history(path: str, history_db) -> tuple:

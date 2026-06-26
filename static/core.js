@@ -296,34 +296,58 @@ function renderBriefs(briefs) {
   empty.style.display = 'none';
   list.style.display  = '';
 
-  const dayLabel = ts => {
+  const dateKey = ts => new Date(ts * 1000).toDateString();
+  const dateLabel = ts => {
     const d = new Date(ts * 1000), now = new Date();
-    const same = (a, b) => a.toDateString() === b.toDateString();
-    if (same(d, now)) return 'Today';
+    if (d.toDateString() === now.toDateString()) return 'Today';
     const y = new Date(now); y.setDate(now.getDate() - 1);
-    if (same(d, y)) return 'Yesterday';
+    if (d.toDateString() === y.toDateString()) return 'Yesterday';
     return d.toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'});
   };
+  const timeLabel = ts => new Date(ts * 1000).toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
 
-  list.innerHTML = briefs.map(b => {
-    const s = b.stats || {};
-    const dn = (s.down ?? 0);
-    const paragraphs = (b.narrative || '').split(/\n\n+/)
-      .filter(p => p.trim())
-      .map(p => `<p class="brief-para">${escapeHtml(p.trim())}</p>`)
-      .join('');
-    return `<div class="brief-card">
-      <div class="brief-header">
-        <span class="events-day-hdr" style="border:none;background:none;padding:0">${escapeHtml(dayLabel(b.created_ts))}</span>
-        <span class="brief-stats">
-          <span class="badge badge-up">${s.up ?? '?'} UP</span>
-          <span class="badge ${dn > 0 ? 'badge-dn' : 'badge-up'}">${dn} DN</span>
-          <span class="badge badge-idle">${s.idle ?? '?'} IDL</span>
-        </span>
-      </div>
-      <div class="brief-narrative">${paragraphs}</div>
-    </div>`;
+  // Group by calendar date (briefs already sorted newest-first)
+  const groups = [];
+  let curKey = null;
+  for (const b of briefs) {
+    const k = dateKey(b.created_ts);
+    if (k !== curKey) { groups.push({label: dateLabel(b.created_ts), items: []}); curKey = k; }
+    groups[groups.length - 1].items.push(b);
+  }
+
+  let firstCard = true;
+  const html = groups.map(g => {
+    const cards = g.items.map(b => {
+      const s = b.stats || {};
+      const dn = s.down ?? 0;
+      const paragraphs = (b.narrative || '').split(/\n\n+/)
+        .filter(p => p.trim())
+        .map(p => `<p class="brief-para">${escapeHtml(p.trim())}</p>`)
+        .join('');
+      const open = firstCard;
+      firstCard = false;
+      return `<div class="brief-card${open ? ' open' : ''}">
+        <div class="brief-header">
+          <div class="brief-header-left">
+            <span class="brief-time">${escapeHtml(timeLabel(b.created_ts))}</span>
+            <span class="brief-stats">
+              <span class="badge badge-up">${s.up ?? '?'} UP</span>
+              <span class="badge ${dn > 0 ? 'badge-dn' : 'badge-up'}">${dn} DN</span>
+              <span class="badge badge-idle">${s.idle ?? '?'} IDL</span>
+            </span>
+          </div>
+          <span class="brief-chevron">▾</span>
+        </div>
+        <div class="brief-narrative">${paragraphs}</div>
+      </div>`;
+    }).join('');
+    return `<div class="briefs-date-label">${escapeHtml(g.label)}</div>${cards}`;
   }).join('');
+
+  list.innerHTML = html;
+  list.querySelectorAll('.brief-header').forEach(hdr => {
+    hdr.addEventListener('click', () => hdr.closest('.brief-card').classList.toggle('open'));
+  });
 }
 
 function renderSummary(data){
