@@ -53,6 +53,7 @@ class HostState:
     last_checked: Optional[datetime] = None
     last_seen_up: Optional[datetime] = None
     consecutive_down: int = 0
+    first_down_at: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
     thread: Optional[threading.Thread] = None
     stop_event: Optional[threading.Event] = None
@@ -241,6 +242,10 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
                 host.consecutive_down = 0
             else:
                 host.consecutive_down += 1
+                if host.consecutive_down == 1:
+                    host.first_down_at = time.time()
+
+        cd = host.consecutive_down  # safe read: only this thread writes it
 
         # Persist to DB if available
         if history_db is not None:
@@ -299,10 +304,9 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
 
         # Track incidents (only for always_on hosts)
         if incident_log is not None and host.always_on:
-            if not is_up and (was_up or was_up is None):
-                # Down transition (or first ping that's down)
-                if not is_up:
-                    incident_log.record_down(host)
+            if not is_up:
+                if cd == NTFY_DOWN_THRESHOLD:
+                    incident_log.record_down(host, started_at=host.first_down_at)
             elif is_up and was_up is False:
                 # Capture alert status BEFORE record_up closes the incident
                 was_alerted = None
@@ -327,8 +331,6 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
         if (incident_log is not None and host.always_on and not is_up
                 and alert_settings and alert_settings.get("ntfy_topic")
                 and host.alert and history_db is not None):
-            with host.lock:
-                cd = host.consecutive_down
             if cd == NTFY_DOWN_THRESHOLD:
                 already = history_db.get_open_incident_alert_status(host.ip)
                 if not already:
@@ -350,7 +352,7 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
             f"{'UP  ' if is_up else 'DOWN'} | {host.name:<20} | {host.ip:<16} | "
             f"{f'{latency:.1f}ms' if latency else '-':>8}"
         )
-        if _should_log_transition(was_up, is_up):
+        if was_up is None or (is_up and not was_up) or (not is_up and cd == NTFY_DOWN_THRESHOLD):
             logging.info(line)
         else:
             logging.debug(line)
@@ -521,9 +523,10 @@ class IncidentLog:
         self.history_db = history_db
         self.lock = threading.Lock()
 
-    def record_down(self, host):
+    def record_down(self, host, started_at=None):
         if self.history_db:
-            self.history_db.open_incident(host.ip, host.name, host.group)
+            self.history_db.open_incident(host.ip, host.name, host.group,
+                                          started_at=started_at)
 
     def record_up(self, host):
         if self.history_db:

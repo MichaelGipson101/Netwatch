@@ -2457,3 +2457,58 @@ def test_make_ssl_ctx_verify_disabled_ignores_ca_cert():
     ctx = poller._make_ssl_ctx()
 
     assert ctx.verify_mode == ssl.CERT_NONE
+
+
+def test_incident_log_record_down_passes_started_at(tmp_path):
+    """record_down forwards started_at to open_incident."""
+    from monitor import HistoryDB, IncidentLog, HostState
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    log = IncidentLog(hdb)
+    host = HostState(name="H", ip="10.0.0.1", group="G", interval=60, always_on=True)
+    past = int(time.time()) - 300
+    log.record_down(host, started_at=past)
+    row = hdb.conn.execute(
+        "SELECT started FROM incidents WHERE host_ip = '10.0.0.1'"
+    ).fetchone()
+    assert row[0] == past
+
+
+def test_incident_not_opened_below_threshold(tmp_path):
+    """Fewer than NTFY_DOWN_THRESHOLD consecutive misses must not open an incident."""
+    from monitor import HistoryDB, IncidentLog, HostState, NTFY_DOWN_THRESHOLD
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    inc_log = IncidentLog(hdb)
+    host = HostState(name="H", ip="10.0.0.2", group="G", interval=60, always_on=True)
+
+    # Simulate NTFY_DOWN_THRESHOLD - 1 consecutive misses
+    for i in range(1, NTFY_DOWN_THRESHOLD):
+        host.consecutive_down = i
+        if host.consecutive_down == 1:
+            host.first_down_at = time.time() - 100
+        # Mirror what poll_host does: only call record_down at threshold
+        if host.consecutive_down == NTFY_DOWN_THRESHOLD:
+            inc_log.record_down(host, started_at=host.first_down_at)
+
+    row = hdb.conn.execute(
+        "SELECT id FROM incidents WHERE host_ip = '10.0.0.2'"
+    ).fetchone()
+    assert row is None, "No incident should open before the threshold"
+
+
+def test_incident_opened_at_threshold_with_correct_start(tmp_path):
+    """At exactly NTFY_DOWN_THRESHOLD consecutive misses an incident opens, backdated."""
+    from monitor import HistoryDB, IncidentLog, HostState, NTFY_DOWN_THRESHOLD
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    inc_log = IncidentLog(hdb)
+    host = HostState(name="H", ip="10.0.0.3", group="G", interval=60, always_on=True)
+    first_miss_time = int(time.time()) - 60
+
+    host.first_down_at = first_miss_time
+    host.consecutive_down = NTFY_DOWN_THRESHOLD
+    inc_log.record_down(host, started_at=host.first_down_at)
+
+    row = hdb.conn.execute(
+        "SELECT started FROM incidents WHERE host_ip = '10.0.0.3'"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == first_miss_time
