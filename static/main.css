@@ -564,6 +564,15 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .event-status{justify-self:end}
 .events-day-hdr{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--hint);padding:12px 18px 6px;border-bottom:1px solid var(--border-light);background:var(--subtle)}
 
+/* ── Daily Briefs ─────────────────────────────────────────────────────────── */
+.brief-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-1)}
+.brief-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--subtle);border-bottom:1px solid var(--border-light)}
+.brief-stats{display:flex;gap:6px;flex-shrink:0}
+.brief-narrative{padding:16px 20px}
+.brief-para{margin:0 0 12px;font-size:0.875rem;line-height:1.7;color:var(--text)}
+.brief-para:last-child{margin-bottom:0}
+#briefs-list{padding:16px}
+
 .footer{margin-top:28px;display:flex;justify-content:space-between;align-items:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);padding-top:16px;border-top:1px solid var(--border)}
 
 /* Modal */

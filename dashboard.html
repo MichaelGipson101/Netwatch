@@ -223,6 +223,7 @@
     <button class="tab" data-tab="topology" role="tab">Topology</button>
     <button class="tab" data-tab="hosts" role="tab">Hosts</button>
     <button class="tab" data-tab="events" role="tab">Events <span class="tab-count" id="events-count" style="display:none">0</span></button>
+    <button class="tab" data-tab="briefs" role="tab">Briefs <span class="tab-count" id="briefs-count" style="display:none">1</span></button>
     <button class="tab" data-tab="inventory" role="tab">Inventory <span class="tab-count" id="inv-count" style="display:none">0</span></button>
     <button class="tab" data-tab="servers" role="tab">Servers</button>
   </div>
@@ -364,6 +365,15 @@
       <div class="events-empty-sub">No incidents recorded.<br>Down events appear here.</div>
     </div>
     <div class="events-list" id="events-list" style="display:none"></div>
+  </div>
+
+  <div class="view" id="view-briefs">
+    <div class="events-empty" id="briefs-empty">
+      <div class="events-empty-icon">⊘</div>
+      <div class="events-empty-title">No briefs yet</div>
+      <div class="events-empty-sub">Run netwatch_brief.py to generate the first one.</div>
+    </div>
+    <div id="briefs-list" style="display:none"></div>
   </div>
 
   <div class="view" id="view-inventory">

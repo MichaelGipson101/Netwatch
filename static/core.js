@@ -59,6 +59,7 @@ function setTab(tab){
   localStorage.setItem('nw-tab', tab);
   if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();
   if(tab === 'servers'   && typeof initServersTab === 'function') initServersTab();
+  if(tab === 'briefs') fetchBriefs();
   // Re-fetch topology when switching to the tab (but only after D3 has loaded
   // at least once — initial load is handled by setTopoView on page boot).
   if(tab === 'topology' && _topoD3Loaded && typeof fetchAndRenderTopologyWeb === 'function') fetchAndRenderTopologyWeb();
@@ -265,6 +266,64 @@ function renderEvents(data){
       + '</div>';
   });
   list.innerHTML = html;
+}
+
+let _briefsFetched = false;
+
+function fetchBriefs() {
+  if (_briefsFetched) return;
+  fetch('/api/brief', {credentials: 'same-origin'})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(d => { _briefsFetched = true; renderBriefs(d.briefs || []); })
+    .catch(() => {});
+}
+
+function renderBriefs(briefs) {
+  const empty  = document.getElementById('briefs-empty');
+  const list   = document.getElementById('briefs-list');
+  const badge  = document.getElementById('briefs-count');
+
+  const dayAgo = Date.now() / 1000 - 86400;
+  const recent = briefs.filter(b => b.created_ts > dayAgo).length;
+  badge.textContent = recent;
+  badge.style.display = recent > 0 ? '' : 'none';
+
+  if (!briefs.length) {
+    empty.style.display = '';
+    list.style.display  = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  list.style.display  = '';
+
+  const dayLabel = ts => {
+    const d = new Date(ts * 1000), now = new Date();
+    const same = (a, b) => a.toDateString() === b.toDateString();
+    if (same(d, now)) return 'Today';
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (same(d, y)) return 'Yesterday';
+    return d.toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'});
+  };
+
+  list.innerHTML = briefs.map(b => {
+    const s = b.stats || {};
+    const dn = (s.down ?? 0);
+    const paragraphs = (b.narrative || '').split(/\n\n+/)
+      .filter(p => p.trim())
+      .map(p => `<p class="brief-para">${escapeHtml(p.trim())}</p>`)
+      .join('');
+    return `<div class="brief-card">
+      <div class="brief-header">
+        <span class="events-day-hdr" style="border:none;background:none;padding:0">${escapeHtml(dayLabel(b.created_ts))}</span>
+        <span class="brief-stats">
+          <span class="badge badge-up">${s.up ?? '?'} UP</span>
+          <span class="badge ${dn > 0 ? 'badge-dn' : 'badge-up'}">${dn} DN</span>
+          <span class="badge badge-idle">${s.idle ?? '?'} IDL</span>
+        </span>
+      </div>
+      <div class="brief-narrative">${paragraphs}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderSummary(data){
