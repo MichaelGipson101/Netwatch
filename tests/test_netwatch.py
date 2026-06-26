@@ -1244,6 +1244,28 @@ def test_started_str_includes_date_for_older_events(tmp_path):
     # e.g. "Jun 08 17:39" — month abbrev + day + HH:MM
     assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{2}:\d{2}", inc["started_str"])
 
+def test_open_incident_uses_provided_started_at(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    past_ts = int(time.time()) - 120
+    hdb.open_incident("1.2.3.4", "TestHost", "G", started_at=past_ts)
+    row = hdb.conn.execute(
+        "SELECT started FROM incidents WHERE host_ip = '1.2.3.4'"
+    ).fetchone()
+    assert row[0] == past_ts
+
+
+def test_open_incident_defaults_to_now_when_no_started_at(tmp_path):
+    from monitor import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    before = int(time.time())
+    hdb.open_incident("1.2.3.4", "TestHost", "G")
+    after = int(time.time())
+    row = hdb.conn.execute(
+        "SELECT started FROM incidents WHERE host_ip = '1.2.3.4'"
+    ).fetchone()
+    assert before <= row[0] <= after
+
 
 # ============================================================================
 # NASPoller parse tests

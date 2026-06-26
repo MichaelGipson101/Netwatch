@@ -1224,9 +1224,9 @@ class HistoryDB:
 
     # ── Incidents ───────────────────────────────────────────────────────────
 
-    def open_incident(self, host_ip, host_name, host_group):
+    def open_incident(self, host_ip, host_name, host_group, started_at=None):
         """Open a new incident if there's no ongoing one for this host."""
-        ts = int(time.time())
+        ts = int(started_at) if started_at is not None else int(time.time())
         with self.lock:
             # Check for an existing open incident
             cur = self.conn.execute(
