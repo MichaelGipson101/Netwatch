@@ -566,21 +566,25 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 
 /* ── Daily Briefs ─────────────────────────────────────────────────────────── */
 #briefs-list{padding:16px}
-.briefs-date-label{font-size:0.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);padding:8px 4px 6px;margin-top:8px}
-.briefs-date-label:first-child{margin-top:0}
-.brief-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;overflow:hidden;box-shadow:var(--shadow-1)}
-.brief-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--subtle);cursor:pointer;user-select:none;border-bottom:none;transition:background .15s}
-.brief-header:hover{background:var(--hover)}
+.briefs-date-label{display:flex;align-items:center;gap:12px;font-size:0.68rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--hint);margin:24px 0 10px;white-space:nowrap}
+.briefs-date-label:first-child{margin-top:4px}
+.briefs-date-label::before,.briefs-date-label::after{content:'';flex:1;height:1px;background:var(--border)}
+.brief-card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--brief-accent,var(--green));border-radius:12px;margin-bottom:8px;overflow:hidden;box-shadow:var(--shadow-1)}
+.brief-header{display:flex;align-items:center;justify-content:space-between;padding:0 16px;min-height:48px;cursor:pointer;user-select:none;transition:background .15s}
+.brief-header:hover{background:var(--subtle)}
 .brief-card.open .brief-header{border-bottom:1px solid var(--border-light)}
 .brief-header-left{display:flex;align-items:center;gap:10px}
-.brief-time{font-family:'DM Mono',monospace;font-size:0.75rem;color:var(--hint)}
-.brief-stats{display:flex;gap:6px;flex-shrink:0}
-.brief-chevron{font-size:0.7rem;color:var(--hint);transition:transform .2s;margin-left:8px;flex-shrink:0}
+.brief-label{font-size:0.875rem;font-weight:500;color:var(--text)}
+.brief-time{font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--hint)}
+.brief-chevron{font-size:0.65rem;color:var(--hint);transition:transform .2s ease;margin-left:8px;flex-shrink:0}
 .brief-card.open .brief-chevron{transform:rotate(180deg)}
-.brief-narrative{display:none;padding:16px 20px}
-.brief-card.open .brief-narrative{display:block}
-.brief-para{margin:0 0 12px;font-size:0.875rem;line-height:1.7;color:var(--text)}
+.brief-body{display:none;padding:18px 20px 6px}
+.brief-card.open .brief-body{display:block;animation:briefBodyIn .18s ease}
+@keyframes briefBodyIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.brief-para{margin:0 0 14px;font-size:0.9rem;line-height:1.85;color:var(--text)}
 .brief-para:last-child{margin-bottom:0}
+.brief-footer{display:flex;gap:16px;flex-wrap:wrap;padding:12px 0 10px;margin-top:16px;border-top:1px solid var(--border-light);font-family:'DM Mono',monospace;font-size:0.68rem;letter-spacing:.03em;color:var(--hint)}
+@media(max-width:600px){#briefs-list{padding:10px}.brief-header{min-height:52px}.brief-body{padding:14px 14px 4px}.brief-footer{gap:10px}}
 
 .footer{margin-top:28px;display:flex;justify-content:space-between;align-items:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);padding-top:16px;border-top:1px solid var(--border)}
 
