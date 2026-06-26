@@ -3454,6 +3454,7 @@ def build_topology_payload(inventory_db, host_manager):
             "from_port":       c["from_port"],
             "to_port":         c["to_port"],
             "connection_type": c["connection_type"],
+            "notes":           c.get("notes") or None,
         })
 
     return {"nodes": nodes, "edges": edges}

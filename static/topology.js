@@ -16,7 +16,27 @@ let _topoD3Loaded = false;
 let _topoD3Loading = null;  // Promise during load
 let _topoUserAdjusted = false;   // true once the user pans/zooms/drags
 let _flowRaf = null;             // requestAnimationFrame id for flow dots
+let _topoEdgeSel = null;         // d3 selection of edge groups; set by renderTopologyWeb
 const _reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+// Flow-dot speeds (fraction of path per second) per connection type.
+// Defined at module level so the flow loop can be restarted without a full re-render.
+const _FLOW_SPEEDS = {ethernet:.10, fiber:.16, wifi:.06, virtual:.07, power:.05, usb:.13, console:.065, other:.10};
+function _flowFrame(ts){
+  if(!_topoEdgeSel) return;
+  _topoEdgeSel.each(function(d){
+    const len = this._flowLen;
+    if(!len) return;
+    const path = this.querySelector('path.topo-edge-line');
+    const speed = _FLOW_SPEEDS[d.connection_type] || .10;
+    const t = (ts / 1000 * speed) % 1;
+    const fwd = this.querySelector('.topo-edge-flow-fwd');
+    const rev = this.querySelector('.topo-edge-flow-rev');
+    if(fwd){ const p = path.getPointAtLength(t * len); fwd.setAttribute('cx', p.x); fwd.setAttribute('cy', p.y); }
+    if(rev){ const p = path.getPointAtLength((1 - (t + .5) % 1) * len); rev.setAttribute('cx', p.x); rev.setAttribute('cy', p.y); }
+  });
+  _flowRaf = requestAnimationFrame(_flowFrame);
+}
 const TOPO_POSITIONS_KEY = 'nw-topo-positions';
 
 function loadTopoPositions(){
@@ -263,6 +283,7 @@ function renderTopologyWeb(){
   _topoSimulation = sim;
 
   // Edges
+  _topoEdgeSel = null;  // clear until rebuilt below
   const edgeG = zoomG.append('g').attr('class', 'topo-edges');
   // Helper: classify an edge based on its endpoints' current statuses.
   // Returns one of: 'alive' (both up or up+unknown), 'degraded' (at least
@@ -279,6 +300,7 @@ function renderTopologyWeb(){
   const edgeSel = edgeG.selectAll('g.topo-edge').data(renderEdges).join('g')
     .attr('class', d => 'topo-edge topo-edge-' + (d.connection_type || 'ethernet')
       + ' topo-edge-' + edgeState(d));
+  _topoEdgeSel = edgeSel;  // expose for flow-loop restart without full re-render
   // Wider invisible hit-area path so hover/click on the edge is generous
   edgeSel.append('path').attr('class', 'topo-edge-hit');
   edgeSel.append('path').attr('class', 'topo-edge-line');
@@ -456,26 +478,10 @@ function renderTopologyWeb(){
     });
   });
 
-  // Flow dots: time-based rAF loop, independent of the (now-resting)
-  // simulation. Uses cached path lengths; pauses when hidden; disabled
-  // under prefers-reduced-motion.
-  const SPEEDS = {ethernet:.10, fiber:.16, wifi:.06, virtual:.07, power:.05, usb:.13, console:.065, other:.10};
-  if(_flowRaf) cancelAnimationFrame(_flowRaf);
-  function flowFrame(ts){
-    edgeSel.each(function(d){
-      const len = this._flowLen;
-      if(!len) return;
-      const path = this.querySelector('path.topo-edge-line');
-      const speed = SPEEDS[d.connection_type] || .10;
-      const t = (ts / 1000 * speed) % 1;
-      const fwd = this.querySelector('.topo-edge-flow-fwd');
-      const rev = this.querySelector('.topo-edge-flow-rev');
-      if(fwd){ const p = path.getPointAtLength(t * len); fwd.setAttribute('cx', p.x); fwd.setAttribute('cy', p.y); }
-      if(rev){ const p = path.getPointAtLength((1 - (t + .5) % 1) * len); rev.setAttribute('cx', p.x); rev.setAttribute('cy', p.y); }
-    });
-    _flowRaf = requestAnimationFrame(flowFrame);
-  }
-  _flowRaf = requestAnimationFrame(flowFrame);
+  // Flow dots: time-based rAF loop using the module-level _flowFrame/_FLOW_SPEEDS.
+  // Pauses when the browser tab is hidden; disabled under prefers-reduced-motion.
+  if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }
+  if(!_reducedMotion.matches) _flowRaf = requestAnimationFrame(_flowFrame);
 
   // Cool the simulation gradually
   sim.alpha(1).restart();
@@ -609,16 +615,19 @@ function buildNodeTip(d){
 function updateTopologyWebStatus(statusData){
   if(_topoView !== 'web' || !_topoSvg) return;
   if(!statusData || !statusData.hosts) return;
-  // Build MAC -> status map from hosts
-  const macStatus = {};
+  // Build MAC -> status and IP -> status maps for matching inventory nodes.
+  const macStatus = {}, ipStatus = {};
   statusData.hosts.forEach(h => {
     const m = ((h.specs || {}).mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
     if(m) macStatus[m] = { status: h.status, is_up: h.is_up };
+    if(h.ip) ipStatus[h.ip] = { status: h.status, is_up: h.is_up };
   });
-  // For each node in our cached data, compare new vs previous status
+  // For each node: try MAC first, then linked_host IP, then keep/fallback.
+  // This ensures VMs and peripherals with no MAC still get live status updates.
   _topoData.nodes.forEach(n => {
     const m = (n.mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
-    const newStatus = macStatus[m] ? macStatus[m].status : (n.linked_host ? n.status : 'UNKNOWN');
+    const match = macStatus[m] || (n.linked_host && n.linked_host.ip ? ipStatus[n.linked_host.ip] : null);
+    const newStatus = match ? match.status : (n.linked_host ? n.status : 'UNKNOWN');
     const prev = _topoLastStatus[n.id];
     if(prev !== undefined && prev !== newStatus){
       // Status changed - pulse the node
@@ -718,6 +727,9 @@ function buildEdgeTip(e, nodeMap){
   if(e.to_port)   portBits.push('port ' + escapeHtml(e.to_port));
   if(portBits.length){
     html += '<div class="topo-tip-meta">' + portBits.join(' \u00b7 ') + '</div>';
+  }
+  if(e.notes){
+    html += '<div class="topo-tip-meta topo-tip-notes">' + escapeHtml(e.notes) + '</div>';
   }
   return html;
 }
@@ -914,11 +926,13 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
-// Pause the flow loop when the tab is hidden or we leave web view.
+// Pause the flow loop when the browser tab is hidden; restart it on return.
+// We only restart the RAF (not the full simulation) since node positions and
+// the D3 graph are still intact — there is no need to blow away the layout.
 document.addEventListener('visibilitychange', () => {
   if(document.hidden){
     if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }
-  } else if(_topoView === 'web' && _topoSvg){
-    renderTopologyWeb();   // re-render restarts sim warmup + flow loop cleanly
+  } else if(_topoView === 'web' && _topoEdgeSel && !_reducedMotion.matches){
+    if(!_flowRaf) _flowRaf = requestAnimationFrame(_flowFrame);
   }
 });
