@@ -790,6 +790,19 @@
             <input type="text" id="s-proxmox_ca_cert" placeholder="/etc/pve/pve-root-ca.pem (optional)">
           </label>
           <p class="form-hint">Proxmox ships with a self-signed cert by default. Either point this at Proxmox's own CA file (Datacenter &rarr; Certificates, or <code>/etc/pve/pve-root-ca.pem</code> on the Proxmox host), or uncheck "Verify Proxmox's TLS certificate" above to disable verification entirely.</p>
+          <div class="settings-section-hdr" style="margin-top:8px">Home Assistant</div>
+          <label class="form-field">URL<input type="text" id="s-ha_url" placeholder="http://192.168.x.x:8123"></label>
+          <label class="form-field">Access token
+            <div class="field-with-toggle">
+              <input type="password" id="s-ha_token" placeholder="Long-lived access token from HA profile" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-ha_token')">Show</button>
+            </div>
+          </label>
+          <label class="form-field">Power entity ID<input type="text" id="s-ha_entity_power" placeholder="sensor.tapo_p115_current_power"></label>
+          <label class="form-field">Voltage entity ID<input type="text" id="s-ha_entity_voltage" placeholder="sensor.tapo_p115_voltage"></label>
+          <label class="form-field">Current entity ID<input type="text" id="s-ha_entity_current" placeholder="sensor.tapo_p115_current"></label>
+          <label class="form-field">Energy entity ID<input type="text" id="s-ha_entity_energy" placeholder="sensor.tapo_p115_energy_today"></label>
+          <p class="form-hint">Find entity IDs in Home Assistant: Settings &rarr; Devices &amp; Services &rarr; [your plug] &rarr; entities. Leave entity fields blank to omit that metric.</p>
         </div>
       </div>
 

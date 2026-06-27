@@ -30,6 +30,8 @@ function _fillSettingsForm(s) {
     'proxmox_url', 'proxmox_user', 'proxmox_password',
     'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_ca_cert',
     'openrouter_api_key', 'ai_model',
+    'ha_url', 'ha_token', 'ha_entity_power', 'ha_entity_voltage',
+    'ha_entity_current', 'ha_entity_energy',
   ];
   for (const k of keys) {
     const el = _settingsField(k);
@@ -47,6 +49,8 @@ function _collectSettingsForm() {
     'proxmox_url', 'proxmox_user', 'proxmox_password',
     'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_ca_cert',
     'openrouter_api_key', 'ai_model',
+    'ha_url', 'ha_token', 'ha_entity_power', 'ha_entity_voltage',
+    'ha_entity_current', 'ha_entity_energy',
   ];
   const out = {};
   for (const k of intKeys) {
