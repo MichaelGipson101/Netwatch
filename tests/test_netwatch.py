@@ -2777,3 +2777,54 @@ def test_ha_poller_get_cache_returns_deep_copy(tmp_path):
     c1["watts"] = 999
     c2 = poller.get_cache()
     assert c2["watts"] is None  # original cache unchanged
+
+
+# ============================================================================
+# _h_get_power handler tests
+# ============================================================================
+
+from monitor import _h_get_power as _hgp
+
+
+def test_h_get_power_not_configured():
+    status, body = _hgp(None, None)
+    assert status == 200
+    assert body == {"configured": False}
+
+
+def test_h_get_power_configured(tmp_path):
+    from monitor import HistoryDB, HAPoller
+    db = HistoryDB(str(tmp_path / "p.db"))
+    ts = int(_time.time())
+    db.insert_power_reading(ts, 47.3, 230.1, 0.21, 1.234)
+    am = MagicMock()
+    am.data = {
+        "ha_url": "http://ha.test:8123", "ha_token": "t",
+        "ha_entity_power": "sensor.p", "ha_entity_voltage": "",
+        "ha_entity_current": "", "ha_entity_energy": "",
+    }
+    poller = HAPoller(am, db)
+    with poller._lock:
+        poller._cache.update({"reachable": True, "watts": 47.3, "last_updated": ts})
+    status, body = _hgp(poller, db)
+    assert status == 200
+    assert body["configured"] is True
+    assert body["live"]["watts"] == 47.3
+    assert body["live"]["reachable"] is True
+    assert len(body["history"]) == 1
+    assert body["history"][0]["watts"] == 47.3
+
+
+def test_h_get_power_force_triggers_poll(tmp_path):
+    from monitor import HistoryDB, HAPoller
+    db = HistoryDB(str(tmp_path / "p.db"))
+    am = MagicMock()
+    am.data = {
+        "ha_url": "http://ha.test:8123", "ha_token": "t",
+        "ha_entity_power": "sensor.p", "ha_entity_voltage": "",
+        "ha_entity_current": "", "ha_entity_energy": "",
+    }
+    poller = HAPoller(am, db)
+    with patch.object(HAPoller, "_fetch_state", staticmethod(lambda url, tok, eid: 55.0)):
+        status, body = _hgp(poller, db, force=True)
+    assert body["live"]["watts"] == 55.0

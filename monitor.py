@@ -3724,6 +3724,12 @@ SETTINGS_EDITABLE_KEYS = {
     "ai_model":             str,
     "setup_wizard_complete": bool,
     "truenas_ignored_alert_klasses": str,
+    "ha_url":              str,
+    "ha_token":            str,
+    "ha_entity_power":     str,
+    "ha_entity_voltage":   str,
+    "ha_entity_current":   str,
+    "ha_entity_energy":    str,
 }
 
 _SETTINGS_INT_RANGES = {
@@ -3734,7 +3740,7 @@ _SETTINGS_INT_RANGES = {
     "history_days":     (1,  365),
 }
 
-_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url"}
+_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url", "ha_url"}
 _SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_window",
                                 "refresh_rate", "history_days"}
 # These keys live in auth.json (alongside user credentials), not hosts.yaml
@@ -3742,6 +3748,8 @@ _AUTH_STORED_KEYS = {
     "truenas_url", "truenas_api_key",
     "proxmox_url", "proxmox_user", "proxmox_token_id", "proxmox_token_secret",
     "openrouter_api_key",
+    "ha_url", "ha_token", "ha_entity_power", "ha_entity_voltage",
+    "ha_entity_current", "ha_entity_energy",
 }
 
 
@@ -4128,6 +4136,16 @@ def _h_get_proxmox(proxmox_poller, force=False) -> tuple:
     if not url and not cache.get("nodes"):
         cache["error"] = "Proxmox not configured"
     return 200, cache
+
+
+def _h_get_power(ha_poller, history_db, force=False) -> tuple:
+    if ha_poller is None:
+        return 200, {"configured": False}
+    if force:
+        ha_poller._poll()
+    cache = ha_poller.get_cache()
+    history = history_db.get_power_readings(days=7) if history_db else []
+    return 200, {"configured": True, "live": cache, "history": history}
 
 
 def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
@@ -4522,7 +4540,7 @@ def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
     return 200, {"ok": True}
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -4688,6 +4706,12 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 from urllib.parse import urlparse as _up_pve, parse_qs as _pqs_pve
                 force = _pqs_pve(_up_pve(self.path).query).get("refresh", ["0"])[0] == "1"
                 self._send_json(*_h_get_proxmox(proxmox_poller, force=force))
+                return
+            if self.path == "/api/power" or self.path.startswith("/api/power?"):
+                if not self._require_auth(): return
+                from urllib.parse import urlparse as _up_ha, parse_qs as _pqs_ha
+                force = _pqs_ha(_up_ha(self.path).query).get("force", ["0"])[0] == "1"
+                self._send_json(*_h_get_power(ha_poller, history_db, force=force))
                 return
             if self.path == "/api/auth/status":
                 self._send_json(*_h_get_auth_status(auth_manager, self._current_user, self._session_cookie_value()))
@@ -5052,8 +5076,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
@@ -5437,11 +5461,17 @@ def main():
         proxmox_poller.start(stop_event)
         print(f"[netwatch] Proxmox poller -> polling every {ProxmoxPoller.POLL_INTERVAL_SECONDS}s")
 
+    ha_poller = HAPoller(auth_manager, history_db)
+    _ha_url = (auth_manager.data if auth_manager else {}).get("ha_url", "")
+    if _ha_url:
+        ha_poller.start(stop_event)
+        print(f"[netwatch] HA poller -> polling Home Assistant every {HAPoller.POLL_INTERVAL_SECONDS}s")
+
     if not args.no_web:
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller},
             daemon=True
         )
         wt.start()
