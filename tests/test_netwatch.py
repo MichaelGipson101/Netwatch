@@ -2685,3 +2685,95 @@ def test_power_readings_none_values_stored(tmp_path):
     assert len(rows) == 1
     assert rows[0]["watts"] == 47.3
     assert rows[0]["voltage"] is None
+
+
+# ============================================================================
+# HAPoller tests
+# ============================================================================
+
+from monitor import HAPoller as _HAPoller
+
+
+def _make_ha_poller(tmp_path):
+    from monitor import HistoryDB
+    am = MagicMock()
+    am.data = {
+        "ha_url": "http://ha.test:8123",
+        "ha_token": "testtoken",
+        "ha_entity_power":   "sensor.tapo_p115_current_power",
+        "ha_entity_voltage":  "sensor.tapo_p115_voltage",
+        "ha_entity_current":  "sensor.tapo_p115_current",
+        "ha_entity_energy":   "sensor.tapo_p115_energy_today",
+    }
+    db = HistoryDB(str(tmp_path / "ha.db"))
+    return _HAPoller(am, db)
+
+
+def test_ha_poller_poll_updates_cache(tmp_path):
+    poller = _make_ha_poller(tmp_path)
+    responses = {
+        "sensor.tapo_p115_current_power": 47.3,
+        "sensor.tapo_p115_voltage":        230.1,
+        "sensor.tapo_p115_current":        0.21,
+        "sensor.tapo_p115_energy_today":   1.234,
+    }
+    with patch.object(_HAPoller, "_fetch_state", staticmethod(lambda url, tok, eid: responses.get(eid))):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is True
+    assert cache["watts"] == 47.3
+    assert cache["voltage"] == 230.1
+    assert cache["current_a"] == 0.21
+    assert cache["energy_kwh"] == 1.234
+    assert cache["error"] is None
+
+
+def test_ha_poller_unavailable_entity_stored_as_none(tmp_path):
+    poller = _make_ha_poller(tmp_path)
+    def _fake(url, tok, eid):
+        return None if eid == "sensor.tapo_p115_voltage" else 47.3
+    with patch.object(_HAPoller, "_fetch_state", staticmethod(_fake)):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is True
+    assert cache["voltage"] is None
+    assert cache["watts"] == 47.3
+
+
+def test_ha_poller_network_error_sets_unreachable(tmp_path):
+    poller = _make_ha_poller(tmp_path)
+    def _fail(url, tok, eid):
+        raise ConnectionError("timeout")
+    with patch.object(_HAPoller, "_fetch_state", staticmethod(_fail)):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is False
+    assert cache["error"] is not None
+
+
+def test_ha_poller_unconfigured_does_not_poll(tmp_path):
+    from monitor import HistoryDB
+    am = MagicMock()
+    am.data = {"ha_url": "", "ha_token": ""}
+    db = HistoryDB(str(tmp_path / "ha.db"))
+    poller = _HAPoller(am, db)
+    with patch.object(_HAPoller, "_fetch_state", staticmethod(lambda *a: 1 / 0)):
+        poller._poll()  # should not raise or fetch
+    assert poller.get_cache()["reachable"] is False
+
+
+def test_ha_poller_poll_writes_to_history_db(tmp_path):
+    poller = _make_ha_poller(tmp_path)
+    with patch.object(_HAPoller, "_fetch_state", staticmethod(lambda url, tok, eid: 47.3)):
+        poller._poll()
+    rows = poller._history_db.get_power_readings(days=1)
+    assert len(rows) == 1
+    assert rows[0]["watts"] == 47.3
+
+
+def test_ha_poller_get_cache_returns_deep_copy(tmp_path):
+    poller = _make_ha_poller(tmp_path)
+    c1 = poller.get_cache()
+    c1["watts"] = 999
+    c2 = poller.get_cache()
+    assert c2["watts"] is None  # original cache unchanged

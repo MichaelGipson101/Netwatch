@@ -3113,6 +3113,108 @@ class ProxmoxPoller:
         threading.Thread(target=_loop, daemon=True, name="proxmox-poller").start()
 
 
+class HAPoller:
+    POLL_INTERVAL_SECONDS = 60
+
+    def __init__(self, auth_manager, history_db, alert_settings=None):
+        self._auth_manager = auth_manager
+        self._history_db = history_db
+        self._cache = {
+            "reachable":    False,
+            "last_updated": None,
+            "error":        None,
+            "watts":        None,
+            "voltage":      None,
+            "current_a":    None,
+            "energy_kwh":   None,
+        }
+        self._lock = threading.Lock()
+
+    def get_cache(self):
+        with self._lock:
+            import copy
+            return copy.deepcopy(self._cache)
+
+    def _get_config(self):
+        data = self._auth_manager.data if self._auth_manager else {}
+        return {
+            "url":            data.get("ha_url", ""),
+            "token":          data.get("ha_token", ""),
+            "entity_power":   data.get("ha_entity_power", ""),
+            "entity_voltage":  data.get("ha_entity_voltage", ""),
+            "entity_current":  data.get("ha_entity_current", ""),
+            "entity_energy":   data.get("ha_entity_energy", ""),
+        }
+
+    @staticmethod
+    def _fetch_state(base_url, token, entity_id):
+        import urllib.request
+        url = base_url.rstrip("/") + "/api/states/" + entity_id
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        state = data.get("state", "unavailable")
+        try:
+            return float(state)
+        except (ValueError, TypeError):
+            return None
+
+    def _poll(self):
+        cfg = self._get_config()
+        if not cfg["url"] or not cfg["token"]:
+            return
+        metric_map = [
+            ("entity_power",   "watts"),
+            ("entity_voltage",  "voltage"),
+            ("entity_current",  "current_a"),
+            ("entity_energy",   "energy_kwh"),
+        ]
+        results = {}
+        reachable = False
+        error = None
+        for cfg_key, cache_key in metric_map:
+            entity_id = cfg[cfg_key]
+            if not entity_id:
+                results[cache_key] = None
+                continue
+            try:
+                results[cache_key] = self._fetch_state(cfg["url"], cfg["token"], entity_id)
+                reachable = True
+            except Exception as e:
+                results[cache_key] = None
+                error = str(e)
+                logging.warning(f"HAPoller: failed to fetch {entity_id}: {e}")
+
+        ts = int(time.time())
+        if reachable and self._history_db:
+            try:
+                self._history_db.insert_power_reading(
+                    ts,
+                    results.get("watts"),
+                    results.get("voltage"),
+                    results.get("current_a"),
+                    results.get("energy_kwh"),
+                )
+            except Exception as e:
+                logging.warning(f"HAPoller: DB write failed: {e}")
+
+        with self._lock:
+            self._cache.update(results)
+            self._cache["reachable"] = reachable
+            self._cache["last_updated"] = ts
+            self._cache["error"] = error if not reachable else None
+
+    def start(self, stop_event):
+        def _loop():
+            while not stop_event.is_set():
+                try:
+                    self._poll()
+                except Exception as e:
+                    logging.warning(f"HAPoller: unexpected error in loop: {e}")
+                stop_event.wait(self.POLL_INTERVAL_SECONDS)
+        threading.Thread(target=_loop, daemon=True, name="ha-poller").start()
+
+
 # ============================================================================
 # Wake-on-LAN
 # ============================================================================
