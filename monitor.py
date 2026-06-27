@@ -1062,6 +1062,16 @@ class HistoryDB:
         analysis_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_briefs_ts ON briefs(created_ts);
+
+    CREATE TABLE IF NOT EXISTS power_readings (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp  INTEGER NOT NULL,
+        watts      REAL,
+        voltage    REAL,
+        current_a  REAL,
+        energy_kwh REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_power_ts ON power_readings(timestamp);
     """
 
     FLUSH_MAX = 200          # safety flush if the 30s flusher falls behind
@@ -1388,6 +1398,30 @@ class HistoryDB:
             })
         return result
 
+    # ── Power readings ───────────────────────────────────────────────────────
+
+    def insert_power_reading(self, ts, watts, voltage, current_a, energy_kwh):
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO power_readings (timestamp, watts, voltage, current_a, energy_kwh) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (ts, watts, voltage, current_a, energy_kwh),
+            )
+
+    def get_power_readings(self, days=7):
+        cutoff = int(time.time()) - days * 86400
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT timestamp, watts, voltage, current_a, energy_kwh "
+                "FROM power_readings WHERE timestamp >= ? ORDER BY timestamp ASC",
+                (cutoff,),
+            ).fetchall()
+        return [
+            {"timestamp": r[0], "watts": r[1], "voltage": r[2],
+             "current_a": r[3], "energy_kwh": r[4]}
+            for r in rows
+        ]
+
     # ── Pruning ─────────────────────────────────────────────────────────────
 
     def prune(self):
@@ -1407,16 +1441,21 @@ class HistoryDB:
                 (int(time.time()) - 7 * 86400,),
             )
             briefs_deleted = r3.rowcount
+            r4 = self.conn.execute(
+                "DELETE FROM power_readings WHERE timestamp < ?", (cutoff,)
+            )
+            power_deleted = r4.rowcount
             # No VACUUM: with fixed retention the DB is steady-state and
             # freed pages get reused. Daily VACUUM rewrote the whole DB
             # through the WAL (~300MB/day of SD writes) for nothing.
             # Manual reclaim if ever needed: sqlite3 netwatch.db VACUUM.
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        if pings_deleted or incidents_deleted or briefs_deleted:
+        if pings_deleted or incidents_deleted or briefs_deleted or power_deleted:
             logging.info(
                 f"HistoryDB: pruned {pings_deleted} pings, "
                 f"{incidents_deleted} incidents, "
-                f"{briefs_deleted} briefs"
+                f"{briefs_deleted} briefs, "
+                f"{power_deleted} power readings"
             )
         return pings_deleted, incidents_deleted
 

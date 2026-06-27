@@ -2632,3 +2632,56 @@ def test_incident_opened_at_threshold_with_correct_start(tmp_path):
     ).fetchone()
     assert row is not None
     assert row[0] == first_miss_time
+
+
+# ============================================================================
+# HistoryDB power_readings tests
+# ============================================================================
+
+import time as _time
+
+def test_power_readings_roundtrip(tmp_path):
+    from monitor import HistoryDB
+    db = HistoryDB(str(tmp_path / "t.db"))
+    ts = int(_time.time())
+    db.insert_power_reading(ts, 47.3, 230.1, 0.21, 1.234)
+    rows = db.get_power_readings(days=7)
+    assert len(rows) == 1
+    assert rows[0]["watts"] == 47.3
+    assert rows[0]["voltage"] == 230.1
+    assert rows[0]["current_a"] == 0.21
+    assert rows[0]["energy_kwh"] == 1.234
+    assert rows[0]["timestamp"] == ts
+
+
+def test_power_readings_filters_by_days(tmp_path):
+    from monitor import HistoryDB
+    db = HistoryDB(str(tmp_path / "t.db"))
+    old_ts = int(_time.time()) - 8 * 86400
+    recent_ts = int(_time.time()) - 1 * 86400
+    db.insert_power_reading(old_ts, 10.0, 230.0, 0.04, 0.1)
+    db.insert_power_reading(recent_ts, 50.0, 230.0, 0.22, 0.5)
+    rows = db.get_power_readings(days=7)
+    assert len(rows) == 1
+    assert rows[0]["watts"] == 50.0
+
+
+def test_power_readings_pruned(tmp_path):
+    from monitor import HistoryDB
+    db = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
+    old_ts = int(_time.time()) - 8 * 86400
+    db.insert_power_reading(old_ts, 10.0, 230.0, 0.04, 0.1)
+    db.prune()
+    rows = db.get_power_readings(days=30)
+    assert rows == []
+
+
+def test_power_readings_none_values_stored(tmp_path):
+    from monitor import HistoryDB
+    db = HistoryDB(str(tmp_path / "t.db"))
+    ts = int(_time.time())
+    db.insert_power_reading(ts, 47.3, None, None, None)
+    rows = db.get_power_readings(days=7)
+    assert len(rows) == 1
+    assert rows[0]["watts"] == 47.3
+    assert rows[0]["voltage"] is None
