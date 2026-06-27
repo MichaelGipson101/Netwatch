@@ -138,6 +138,7 @@ body.topo-fullscreen-active .topo-web{
 body.topo-fullscreen-active > nav,
 body.topo-fullscreen-active .tabs,
 body.topo-fullscreen-active .summary,
+body.topo-fullscreen-active .power-card,
 body.topo-fullscreen-active .topo-view-toolbar,
 body.topo-fullscreen-active .problem-banner,
 body.topo-fullscreen-active footer,
@@ -215,7 +216,7 @@ body.topo-fullscreen-active .topo-web-overlay-tr{top:50px;right:60px}
 
 /* When web mode is active, hide the main metrics row entirely - the
    overlay metrics inside the canvas take over. */
-body.nw-topo-web .summary{display:none}
+body.nw-topo-web .summary,body.nw-topo-web .power-card{display:none}
 /* And give the topology view itself more vertical room since the
    metrics row no longer takes any. */
 body.nw-topo-web .topo-web{height:min(82vh,1100px)}
