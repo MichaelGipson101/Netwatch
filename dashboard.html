@@ -235,6 +235,27 @@
     <div class="scard"><div class="scard-label">Monitored</div><div class="scard-val" id="s-tot">-</div><div class="scard-sub" id="s-interval">loading...</div></div>
   </div>
 
+  <div id="power-card" class="power-card" style="display:none">
+    <div class="power-card-head">
+      <div class="power-card-title">
+        <span id="power-dot" class="power-dot"></span>
+        Homelab Power
+      </div>
+      <div class="power-card-updated" id="power-updated"></div>
+    </div>
+    <div class="power-card-body">
+      <div class="power-card-live">
+        <div class="power-watts" id="power-watts">-</div>
+        <div class="power-chips">
+          <span class="power-chip" id="power-voltage"></span>
+          <span class="power-chip" id="power-current"></span>
+          <span class="power-chip" id="power-energy"></span>
+        </div>
+      </div>
+      <div id="power-sparkline" class="power-sparkline"></div>
+    </div>
+  </div>
+
   <div class="view" id="view-topology">
     <div class="problem-banner" id="problem-banner">
       <div class="problem-banner-hdr">

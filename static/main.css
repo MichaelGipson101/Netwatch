@@ -1552,3 +1552,73 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .pve-nw-up      { background: var(--green); border-color: var(--green); }
 .pve-nw-down    { background: var(--red);   border-color: var(--red); }
 .pve-nw-unknown { background: var(--subtle); }
+
+/* ── Power card ──────────────────────────────────────────────────────────── */
+.power-card {
+  margin: 0 0 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px 10px;
+}
+.power-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.power-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.power-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.power-dot-ok  { background: var(--green); }
+.power-dot-err { background: var(--red); }
+.power-card-updated { font-size: 11px; color: var(--muted); }
+.power-card-body {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+.power-card-live { flex-shrink: 0; }
+.power-watts {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.1;
+  margin-bottom: 6px;
+}
+.power-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.power-chip {
+  font-size: 11px;
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+}
+.power-chip:empty { display: none; }
+.power-sparkline {
+  flex: 1;
+  min-width: 0;
+  height: 60px;
+  overflow: hidden;
+}
+.power-sparkline svg { display: block; width: 100%; }
