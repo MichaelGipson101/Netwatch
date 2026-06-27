@@ -5461,9 +5461,10 @@ def main():
         proxmox_poller.start(stop_event)
         print(f"[netwatch] Proxmox poller -> polling every {ProxmoxPoller.POLL_INTERVAL_SECONDS}s")
 
-    ha_poller = HAPoller(auth_manager, history_db)
+    ha_poller = None
     _ha_url = (auth_manager.data if auth_manager else {}).get("ha_url", "")
     if _ha_url:
+        ha_poller = HAPoller(auth_manager, history_db)
         ha_poller.start(stop_event)
         print(f"[netwatch] HA poller -> polling Home Assistant every {HAPoller.POLL_INTERVAL_SECONDS}s")
 
