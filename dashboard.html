@@ -811,6 +811,19 @@
             <input type="text" id="s-proxmox_ca_cert" placeholder="/etc/pve/pve-root-ca.pem (optional)">
           </label>
           <p class="form-hint">Proxmox ships with a self-signed cert by default. Either point this at Proxmox's own CA file (Datacenter &rarr; Certificates, or <code>/etc/pve/pve-root-ca.pem</code> on the Proxmox host), or uncheck "Verify Proxmox's TLS certificate" above to disable verification entirely.</p>
+          <div class="settings-section-hdr" style="margin-top:8px">Proxmox Backup Server</div>
+          <label class="form-field">URL<input type="text" id="s-pbs_url" placeholder="https://pbs.local:8007"></label>
+          <label class="form-field">API token ID<input type="text" id="s-pbs_api_token_id" placeholder="root@pbs!netwatch" autocomplete="off"></label>
+          <label class="form-field">API token secret
+            <div class="field-with-toggle">
+              <input type="password" id="s-pbs_api_token_secret" placeholder="token secret value" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-pbs_api_token_secret')">Show</button>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="s-pbs_verify_ssl" checked> Verify PBS's TLS certificate</label>
+          <label class="form-field">PBS CA cert path
+            <input type="text" id="s-pbs_ca_cert" placeholder="/etc/proxmox-backup/proxy.pem (optional)">
+          </label>
           <div class="settings-section-hdr" style="margin-top:8px">Home Assistant</div>
           <label class="form-field">URL<input type="text" id="s-ha_url" placeholder="http://192.168.x.x:8123"></label>
           <label class="form-field">Access token
@@ -934,6 +947,19 @@
             <input type="text" id="w-proxmox_ca_cert" placeholder="/etc/pve/pve-root-ca.pem (optional)">
           </label>
           <p class="form-hint">Proxmox ships with a self-signed cert by default. Either point this at Proxmox's own CA file, or uncheck "Verify Proxmox's TLS certificate" above to disable verification entirely.</p>
+          <div class="settings-section-hdr" style="margin-top:6px">Proxmox Backup Server</div>
+          <label class="form-field">URL<input type="text" id="w-pbs_url" placeholder="https://pbs.local:8007"></label>
+          <label class="form-field">API token ID<input type="text" id="w-pbs_api_token_id" placeholder="root@pbs!netwatch" autocomplete="off"></label>
+          <label class="form-field">API token secret
+            <div class="field-with-toggle">
+              <input type="password" id="w-pbs_api_token_secret" placeholder="token secret value" autocomplete="off">
+              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('w-pbs_api_token_secret')">Show</button>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="w-pbs_verify_ssl" checked> Verify PBS's TLS certificate</label>
+          <label class="form-field">PBS CA cert path
+            <input type="text" id="w-pbs_ca_cert" placeholder="/etc/proxmox-backup/proxy.pem (optional)">
+          </label>
         </div>
       </div>
 

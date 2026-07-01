@@ -32,6 +32,7 @@ function _fillSettingsForm(s) {
     'openrouter_api_key', 'ai_model',
     'ha_url', 'ha_token', 'ha_entity_power', 'ha_entity_voltage',
     'ha_entity_current', 'ha_entity_energy',
+    'pbs_url', 'pbs_api_token_id', 'pbs_api_token_secret', 'pbs_ca_cert',
   ];
   for (const k of keys) {
     const el = _settingsField(k);
@@ -39,6 +40,8 @@ function _fillSettingsForm(s) {
   }
   const verifyEl = _settingsField('proxmox_verify_ssl');
   if (verifyEl) verifyEl.checked = (s.proxmox_verify_ssl !== false);
+  const pbsVerifyEl = _settingsField('pbs_verify_ssl');
+  if (pbsVerifyEl) pbsVerifyEl.checked = (s.pbs_verify_ssl !== false);
 }
 
 function _collectSettingsForm() {
@@ -51,6 +54,7 @@ function _collectSettingsForm() {
     'openrouter_api_key', 'ai_model',
     'ha_url', 'ha_token', 'ha_entity_power', 'ha_entity_voltage',
     'ha_entity_current', 'ha_entity_energy',
+    'pbs_url', 'pbs_api_token_id', 'pbs_api_token_secret', 'pbs_ca_cert',
   ];
   const out = {};
   for (const k of intKeys) {
@@ -63,6 +67,8 @@ function _collectSettingsForm() {
   }
   const verifyEl = _settingsField('proxmox_verify_ssl');
   if (verifyEl) out.proxmox_verify_ssl = verifyEl.checked;
+  const pbsVerifyEl = _settingsField('pbs_verify_ssl');
+  if (pbsVerifyEl) out.pbs_verify_ssl = pbsVerifyEl.checked;
   return out;
 }
 
@@ -200,10 +206,10 @@ const _WIZARD_TITLES  = ['Monitoring', 'Push Alerts', 'Integrations', 'AI Assist
 const _WIZARD_INTKEYS = { 1: ['default_interval','ping_timeout','history_window','refresh_rate','history_days'] };
 const _WIZARD_STRKEYS = {
   2: ['ntfy_topic','ntfy_server'],
-  3: ['truenas_url','truenas_api_key','proxmox_url','proxmox_user','proxmox_password','proxmox_token_id','proxmox_token_secret','proxmox_node','proxmox_ca_cert'],
+  3: ['truenas_url','truenas_api_key','proxmox_url','proxmox_user','proxmox_password','proxmox_token_id','proxmox_token_secret','proxmox_node','proxmox_ca_cert','pbs_url','pbs_api_token_id','pbs_api_token_secret','pbs_ca_cert'],
   4: ['openrouter_api_key','ai_model'],
 };
-const _WIZARD_BOOLKEYS = { 3: ['proxmox_verify_ssl'] };
+const _WIZARD_BOOLKEYS = { 3: ['proxmox_verify_ssl', 'pbs_verify_ssl'] };
 
 async function openWizard() {
   closeSettings();

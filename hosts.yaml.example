@@ -22,6 +22,12 @@ settings:
   # proxmox_verify_ssl: true
   # proxmox_ca_cert: "/path/to/pve-root-ca.pem"
 
+  # PBS uses a valid/trusted cert by default in most setups; if yours is
+  # self-signed, either point pbs_ca_cert at its CA file or set
+  # pbs_verify_ssl: false to disable verification outright.
+  # pbs_verify_ssl: true
+  # pbs_ca_cert: "/path/to/pbs-ca.pem"
+
 hosts:
   - name: Router
     ip: 192.168.1.1
