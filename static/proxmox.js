@@ -8,11 +8,16 @@
   /* ── Public API ─────────────────────────────────────────────────────────── */
 
   window.fetchProxmox = function (force) {
-    fetch(force ? '/api/proxmox?refresh=1' : '/api/proxmox')
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
+    Promise.all([
+      fetch(force ? '/api/proxmox?refresh=1' : '/api/proxmox').then(function (r) { return r.json(); }),
+      fetch(force ? '/api/pbs?refresh=1' : '/api/pbs').then(function (r) { return r.json(); }),
+    ])
+      .then(function (results) {
+        var data = results[0];
+        var pbs  = results[1];
         window.nwLastProxmox = data;
-        _buildHostsMap(function () { _renderProxmox(data); });
+        window.nwLastPbs = pbs;
+        _buildHostsMap(function () { _renderProxmox(data, pbs); });
       })
       .catch(function () {
         var el = document.getElementById('proxmox-content');
@@ -67,7 +72,7 @@
 
   /* ── Render ─────────────────────────────────────────────────────────────── */
 
-  function _renderProxmox (data) {
+  function _renderProxmox (data, pbs) {
     var el = document.getElementById('proxmox-content');
     if (!el) return;
     if (data.error === 'Proxmox not configured' || (!data.reachable && !data.last_updated && !data.error)) {
@@ -77,6 +82,7 @@
     }
     el.innerHTML = _renderActionBar(data)
       + _renderNodeCards(data.nodes || [])
+      + _renderBackupCard(pbs, data.nodes || [])
       + _renderGuestTable(data.nodes || []);
   }
 
@@ -116,6 +122,67 @@
         + '</div>';
     }).join('');
     return '<div class="pve-node-cards">' + cards + '</div>';
+  }
+
+  /* ── Backup status card (Proxmox Backup Server) ────────────────────────── */
+
+  function _renderBackupCard (pbs, nodes) {
+    if (!pbs || pbs.error === 'PBS not configured') return '';
+
+    var guestNames = {};
+    nodes.forEach(function (n) {
+      (n.guests || []).forEach(function (g) { guestNames[g.vmid] = g.name; });
+    });
+
+    var warn = pbs.reachable ? ''
+      : '<div class="pbs-warn">PBS unreachable'
+        + (pbs.last_updated ? ' \xB7 last data ' + _timeAgo(new Date(pbs.last_updated)) : '') + '</div>';
+
+    var dsRows = (pbs.datastores || []).map(function (ds) {
+      return '<div class="pbs-ds-row">'
+        + '<span class="pbs-ds-name">' + escapeHtml(ds.name) + '</span>'
+        + '<div class="pbs-bar"><div class="pbs-bar-fill" style="width:' + ds.percent + '%"></div></div>'
+        + '<span class="pbs-ds-val">' + _fmtBytes(ds.used_bytes) + ' / ' + _fmtBytes(ds.total_bytes) + '</span>'
+        + '</div>';
+    }).join('');
+
+    var bodyRows = (pbs.backups || []).map(function (b) {
+      var name = guestNames[b.vmid] || ('VMID ' + b.vmid);
+      var ago  = b.last_backup_time ? _timeAgo(new Date(b.last_backup_time)) : 'never';
+      var typePill = b.type === 'vm'
+        ? '<span class="pve-type-vm">VM</span>'
+        : '<span class="pve-type-lxc">LXC</span>';
+      return '<tr>'
+        + '<td class="pve-td-mono">' + b.vmid + '</td>'
+        + '<td>' + escapeHtml(name) + '</td>'
+        + '<td>' + typePill + '</td>'
+        + '<td>' + ago + '</td>'
+        + '<td class="pve-td-num">' + (b.size_bytes ? _fmtBytes(b.size_bytes) : '—') + '</td>'
+        + '<td>' + _backupBadge(b.status) + '</td>'
+        + '</tr>';
+    }).join('');
+
+    return '<div class="pbs-card">'
+      + '<div class="pbs-hdr">Backups</div>'
+      + warn
+      + '<div class="pbs-datastores">' + (dsRows || '<div class="pve-unavailable">No datastores found.</div>') + '</div>'
+      + (bodyRows
+          ? '<div class="pve-table-scroll"><table class="pbs-backup-table">'
+            + '<thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Last Backup</th><th>Size</th><th>Status</th></tr></thead>'
+            + '<tbody>' + bodyRows + '</tbody></table></div>'
+          : '<div class="pve-unavailable">No backup history found.</div>')
+      + '</div>';
+  }
+
+  function _backupBadge (status) {
+    var map = {
+      ok:     ['pbs-badge-ok',     'OK'],
+      stale:  ['pbs-badge-stale',  'Stale'],
+      failed: ['pbs-badge-failed', 'Failed'],
+      none:   ['pbs-badge-none',   'None'],
+    };
+    var pair = map[status] || ['pbs-badge-none', escapeHtml(status)];
+    return '<span class="pve-badge ' + pair[0] + '">' + pair[1] + '</span>';
   }
 
   /* ── Guest table ─────────────────────────────────────────────────────────── */
