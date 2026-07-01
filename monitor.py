@@ -3921,6 +3921,11 @@ SETTINGS_EDITABLE_KEYS = {
     "ha_entity_voltage":   str,
     "ha_entity_current":   str,
     "ha_entity_energy":    str,
+    "pbs_url":              str,
+    "pbs_api_token_id":     str,
+    "pbs_api_token_secret": str,
+    "pbs_verify_ssl":       bool,
+    "pbs_ca_cert":          str,
 }
 
 _SETTINGS_INT_RANGES = {
@@ -3931,7 +3936,7 @@ _SETTINGS_INT_RANGES = {
     "history_days":     (1,  365),
 }
 
-_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url", "ha_url"}
+_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url", "ha_url", "pbs_url"}
 _SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_window",
                                 "refresh_rate", "history_days"}
 # These keys live in auth.json (alongside user credentials), not hosts.yaml
@@ -3941,6 +3946,7 @@ _AUTH_STORED_KEYS = {
     "openrouter_api_key",
     "ha_url", "ha_token", "ha_entity_power", "ha_entity_voltage",
     "ha_entity_current", "ha_entity_energy",
+    "pbs_url", "pbs_api_token_id", "pbs_api_token_secret",
 }
 
 
@@ -4326,6 +4332,18 @@ def _h_get_proxmox(proxmox_poller, force=False) -> tuple:
     url, _, _, _ = proxmox_poller._get_config()
     if not url and not cache.get("nodes"):
         cache["error"] = "Proxmox not configured"
+    return 200, cache
+
+
+def _h_get_pbs(pbs_poller, force=False) -> tuple:
+    if pbs_poller is None:
+        return 503, {"reachable": False, "error": "PBS poller not running"}
+    if force:
+        pbs_poller._poll()
+    cache = pbs_poller.get_cache()
+    url, _, _ = pbs_poller._get_config()
+    if not url and not cache.get("backups"):
+        cache["error"] = "PBS not configured"
     return 200, cache
 
 
@@ -4731,7 +4749,7 @@ def _h_post_auth_user_delete(path: str, auth_manager) -> tuple:
     return 200, {"ok": True}
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -4897,6 +4915,12 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 from urllib.parse import urlparse as _up_pve, parse_qs as _pqs_pve
                 force = _pqs_pve(_up_pve(self.path).query).get("refresh", ["0"])[0] == "1"
                 self._send_json(*_h_get_proxmox(proxmox_poller, force=force))
+                return
+            if self.path == "/api/pbs" or self.path.startswith("/api/pbs?"):
+                if not self._require_auth(): return
+                from urllib.parse import urlparse as _up_pbs, parse_qs as _pqs_pbs
+                force = _pqs_pbs(_up_pbs(self.path).query).get("refresh", ["0"])[0] == "1"
+                self._send_json(*_h_get_pbs(pbs_poller, force=force))
                 return
             if self.path == "/api/power" or self.path.startswith("/api/power?"):
                 if not self._require_auth(): return
@@ -5267,8 +5291,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
@@ -5659,11 +5683,17 @@ def main():
         ha_poller.start(stop_event)
         print(f"[netwatch] HA poller -> polling Home Assistant every {HAPoller.POLL_INTERVAL_SECONDS}s")
 
+    pbs_poller = PBSPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    _pbs_url, _, _ = pbs_poller._get_config()
+    if _pbs_url:
+        pbs_poller.start(stop_event)
+        print(f"[netwatch] PBS poller -> polling every {PBSPoller.POLL_INTERVAL_SECONDS}s")
+
     if not args.no_web:
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller},
             daemon=True
         )
         wt.start()

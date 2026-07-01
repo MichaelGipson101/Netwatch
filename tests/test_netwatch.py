@@ -3025,3 +3025,84 @@ def test_h_get_power_force_triggers_poll(tmp_path):
     with patch.object(HAPoller, "_fetch_state", staticmethod(lambda url, tok, eid: 55.0)):
         status, body = _hgp(poller, db, force=True)
     assert body["live"]["watts"] == 55.0
+
+
+# ============================================================================
+# /api/pbs handler
+# ============================================================================
+
+from monitor import _h_get_pbs
+
+
+def test_h_get_pbs_when_poller_is_none():
+    status, body = _h_get_pbs(None)
+    assert status == 503
+    assert body["reachable"] is False
+
+
+def test_h_get_pbs_returns_cache():
+    poller = _make_pbs_poller()
+    with poller._lock:
+        poller._cache = {
+            "reachable": True,
+            "last_updated": "2026-07-01T02:00:00",
+            "error": None,
+            "datastores": [{"name": "backup-store"}],
+            "backups": [],
+        }
+    status, body = _h_get_pbs(poller)
+    assert status == 200
+    assert body["datastores"][0]["name"] == "backup-store"
+
+
+def test_h_get_pbs_force_triggers_poll():
+    poller = _make_pbs_poller()
+    with patch.object(poller, "_poll") as mock_poll:
+        _h_get_pbs(poller, force=True)
+    mock_poll.assert_called_once()
+
+
+def test_h_get_pbs_without_force_does_not_poll():
+    poller = _make_pbs_poller()
+    with patch.object(poller, "_poll") as mock_poll:
+        _h_get_pbs(poller, force=False)
+    mock_poll.assert_not_called()
+
+
+def test_h_get_pbs_not_configured_error():
+    am = MagicMock()
+    am.data = {}
+    poller = PBSPoller(am)
+    status, body = _h_get_pbs(poller)
+    assert status == 200
+    assert body["error"] == "PBS not configured"
+
+
+# ============================================================================
+# PBS settings keys
+# ============================================================================
+
+def test_pbs_credential_keys_in_auth_stored_keys():
+    for k in ("pbs_url", "pbs_api_token_id", "pbs_api_token_secret"):
+        assert k in _AUTH_STORED_KEYS
+
+
+def test_pbs_verify_ssl_and_ca_cert_not_in_auth_stored_keys():
+    assert "pbs_verify_ssl" not in _AUTH_STORED_KEYS
+    assert "pbs_ca_cert" not in _AUTH_STORED_KEYS
+
+
+def test_h_post_settings_saves_pbs_secret_to_auth_manager():
+    import tempfile, os
+    am = MagicMock()
+    am.data = {}
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    am._save = MagicMock()
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "hosts.yaml")
+        status, body = _h_post_settings(
+            {"pbs_api_token_secret": "new-uuid"}, cfg, {}, auth_manager=am
+        )
+    assert am.data.get("pbs_api_token_secret") == "new-uuid"
