@@ -2253,6 +2253,77 @@ def test_group_backups_skips_records_without_type_or_id():
 
 
 # ============================================================================
+# PBSPoller — alerting and full poll cycle
+# ============================================================================
+
+def test_pbs_check_alerts_fires_once_for_failed():
+    poller = _make_pbs_poller()
+    backups = [{"type": "vm", "vmid": 108, "status": "failed", "last_backup_time": "2026-07-01T00:00:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 1
+
+
+def test_pbs_check_alerts_fires_for_stale():
+    poller = _make_pbs_poller()
+    backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 1
+    args = mock_send.call_args[0]
+    assert "120" in args[2]
+
+
+def test_pbs_check_alerts_rearms_after_clear():
+    poller = _make_pbs_poller()
+    failed = [{"type": "vm", "vmid": 108, "status": "failed", "last_backup_time": None}]
+    ok     = [{"type": "vm", "vmid": 108, "status": "ok",     "last_backup_time": None}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(failed)  # fires
+        poller._check_alerts(ok)      # clears
+        poller._check_alerts(failed)  # re-arms -> fires again
+    assert mock_send.call_count == 2
+
+
+def test_pbs_check_alerts_no_alert_for_none_status():
+    poller = _make_pbs_poller()
+    backups = [{"type": "vm", "vmid": 108, "status": "none", "last_backup_time": None}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 0
+
+
+def test_pbs_poll_builds_cache_from_fetch():
+    from datetime import datetime, timezone
+    poller = _make_pbs_poller()
+    now = datetime.now(tz=timezone.utc)
+
+    def _fake_fetch(base_url, token_id, token_secret, path):
+        if path == "/api2/json/status/datastore-usage":
+            return [{"store": "backup-store", "used": 500, "total": 1000, "avail": 500}]
+        if path == "/api2/json/admin/datastore/backup-store/snapshots":
+            return [{"backup-type": "vm", "backup-id": "108", "backup-time": int(now.timestamp())}]
+        raise AssertionError(f"unexpected path {path}")
+
+    with patch.object(poller, "_fetch", side_effect=_fake_fetch):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is True
+    assert cache["error"] is None
+    assert cache["datastores"][0]["name"] == "backup-store"
+    assert cache["backups"][0]["vmid"] == 108
+    assert cache["backups"][0]["status"] == "ok"
+
+
+def test_pbs_poll_sets_unreachable_on_fetch_error():
+    poller = _make_pbs_poller()
+    with patch.object(poller, "_fetch", side_effect=ConnectionError("timeout")):
+        poller._poll()
+    assert poller.get_cache()["reachable"] is False
+
+
+# ============================================================================
 # /api/proxmox handler
 # ============================================================================
 

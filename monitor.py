@@ -3238,13 +3238,70 @@ class PBSPoller:
         backups.sort(key=lambda b: (b["type"], str(b["vmid"])))
         return backups
 
+    def _fire_alert(self, condition_id, message):
+        if not self._alert_state.get(condition_id, False):
+            self._alert_state[condition_id] = True
+            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+            _send_alert_async(
+                self._alert_settings, "Netwatch · Backup Alert", message,
+                priority="high", tags="warning", click_url=click_url,
+            )
+
+    def _clear_alert(self, condition_id):
+        self._alert_state[condition_id] = False
+
+    def _check_alerts(self, backups):
+        for b in backups:
+            cid = f"pbs-backup-{b['type']}-{b['vmid']}"
+            if b["status"] == "failed":
+                self._fire_alert(cid, f"Backup for {b['type'].upper()} {b['vmid']} failed verification")
+            elif b["status"] == "stale":
+                when = b["last_backup_time"] or "unknown"
+                self._fire_alert(cid, f"No recent backup for {b['type'].upper()} {b['vmid']} — last backup {when}")
+            else:
+                self._clear_alert(cid)
+
     def _poll(self):
         url, token_id, token_secret = self._get_config()
         if not all([url, token_id, token_secret]):
             with self._lock:
                 self._cache["error"] = "PBS not configured"
             return
-        # Full fetch/cache-build logic added in Task 2.
+        try:
+            raw_usage = self._fetch(url, token_id, token_secret, "/api2/json/status/datastore-usage")
+            datastores = [self._parse_datastore(d) for d in raw_usage]
+            all_snapshots = []
+            for ds in raw_usage:
+                store = ds.get("store", "")
+                if not store:
+                    continue
+                snaps = self._fetch(url, token_id, token_secret,
+                                    f"/api2/json/admin/datastore/{store}/snapshots")
+                all_snapshots.extend(snaps)
+            backups = self._group_backups(all_snapshots)
+            with self._lock:
+                self._cache = {
+                    "reachable":    True,
+                    "last_updated": datetime.now(tz=timezone.utc).isoformat(),
+                    "error":        None,
+                    "datastores":   datastores,
+                    "backups":      backups,
+                }
+            self._check_alerts(backups)
+        except Exception as e:
+            logging.warning(f"PBSPoller: poll failed: {e}")
+            with self._lock:
+                self._cache["reachable"] = False
+
+    def start(self, stop_event):
+        def _loop():
+            while not stop_event.is_set():
+                try:
+                    self._poll()
+                except Exception as e:
+                    logging.warning(f"PBSPoller: unexpected error in loop: {e}")
+                stop_event.wait(self.POLL_INTERVAL_SECONDS)
+        threading.Thread(target=_loop, daemon=True, name="pbs-poller").start()
 
 
 class HAPoller:
