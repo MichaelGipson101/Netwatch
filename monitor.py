@@ -3113,6 +3113,140 @@ class ProxmoxPoller:
         threading.Thread(target=_loop, daemon=True, name="proxmox-poller").start()
 
 
+# ============================================================================
+# PBS Poller (Proxmox Backup Server REST API)
+# ============================================================================
+
+class PBSPoller:
+    POLL_INTERVAL_SECONDS = 300   # 5 minutes; backups run nightly, no need for Proxmox's 60s cadence
+    STALE_HOURS = 25              # grace window for daily backup jobs, matches NASPoller.REPLICATION_STALE_HOURS
+
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+        self._auth_manager = auth_manager
+        self._alert_settings = alert_settings or {}
+        self._alert_port = alert_port
+        self._cache = {
+            "reachable": False,
+            "last_updated": None,
+            "error": None,
+            "datastores": [],
+            "backups": [],
+        }
+        self._lock = threading.Lock()
+        self._alert_state = {}    # condition_id -> bool (True = currently alerting)
+
+    def get_cache(self):
+        with self._lock:
+            import copy
+            return copy.deepcopy(self._cache)
+
+    def _get_config(self):
+        data = self._auth_manager.data if self._auth_manager else {}
+        return (
+            data.get("pbs_url", ""),
+            data.get("pbs_api_token_id", ""),
+            data.get("pbs_api_token_secret", ""),
+        )
+
+    def _make_ssl_ctx(self):
+        import ssl
+        verify = bool(self._alert_settings.get("pbs_verify_ssl", True))
+        if not verify:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+        ca_cert = (self._alert_settings.get("pbs_ca_cert") or "").strip()
+        ctx = ssl.create_default_context(cafile=ca_cert or None)
+        if ca_cert and hasattr(ssl, "VERIFY_X509_STRICT"):
+            ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        return ctx
+
+    def _fetch(self, base_url, token_id, token_secret, path):
+        import urllib.request
+        url = base_url.rstrip("/") + path
+        # PBS's own API token header uses a colon between token name and
+        # secret, unlike Proxmox VE's PVEAPIToken which uses "=".
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"PBSAPIToken={token_id}:{token_secret}"}
+        )
+        with urllib.request.urlopen(req, context=self._make_ssl_ctx(), timeout=10) as r:
+            return json.loads(r.read().decode())["data"]
+
+    @staticmethod
+    def _parse_datastore(raw):
+        used = raw.get("used") or 0
+        total = raw.get("total") or 0
+        return {
+            "name":        raw.get("store", ""),
+            "used_bytes":  used,
+            "total_bytes": total,
+            "avail_bytes": raw.get("avail") or 0,
+            "percent":     round(used / total * 100, 1) if total else 0.0,
+        }
+
+    @staticmethod
+    def _classify_backup(last_backup_time, verify_state, stale_hours, now=None):
+        """Classify a guest's most recent backup snapshot.
+
+        `last_backup_time` is an aware UTC datetime or None if the guest has
+        no backup history at all - that's "none", not "stale", since there's
+        nothing to alert on for a guest that's simply never been backed up."""
+        from datetime import timedelta
+        if last_backup_time is None:
+            return "none"
+        if verify_state == "failed":
+            return "failed"
+        now = now or datetime.now(tz=timezone.utc)
+        if (now - last_backup_time) > timedelta(hours=stale_hours):
+            return "stale"
+        return "ok"
+
+    @classmethod
+    def _group_backups(cls, snapshots, now=None):
+        """Group PBS snapshot records by (backup-type, backup-id) and keep
+        only the most recent snapshot per guest - that's "last backup" for
+        that VM/CT."""
+        latest = {}
+        for snap in snapshots:
+            btype = snap.get("backup-type")
+            bid_raw = snap.get("backup-id")
+            if btype is None or bid_raw is None:
+                continue
+            key = (btype, bid_raw)
+            ts = snap.get("backup-time") or 0
+            if key not in latest or ts > (latest[key].get("backup-time") or 0):
+                latest[key] = snap
+
+        backups = []
+        for (btype, bid_raw), snap in latest.items():
+            ts = snap.get("backup-time")
+            last_backup_time = (
+                datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
+            )
+            verification = snap.get("verification") or {}
+            verify_state = verification.get("state")
+            vmid = int(bid_raw) if str(bid_raw).isdigit() else bid_raw
+            backups.append({
+                "type":             btype,
+                "vmid":             vmid,
+                "last_backup_time": last_backup_time.isoformat() if last_backup_time else None,
+                "size_bytes":       snap.get("size"),
+                "verify_state":     verify_state,
+                "status":           cls._classify_backup(last_backup_time, verify_state, cls.STALE_HOURS, now),
+            })
+        backups.sort(key=lambda b: (b["type"], str(b["vmid"])))
+        return backups
+
+    def _poll(self):
+        url, token_id, token_secret = self._get_config()
+        if not all([url, token_id, token_secret]):
+            with self._lock:
+                self._cache["error"] = "PBS not configured"
+            return
+        # Full fetch/cache-build logic added in Task 2.
+
+
 class HAPoller:
     POLL_INTERVAL_SECONDS = 60
 

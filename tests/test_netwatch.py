@@ -2127,6 +2127,132 @@ def test_pve_paused_guest_fires_alert():
 
 
 # ============================================================================
+# PBSPoller — config, SSL, fetch, classification/grouping logic
+# ============================================================================
+
+from monitor import PBSPoller
+
+
+def _make_pbs_poller():
+    am = MagicMock()
+    am.data = {
+        "pbs_url": "https://pbs.test:8007",
+        "pbs_api_token_id": "root@pbs!Netwatch",
+        "pbs_api_token_secret": "test-uuid",
+    }
+    return PBSPoller(am, alert_settings={}, alert_port=8080)
+
+
+def test_pbs_get_config_returns_tuple():
+    poller = _make_pbs_poller()
+    assert poller._get_config() == ("https://pbs.test:8007", "root@pbs!Netwatch", "test-uuid")
+
+
+def test_pbs_get_cache_returns_deepcopy():
+    poller = _make_pbs_poller()
+    c1 = poller.get_cache()
+    c1["reachable"] = True
+    c2 = poller.get_cache()
+    assert c2["reachable"] is False
+
+
+def test_pbs_poll_skipped_when_unconfigured():
+    am = MagicMock()
+    am.data = {}
+    poller = PBSPoller(am)
+    poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is False
+    assert cache["error"] == "PBS not configured"
+
+
+def test_parse_datastore_computes_percent():
+    ds = PBSPoller._parse_datastore({"store": "backup-store", "used": 500, "total": 1000, "avail": 500})
+    assert ds["name"] == "backup-store"
+    assert ds["used_bytes"] == 500
+    assert ds["total_bytes"] == 1000
+    assert ds["percent"] == 50.0
+
+
+def test_parse_datastore_zero_total_no_division_error():
+    ds = PBSPoller._parse_datastore({"store": "empty", "used": 0, "total": 0, "avail": 0})
+    assert ds["percent"] == 0.0
+
+
+def test_classify_backup_none_when_no_history():
+    assert PBSPoller._classify_backup(None, None, 25) == "none"
+
+
+def test_classify_backup_ok_when_recent_and_unverified():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(tz=timezone.utc)
+    recent = now - timedelta(hours=2)
+    assert PBSPoller._classify_backup(recent, None, 25, now=now) == "ok"
+
+
+def test_classify_backup_failed_when_verification_failed():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(tz=timezone.utc)
+    recent = now - timedelta(hours=2)
+    assert PBSPoller._classify_backup(recent, "failed", 25, now=now) == "failed"
+
+
+def test_classify_backup_stale_after_threshold():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(tz=timezone.utc)
+    old = now - timedelta(hours=26)
+    assert PBSPoller._classify_backup(old, "ok", 25, now=now) == "stale"
+
+
+def test_classify_backup_ok_just_under_threshold():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(tz=timezone.utc)
+    almost = now - timedelta(hours=24, minutes=59)
+    assert PBSPoller._classify_backup(almost, None, 25, now=now) == "ok"
+
+
+def test_group_backups_keeps_latest_per_guest():
+    poller = _make_pbs_poller()
+    snaps = [
+        {"backup-type": "vm", "backup-id": "108", "backup-time": 1000, "size": 100},
+        {"backup-type": "vm", "backup-id": "108", "backup-time": 2000, "size": 200},
+    ]
+    backups = poller._group_backups(snaps)
+    assert len(backups) == 1
+    assert backups[0]["vmid"] == 108
+    assert backups[0]["size_bytes"] == 200
+
+
+def test_group_backups_separates_different_guests():
+    poller = _make_pbs_poller()
+    snaps = [
+        {"backup-type": "vm", "backup-id": "108", "backup-time": 1000},
+        {"backup-type": "ct", "backup-id": "120", "backup-time": 1000},
+    ]
+    backups = poller._group_backups(snaps)
+    assert {b["vmid"] for b in backups} == {108, 120}
+
+
+def test_group_backups_status_failed_when_verification_failed():
+    from datetime import datetime, timezone
+    poller = _make_pbs_poller()
+    now = datetime.now(tz=timezone.utc)
+    snaps = [{
+        "backup-type": "vm", "backup-id": "108",
+        "backup-time": int(now.timestamp()),
+        "verification": {"state": "failed"},
+    }]
+    backups = poller._group_backups(snaps, now=now)
+    assert backups[0]["status"] == "failed"
+
+
+def test_group_backups_skips_records_without_type_or_id():
+    poller = _make_pbs_poller()
+    snaps = [{"backup-time": 1000}]
+    assert poller._group_backups(snaps) == []
+
+
+# ============================================================================
 # /api/proxmox handler
 # ============================================================================
 
