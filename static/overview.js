@@ -111,7 +111,9 @@
   // short synchronous force simulation lays the web out.
   var _topoPreview = null;   // { nodes, edges } with resolved x/y
 
-  var _TOPO_ICON_SIZE = { network: 64, ups: 56, host: 52, disk: 48, vm: 44, printer: 44 };
+  // Rendered on-screen icon sizes (CSS px). The draw pass converts these to
+  // viewBox units so icons stay legible however wide the layout spreads.
+  var _TOPO_ICON_PX = { network: 20, ups: 18, host: 17, disk: 15, vm: 14, printer: 14 };
 
   function _mountTopoPreview () {
     fetch('/api/topology').then(function (r) { return r.ok ? r.json() : null; })
@@ -127,22 +129,37 @@
         if (!nodes.length) { _renderTopoFallback(); return; }
         return ensureD3().then(function () {
           var saved = (typeof loadTopoPositions === 'function') ? loadTopoPositions() : {};
-          var missing = false;
+          var missing = false, pinned = [];
           nodes.forEach(function (n) {
             var p = saved[n.id];
-            if (p) { n.x = p.x; n.y = p.y; n.fx = p.x; n.fy = p.y; }
+            if (p) { n.x = p.x; n.y = p.y; n.fx = p.x; n.fy = p.y; pinned.push(n); }
             else missing = true;
           });
           if (missing) {
+            // Anchor the simulation at the centroid of any user-arranged
+            // (pinned) nodes so free nodes settle among them instead of
+            // stretching toward the origin, far from the saved layout.
+            var cx0 = 0, cy0 = 0;
+            if (pinned.length) {
+              pinned.forEach(function (p) { cx0 += p.fx; cy0 += p.fy; });
+              cx0 /= pinned.length; cy0 /= pinned.length;
+            }
+            nodes.forEach(function (n, i) {
+              if (n.fx === undefined) {
+                var a = i * 2.4;
+                n.x = cx0 + Math.cos(a) * 60;
+                n.y = cy0 + Math.sin(a) * 60;
+              }
+            });
             var sim = d3.forceSimulation(nodes)
               .force('link', d3.forceLink(edges).id(function (d) { return d.id; })
                 .distance(function (d) { return d.connection_type === 'virtual' ? 45 : 95; })
                 .strength(0.6))
               .force('charge', d3.forceManyBody().strength(-350))
-              .force('center', d3.forceCenter(0, 0))
+              .force('center', d3.forceCenter(cx0, cy0))
               // stronger y pull flattens the web to roughly the card's 2:1 aspect
-              .force('x', d3.forceX(0).strength(0.04))
-              .force('y', d3.forceY(0).strength(0.16))
+              .force('x', d3.forceX(cx0).strength(0.04))
+              .force('y', d3.forceY(cy0).strength(0.16))
               .force('collide', d3.forceCollide().radius(34))
               .stop();
             for (var i = 0; i < 250; i++) sim.tick();
@@ -173,7 +190,13 @@
       minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
       minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
     });
-    var pad = 44;
+    // viewBox units per CSS pixel — how much "meet" scaling will shrink the
+    // layout to fit the card box. Icon/pad sizes are multiplied by this so
+    // they render at a constant on-screen size regardless of layout spread.
+    var box = svg.parentElement;
+    var bw = (box && box.clientWidth) || 360, bh = (box && box.clientHeight) || 110;
+    var unitScale = Math.max((maxX - minX) / bw, (maxY - minY) / bh, 0.2);
+    var pad = 16 * unitScale;
     svg.setAttribute('viewBox',
       (minX - pad) + ' ' + (minY - pad) + ' ' +
       Math.max(maxX - minX + pad * 2, 1) + ' ' + Math.max(maxY - minY + pad * 2, 1));
@@ -189,12 +212,12 @@
         + 'L' + t.x.toFixed(1) + ',' + t.y.toFixed(1) + '"/></g>');
     });
     nodes.forEach(function (n) {
-      var size = _TOPO_ICON_SIZE[n.device_type] || 40;
+      var size = (_TOPO_ICON_PX[n.device_type] || 13) * unitScale;
       parts.push('<g class="topo-node topo-status-' + escapeHtml((n.status || 'UNKNOWN').toLowerCase())
         + '" data-id="' + n.id + '">'
         + '<use class="topo-node-icon" href="#topo-icon-' + escapeHtml(n.device_type || 'host')
         + '" x="' + (n.x - size / 2).toFixed(1) + '" y="' + (n.y - size / 2).toFixed(1)
-        + '" width="' + size + '" height="' + size + '"/></g>');
+        + '" width="' + size.toFixed(1) + '" height="' + size.toFixed(1) + '"/></g>');
     });
     svg.innerHTML = parts.join('');
   }
