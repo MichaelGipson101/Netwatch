@@ -1722,9 +1722,11 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .power-sparkline svg { display: block; width: 100%; }
 
 /* ── Overview tab ───────────────────────────────────────────────────────── */
-/* Overview is a clean landing screen: the summary row and tab bar hide while
-   it's active; the hamburger next to the greeting toggles the tab bar back. */
+/* Overview is a clean landing screen: the summary row, power card, and tab bar
+   hide while it's active (Overview's grid has its own compact power card); the
+   hamburger next to the greeting toggles the tab bar back. */
 body.nw-overview .summary{display:none}
+body.nw-overview .power-card{display:none}
 body.nw-overview .tabs{display:none}
 body.nw-overview.nw-overview-menu-open .tabs{display:flex}
 .ov-greeting{margin-bottom:22px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
