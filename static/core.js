@@ -55,6 +55,10 @@ function setTab(tab){
   // Web-overlay metrics only apply when topology tab is active in web mode
   document.body.classList.toggle('nw-topo-web',
     tab === 'topology' && _topoView === 'web');
+  // Overview hides the summary row + tab bar for a clean landing screen;
+  // its hamburger icon (toggleOverviewMenu) brings the tab bar back.
+  document.body.classList.toggle('nw-overview', tab === 'overview');
+  if(tab !== 'overview') document.body.classList.remove('nw-overview-menu-open');
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
   localStorage.setItem('nw-tab', tab);
   if(tab === 'overview'  && typeof initOverviewTab === 'function') initOverviewTab();

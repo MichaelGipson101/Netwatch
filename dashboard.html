@@ -272,8 +272,14 @@
 
   <div class="view" id="view-overview">
     <div class="ov-greeting">
-      <div class="ov-greeting-title" id="ov-greeting-title">Overview</div>
-      <div class="ov-greeting-sub">Here's a glimpse at everything, without clicking in.</div>
+      <div>
+        <div class="ov-greeting-title" id="ov-greeting-title">Overview</div>
+        <div class="ov-greeting-sub">Here's a glimpse at everything, without clicking in.</div>
+      </div>
+      <button class="ov-menu-toggle" id="ov-menu-toggle" onclick="toggleOverviewMenu()"
+              aria-label="Toggle menu" aria-expanded="false" title="Toggle menu">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
     </div>
     <div class="ov-grid" id="ov-grid"></div>
   </div>

@@ -1722,9 +1722,17 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .power-sparkline svg { display: block; width: 100%; }
 
 /* ── Overview tab ───────────────────────────────────────────────────────── */
-.ov-greeting{margin-bottom:22px}
+/* Overview is a clean landing screen: the summary row and tab bar hide while
+   it's active; the hamburger next to the greeting toggles the tab bar back. */
+body.nw-overview .summary{display:none}
+body.nw-overview .tabs{display:none}
+body.nw-overview.nw-overview-menu-open .tabs{display:flex}
+.ov-greeting{margin-bottom:22px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .ov-greeting-title{font-size:20px;font-weight:600;letter-spacing:-.01em}
 .ov-greeting-sub{font-size:13px;color:var(--hint);margin-top:4px}
+.ov-menu-toggle{background:transparent;border:none;color:var(--hint);padding:8px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;flex-shrink:0;transition:color .15s}
+.ov-menu-toggle:hover{color:var(--text)}
+body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .ov-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .ov-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow-1)}
 .ov-span2{grid-column:span 2}

@@ -9,6 +9,13 @@
 
   var _mounted = { proxmox: null, nas: null, inventory: null, briefs: null };
 
+  // Overview hides the tab bar; the hamburger next to the greeting toggles it.
+  window.toggleOverviewMenu = function () {
+    var open = document.body.classList.toggle('nw-overview-menu-open');
+    var btn = document.getElementById('ov-menu-toggle');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+
   window.initOverviewTab = function () {
     _renderShell();
     var hour = new Date().getHours();
