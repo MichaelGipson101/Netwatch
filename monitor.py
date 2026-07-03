@@ -4151,6 +4151,24 @@ def _h_post_ai_chat(handler, data, auth_manager) -> None:
             pass
 
 
+# Secrets must never be sent to the browser in readable form. GET /api/settings
+# substitutes this sentinel for any set secret; POST treats the sentinel as
+# "unchanged" so a round-tripped form doesn't wipe stored credentials.
+# An empty string still means "clear this key".
+SECRET_SETTINGS_KEYS = {
+    "truenas_api_key", "proxmox_password", "proxmox_token_secret",
+    "openrouter_api_key", "ha_token", "pbs_api_token_secret",
+}
+SECRET_PLACEHOLDER = "••••••••"
+
+
+def _redact_secrets(result: dict) -> dict:
+    for k in SECRET_SETTINGS_KEYS:
+        if result.get(k):
+            result[k] = SECRET_PLACEHOLDER
+    return result
+
+
 def _h_get_settings(settings: dict, auth_manager=None) -> tuple:
     result = {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
     if auth_manager:
@@ -4158,10 +4176,12 @@ def _h_get_settings(settings: dict, auth_manager=None) -> tuple:
             for k in _AUTH_STORED_KEYS:
                 if k in auth_manager.data:
                     result[k] = auth_manager.data[k]
-    return 200, result
+    return 200, _redact_secrets(result)
 
 
 def _h_post_settings(data: dict, config_path: str, settings: dict, auth_manager=None) -> tuple:
+    data = {k: v for k, v in data.items()
+            if not (k in SECRET_SETTINGS_KEYS and v == SECRET_PLACEHOLDER)}
     updates = {}
     for k, typ in SETTINGS_EDITABLE_KEYS.items():
         if k not in data:
@@ -4233,7 +4253,7 @@ def _h_post_settings(data: dict, config_path: str, settings: dict, auth_manager=
             for k in _AUTH_STORED_KEYS:
                 if k in auth_manager.data:
                     result[k] = auth_manager.data[k]
-    return 200, {"ok": True, "settings": result}
+    return 200, {"ok": True, "settings": _redact_secrets(result)}
 
 
 def _h_post_nas_ignore_alert(data: dict, config_path: str, settings: dict, auth_manager=None) -> tuple:

@@ -38,6 +38,16 @@ function _fillSettingsForm(s) {
     const el = _settingsField(k);
     if (el) el.value = (s[k] != null) ? s[k] : '';
   }
+  // Secret fields come back as a redaction sentinel — hint that leaving the
+  // sentinel untouched keeps the stored value, while clearing the field erases it.
+  const secretKeys = ['truenas_api_key', 'proxmox_password', 'proxmox_token_secret',
+                      'openrouter_api_key', 'ha_token', 'pbs_api_token_secret'];
+  for (const k of secretKeys) {
+    const el = _settingsField(k);
+    if (el && el.value === '••••••••') {
+      el.title = 'A value is saved. Leave as-is to keep it, or clear the field to erase it.';
+    }
+  }
   const verifyEl = _settingsField('proxmox_verify_ssl');
   if (verifyEl) verifyEl.checked = (s.proxmox_verify_ssl !== false);
   const pbsVerifyEl = _settingsField('pbs_verify_ssl');

@@ -1918,7 +1918,9 @@ def test_h_get_settings_reads_proxmox_creds_from_auth_manager():
     status, body = _h_get_settings({}, auth_manager=am)
     assert status == 200
     assert body["proxmox_url"] == "https://pve.test:8006"
-    assert body["proxmox_token_secret"] == "test-uuid"
+    # secrets are redacted on the way out — sentinel proves the key was read
+    from monitor import SECRET_PLACEHOLDER
+    assert body["proxmox_token_secret"] == SECRET_PLACEHOLDER
 
 
 def test_h_post_settings_saves_proxmox_secret_to_auth_manager():
@@ -3106,3 +3108,52 @@ def test_h_post_settings_saves_pbs_secret_to_auth_manager():
             {"pbs_api_token_secret": "new-uuid"}, cfg, {}, auth_manager=am
         )
     assert am.data.get("pbs_api_token_secret") == "new-uuid"
+
+
+# ── /api/settings secret redaction ──────────────────────────────────────────
+
+def test_get_settings_redacts_secrets():
+    from monitor import _h_get_settings, SECRET_PLACEHOLDER
+
+    class FakeAuth:
+        lock = _threading.Lock()
+        data = {"truenas_api_key": "real-secret-123", "openrouter_api_key": ""}
+
+    code, result = _h_get_settings({"default_interval": 30}, FakeAuth())
+    assert code == 200
+    assert result["truenas_api_key"] == SECRET_PLACEHOLDER
+    assert result["openrouter_api_key"] == ""          # unset stays empty, not sentinel
+    assert "real-secret-123" not in str(result)
+
+
+def test_post_settings_sentinel_keeps_existing_secret(tmp_path):
+    from monitor import _h_post_settings, SECRET_PLACEHOLDER
+
+    class FakeAuth:
+        lock = _threading.Lock()
+        data = {"truenas_api_key": "keep-me"}
+        def _save(self): pass
+
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text("settings: {}\nhosts: []\n")
+    auth = FakeAuth()
+    code, _ = _h_post_settings(
+        {"truenas_api_key": SECRET_PLACEHOLDER}, str(cfg), {}, auth)
+    assert code == 200
+    assert auth.data["truenas_api_key"] == "keep-me"
+
+
+def test_post_settings_empty_still_clears_secret(tmp_path):
+    from monitor import _h_post_settings
+
+    class FakeAuth:
+        lock = _threading.Lock()
+        data = {"truenas_api_key": "clear-me"}
+        def _save(self): pass
+
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text("settings: {}\nhosts: []\n")
+    auth = FakeAuth()
+    code, _ = _h_post_settings({"truenas_api_key": ""}, str(cfg), {}, auth)
+    assert code == 200
+    assert "truenas_api_key" not in auth.data
