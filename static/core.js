@@ -66,6 +66,8 @@ function setTab(tab){
 }
 
 const REFRESH = 5000;
+const LAT_SPARK_SAMPLES = 8;
+let _latHistory = [];
 let _firstRender = true;
 let lastOk = true;
 let lastData = null;
@@ -392,6 +394,12 @@ function renderSummary(data){
   const latEl = document.getElementById('s-lat');
   latEl.innerHTML = avgLat !== null ? avgLat.toFixed(1) + ' <sup>ms</sup>' : '-';
   latEl.style.color = 'var(--blue)';
+  if(avgLat !== null){
+    _latHistory.push(avgLat);
+    if(_latHistory.length > LAT_SPARK_SAMPLES) _latHistory.shift();
+  }
+  const latSpark = document.getElementById('s-lat-spark');
+  if(latSpark) latSpark.setAttribute('points', nwSparkPoints(_latHistory, 100, 22));
   const ovLat = document.getElementById('ov-lat');
   if(ovLat) ovLat.innerHTML = (avgLat !== null ? avgLat.toFixed(1) : '-') + '<span class="topo-overlay-unit">ms</span>';
   const uptEl = document.getElementById('s-upt');
@@ -1440,7 +1448,7 @@ function renderPowerSparkline(history) {
   el.innerHTML = '';
   const valid = history.filter(d => d.watts !== null);
   if (!valid.length) return;
-  const W = el.clientWidth || 300, H = 60;
+  const W = el.clientWidth || 300, H = 40;
   const m = {t: 4, r: 4, b: 4, l: 4};
   const w = W - m.l - m.r, h = H - m.t - m.b;
   const x = d3.scaleTime()
