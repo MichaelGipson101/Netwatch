@@ -26,6 +26,7 @@
       .then(function (d) { if (d) { _mounted.inventory = d; _renderInventory(); } }).catch(function () {});
     fetch('/api/brief').then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) { if (d) { _mounted.briefs = d; _renderBrief(); } }).catch(function () {});
+    _mountTopoPreview();
   };
 
   // Called from core.js refresh() on every poll while the tab is active.
@@ -51,7 +52,7 @@
         + '<span class="ov-row-meta">' + _ago(e.started_ts * 1000) + '</span></div>';
     }).join('') || '<div class="ov-empty">No incidents</div>';
 
-    _renderTopoPreview(hosts);
+    _updateTopoPreviewStatus(hosts);
     _renderPower();
   };
 
@@ -96,10 +97,135 @@
     document.getElementById('ov-power-spark').setAttribute('points', nwSparkPoints(watts, 100, 26));
   }
 
-  function _renderTopoPreview (hosts) {
+  // ── Topology preview: a static mini render of the real web ─────────────
+  // Same data (/api/topology), same icon sprites, same status/edge classes as
+  // topology.js — just non-interactive and fitted into the card. Positions come
+  // from the user's saved layout (nw-topo-positions) when present; otherwise a
+  // short synchronous force simulation lays the web out.
+  var _topoPreview = null;   // { nodes, edges } with resolved x/y
+
+  var _TOPO_ICON_SIZE = { network: 64, ups: 56, host: 52, disk: 48, vm: 44, printer: 44 };
+
+  function _mountTopoPreview () {
+    fetch('/api/topology').then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data) return;
+        var connected = {};
+        data.edges.forEach(function (e) { connected[e.source] = 1; connected[e.target] = 1; });
+        var nodeMap = {};
+        var nodes = data.nodes.filter(function (n) { return connected[n.id]; })
+          .map(function (n) { var c = Object.assign({}, n); nodeMap[c.id] = c; return c; });
+        var edges = data.edges.filter(function (e) { return nodeMap[e.source] && nodeMap[e.target]; })
+          .map(function (e) { return Object.assign({}, e); });
+        if (!nodes.length) { _renderTopoFallback(); return; }
+        return ensureD3().then(function () {
+          var saved = (typeof loadTopoPositions === 'function') ? loadTopoPositions() : {};
+          var missing = false;
+          nodes.forEach(function (n) {
+            var p = saved[n.id];
+            if (p) { n.x = p.x; n.y = p.y; n.fx = p.x; n.fy = p.y; }
+            else missing = true;
+          });
+          if (missing) {
+            var sim = d3.forceSimulation(nodes)
+              .force('link', d3.forceLink(edges).id(function (d) { return d.id; })
+                .distance(function (d) { return d.connection_type === 'virtual' ? 45 : 95; })
+                .strength(0.6))
+              .force('charge', d3.forceManyBody().strength(-350))
+              .force('center', d3.forceCenter(0, 0))
+              // stronger y pull flattens the web to roughly the card's 2:1 aspect
+              .force('x', d3.forceX(0).strength(0.04))
+              .force('y', d3.forceY(0).strength(0.16))
+              .force('collide', d3.forceCollide().radius(34))
+              .stop();
+            for (var i = 0; i < 250; i++) sim.tick();
+          }
+          _topoPreview = { nodes: nodes, edges: edges, nodeMap: nodeMap };
+          _drawTopoPreview();
+          if (window.nwLastData) _updateTopoPreviewStatus(window.nwLastData.hosts || []);
+        });
+      }).catch(function () {});
+  }
+
+  function _edgeEndpointId (v) { return typeof v === 'object' ? v.id : v; }
+
+  function _edgeState (e, nodeMap) {
+    var s = nodeMap[_edgeEndpointId(e.source)], t = nodeMap[_edgeEndpointId(e.target)];
+    var ss = (s && s.status) || 'UNKNOWN', ts = (t && t.status) || 'UNKNOWN';
+    if (ss === 'DOWN' || ss === 'IDLE' || ts === 'DOWN' || ts === 'IDLE') return 'dead';
+    if (ss === 'DEGRADED' || ts === 'DEGRADED') return 'degraded';
+    return 'alive';
+  }
+
+  function _drawTopoPreview () {
+    var svg = document.getElementById('ov-topo-svg');
+    if (!svg || !_topoPreview) return;
+    var nodes = _topoPreview.nodes, edges = _topoPreview.edges, nodeMap = _topoPreview.nodeMap;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach(function (n) {
+      minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+    });
+    var pad = 44;
+    svg.setAttribute('viewBox',
+      (minX - pad) + ' ' + (minY - pad) + ' ' +
+      Math.max(maxX - minX + pad * 2, 1) + ' ' + Math.max(maxY - minY + pad * 2, 1));
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    var parts = [];
+    edges.forEach(function (e) {
+      var s = nodeMap[_edgeEndpointId(e.source)], t = nodeMap[_edgeEndpointId(e.target)];
+      if (!s || !t) return;
+      parts.push('<g class="topo-edge topo-edge-' + escapeHtml(e.connection_type || 'ethernet')
+        + ' topo-edge-' + _edgeState(e, nodeMap) + '" data-edge="' + e.id + '">'
+        + '<path class="topo-edge-line" vector-effect="non-scaling-stroke" d="M'
+        + s.x.toFixed(1) + ',' + s.y.toFixed(1)
+        + 'L' + t.x.toFixed(1) + ',' + t.y.toFixed(1) + '"/></g>');
+    });
+    nodes.forEach(function (n) {
+      var size = _TOPO_ICON_SIZE[n.device_type] || 40;
+      parts.push('<g class="topo-node topo-status-' + escapeHtml((n.status || 'UNKNOWN').toLowerCase())
+        + '" data-id="' + n.id + '">'
+        + '<use class="topo-node-icon" href="#topo-icon-' + escapeHtml(n.device_type || 'host')
+        + '" x="' + (n.x - size / 2).toFixed(1) + '" y="' + (n.y - size / 2).toFixed(1)
+        + '" width="' + size + '" height="' + size + '"/></g>');
+    });
+    svg.innerHTML = parts.join('');
+  }
+
+  // Live status refresh: match hosts to preview nodes by MAC, then linked-host
+  // IP (same matching as updateTopologyWebStatus in topology.js), swap the
+  // status classes in place, and recompute edge alive/degraded/dead classes.
+  function _updateTopoPreviewStatus (hosts) {
     var svg = document.getElementById('ov-topo-svg');
     if (!svg) return;
-    var sats = hosts.slice(0, 6);
+    if (!_topoPreview) { _renderTopoFallback(hosts); return; }
+    var macStatus = {}, ipStatus = {};
+    (hosts || []).forEach(function (h) {
+      var m = (((h.specs || {}).mac) || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+      if (m) macStatus[m] = h.status;
+      if (h.ip) ipStatus[h.ip] = h.status;
+    });
+    _topoPreview.nodes.forEach(function (n) {
+      var m = (n.mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+      var s = macStatus[m] || (n.linked_host && n.linked_host.ip ? ipStatus[n.linked_host.ip] : null);
+      if (s) n.status = s;
+      var g = svg.querySelector('g.topo-node[data-id="' + n.id + '"]');
+      if (g) g.setAttribute('class', 'topo-node topo-status-' + (n.status || 'UNKNOWN').toLowerCase());
+    });
+    _topoPreview.edges.forEach(function (e) {
+      var g = svg.querySelector('g.topo-edge[data-edge="' + e.id + '"]');
+      if (g) g.setAttribute('class', 'topo-edge topo-edge-' + (e.connection_type || 'ethernet')
+        + ' topo-edge-' + _edgeState(e, _topoPreview.nodeMap));
+    });
+  }
+
+  // No inventory connections yet — fall back to the simple hosts-around-a-hub
+  // sketch so the card still shows something meaningful.
+  function _renderTopoFallback (hosts) {
+    var svg = document.getElementById('ov-topo-svg');
+    if (!svg) return;
+    svg.setAttribute('viewBox', '0 0 200 110');
+    var sats = (hosts || (window.nwLastData && window.nwLastData.hosts) || []).slice(0, 6);
     var cx = 100, cy = 55, r = 40;
     var parts = [];
     sats.forEach(function (h, i) {

@@ -1271,14 +1271,16 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 
 #clock,.scard-val,.d-stat-val,.lat,.uptime-pct,.topo-overlay-num,.inv-metric-val,.event-dur,.d-pi-val{font-variant-numeric:tabular-nums}
 
-/* ── Topo canvas glass: light defaults, dark overrides ── */
-.topo-web{
+/* ── Topo canvas glass: light defaults, dark overrides ──
+   (.ov-topo-box shares the edge palette so the Overview mini-preview
+   renders edges with the same per-type colors) */
+.topo-web,.ov-topo-box{
   --glass-bg:rgba(255,255,255,.78);--glass-bg-strong:rgba(255,255,255,.92);
   --glass-border:rgba(15,18,24,.10);--glass-text:#1a1a1a;--glass-muted:#5d6470;
   --canvas-dot:#d8d6cf;--edge-dead:#9aa0ab;
   --edge-eth:#3f6fe0;--edge-wifi:#1ba8a0;--edge-fiber:#8b53c0;--edge-power:#d18a14;--edge-virtual:#9a5fc4;--edge-usb:#3d9c6f;--edge-console:#7a7a7a;
 }
-[data-theme="dark"] .topo-web{
+[data-theme="dark"] .topo-web,[data-theme="dark"] .ov-topo-box{
   --glass-bg:rgba(20,22,28,.65);--glass-bg-strong:rgba(15,14,13,.88);
   --glass-border:rgba(255,255,255,.10);--glass-text:#e8e6e0;--glass-muted:#9b998f;
   --canvas-dot:#232220;--edge-dead:#9b998f;
