@@ -4,7 +4,7 @@
 function setTheme(mode){
   localStorage.setItem('nw-theme', mode);
   if(window.nwApplyTheme) window.nwApplyTheme();
-  document.querySelectorAll('#theme-toggle button').forEach(b => {
+  document.querySelectorAll('.theme-toggle button').forEach(b => {
     const active = b.dataset.themeBtn === mode;
     b.classList.toggle('active', active);
     b.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -12,7 +12,7 @@ function setTheme(mode){
 }
 document.addEventListener('DOMContentLoaded', () => {
   const current = localStorage.getItem('nw-theme') || 'auto';
-  document.querySelectorAll('#theme-toggle button').forEach(b => {
+  document.querySelectorAll('.theme-toggle button').forEach(b => {
     b.classList.toggle('active', b.dataset.themeBtn === current);
     b.setAttribute('aria-pressed', b.dataset.themeBtn === current ? 'true' : 'false');
     b.addEventListener('click', () => setTheme(b.dataset.themeBtn));

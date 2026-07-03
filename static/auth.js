@@ -110,11 +110,14 @@ async function openEditor(){
 }
 
 // ── Landing page ──────────────────────────────────────────────────────────
-function showLanding(mode){
+// `force` re-applies the mode even when the landing page is already visible
+// (used by the login ⇄ setup toggle link); auth-status callers omit it so a
+// repeat call can't clear a half-typed form.
+function showLanding(mode, force){
   const lp = document.getElementById('landing-page');
   const alreadyVisible = !lp.classList.contains('hidden');
   lp.classList.remove('hidden');
-  if(alreadyVisible) return;
+  if(alreadyVisible && !force) return;
   const loginForm = document.getElementById('landing-login-form');
   const setupForm = document.getElementById('landing-setup-form');
   if(mode === 'setup'){
@@ -130,6 +133,13 @@ function showLanding(mode){
     document.getElementById('landing-password').value = '';
     setTimeout(() => document.getElementById('landing-username').focus(), 50);
   }
+  const modeToggle = document.getElementById('landing-mode-toggle');
+  if(modeToggle) modeToggle.textContent =
+    mode === 'setup' ? 'Back to log in' : 'First time? Create an admin account';
+}
+function toggleLandingMode(){
+  const setupVisible = document.getElementById('landing-setup-form').style.display !== 'none';
+  showLanding(setupVisible ? 'login' : 'setup', true);
 }
 function hideLanding(){
   document.getElementById('landing-page').classList.add('hidden');

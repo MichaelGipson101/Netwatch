@@ -155,7 +155,13 @@
 
 </svg>
 <div id="landing-page">
-  <div class="landing-card">
+  <div class="landing-glow" aria-hidden="true"></div>
+  <div class="theme-toggle landing-theme-toggle" role="group" aria-label="Theme">
+    <button data-theme-btn="light" title="Light" aria-label="Light theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+    <button data-theme-btn="auto" title="Auto" aria-label="Auto theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18" fill="currentColor"/><path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" stroke="none"/></svg></button>
+    <button data-theme-btn="dark" title="Dark" aria-label="Dark theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+  </div>
+  <div class="landing-wrap">
     <div class="landing-brand">
       <svg class="landing-nw-logo" role="img" viewBox="0 0 168 32" xmlns="http://www.w3.org/2000/svg" aria-label="Netwatch">
         <polyline points="2,16 12,16 17,8 22,24 27,16 30,16" style="stroke:var(--green)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
@@ -163,35 +169,39 @@
       </svg>
       <div class="landing-brand-sub">homelab monitor</div>
     </div>
-    <form id="landing-login-form" onsubmit="submitLandingLogin(event)">
-      <div class="landing-field">
-        <label>Username</label>
-        <input id="landing-username" type="text" autocomplete="username" spellcheck="false">
-      </div>
-      <div class="landing-field">
-        <label>Password</label>
-        <input id="landing-password" type="password" autocomplete="current-password">
-      </div>
-      <div id="landing-error" class="landing-error"></div>
-      <button type="submit" class="btn btn-primary landing-submit">Log in</button>
-    </form>
-    <form id="landing-setup-form" style="display:none" onsubmit="submitLandingSetup(event)">
-      <p class="landing-setup-desc">No admin account exists yet. Create one to get started.</p>
-      <div class="landing-field">
-        <label>Username</label>
-        <input id="landing-setup-username" type="text" autocomplete="username" placeholder="alphanumeric, underscores, hyphens">
-      </div>
-      <div class="landing-field">
-        <label>Password</label>
-        <input id="landing-setup-password" type="password" autocomplete="new-password" placeholder="at least 8 characters">
-      </div>
-      <div class="landing-field">
-        <label>Confirm password</label>
-        <input id="landing-setup-password2" type="password" autocomplete="new-password">
-      </div>
-      <div id="landing-setup-error" class="landing-error"></div>
-      <button type="submit" class="btn btn-primary landing-submit">Create admin account</button>
-    </form>
+    <div class="landing-card">
+      <form id="landing-login-form" onsubmit="submitLandingLogin(event)">
+        <div class="landing-field">
+          <label>Username</label>
+          <input id="landing-username" type="text" autocomplete="username" spellcheck="false">
+        </div>
+        <div class="landing-field">
+          <label>Password</label>
+          <input id="landing-password" type="password" autocomplete="current-password">
+        </div>
+        <div id="landing-error" class="landing-error"></div>
+        <button type="submit" class="landing-submit">Log in</button>
+      </form>
+      <form id="landing-setup-form" style="display:none" onsubmit="submitLandingSetup(event)">
+        <p class="landing-setup-desc">No admin account exists yet. Create one to get started.</p>
+        <div class="landing-field">
+          <label>Username</label>
+          <input id="landing-setup-username" type="text" autocomplete="username" placeholder="alphanumeric, underscores, hyphens">
+        </div>
+        <div class="landing-field">
+          <label>Password</label>
+          <input id="landing-setup-password" type="password" autocomplete="new-password" placeholder="at least 8 characters">
+        </div>
+        <div class="landing-field">
+          <label>Confirm password</label>
+          <input id="landing-setup-password2" type="password" autocomplete="new-password">
+        </div>
+        <div id="landing-setup-error" class="landing-error"></div>
+        <button type="submit" class="landing-submit">Create admin account</button>
+      </form>
+    </div>
+    <button type="button" class="landing-mode-toggle" id="landing-mode-toggle" onclick="toggleLandingMode()">First time? Create an admin account</button>
+    <div class="landing-footer">netwatch · a project by The Lantern Archive</div>
   </div>
 </div>
 
