@@ -3157,3 +3157,28 @@ def test_post_settings_empty_still_clears_secret(tmp_path):
     code, _ = _h_post_settings({"truenas_api_key": ""}, str(cfg), {}, auth)
     assert code == 200
     assert "truenas_api_key" not in auth.data
+
+
+# ── Proxmox node CPU/RAM sparkline history ──────────────────────────────────
+
+def test_proxmox_append_history_tracks_and_caps():
+    from monitor import ProxmoxPoller
+
+    history = {}
+    def node(cpu, mem_used, mem_total):
+        return {"name": "pve-01", "cpu_percent": cpu,
+                "mem_used_bytes": mem_used, "mem_total_bytes": mem_total}
+
+    for i in range(25):
+        nodes = [node(float(i), 50, 100)]
+        ProxmoxPoller.append_history(history, nodes, cap=20)
+
+    assert nodes[0]["cpu_history"][-1] == 24.0
+    assert len(nodes[0]["cpu_history"]) == 20          # capped
+    assert nodes[0]["cpu_history"][0] == 5.0           # oldest trimmed
+    assert nodes[0]["mem_history"][-1] == 50.0         # percent, not bytes
+
+    # zero-total RAM must not divide by zero
+    nodes = [node(1.0, 0, 0)]
+    ProxmoxPoller.append_history(history, nodes, cap=20)
+    assert nodes[0]["mem_history"][-1] == 0.0

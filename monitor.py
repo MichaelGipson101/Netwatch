@@ -2945,6 +2945,22 @@ class ProxmoxPoller:
         self._lock = threading.Lock()
         self._alert_state = {}    # condition_id -> bool (True = currently alerting)
         self._exemptions = {}     # vmid (int) -> float timestamp (exempt until)
+        self._node_history = {}   # node name -> {"cpu": [...], "mem": [...]}
+
+    @staticmethod
+    def append_history(history, nodes, cap=20):
+        """Record one CPU/RAM sample per node into `history` and attach the
+        rolling series to each node dict (drives dashboard sparklines)."""
+        for n in nodes:
+            h = history.setdefault(n["name"], {"cpu": [], "mem": []})
+            total = n.get("mem_total_bytes") or 0
+            mem_pct = round(n.get("mem_used_bytes", 0) / total * 100, 1) if total else 0.0
+            h["cpu"].append(n.get("cpu_percent", 0.0))
+            h["mem"].append(mem_pct)
+            del h["cpu"][:-cap]
+            del h["mem"][:-cap]
+            n["cpu_history"] = list(h["cpu"])
+            n["mem_history"] = list(h["mem"])
 
     def get_cache(self):
         with self._lock:
@@ -3090,6 +3106,7 @@ class ProxmoxPoller:
             now_str = datetime.now().isoformat(timespec="seconds")
             with self._lock:
                 prev_nodes = self._cache.get("nodes", [])
+                self.append_history(self._node_history, nodes)
                 self._cache.update({
                     "reachable":    True,
                     "last_updated": now_str,
