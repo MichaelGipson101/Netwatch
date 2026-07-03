@@ -1327,6 +1327,15 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .nas-badge-ok{background:var(--green-bg);color:var(--green-text)}
 .nas-badge-warn{background:var(--amber-bg);color:var(--amber-text)}
 .nas-badge-err{background:var(--red-bg);color:var(--red-text)}
+.nas-pool-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+.nas-pool-hdr{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.nas-pool-name{font-size:14px;font-weight:600}
+.nas-pool-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.nas-pool-metric{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;padding:12px 14px}
+.nas-pool-metric-lbl{font-size:11px;color:var(--hint);margin-bottom:5px}
+.nas-pool-metric-val{font-size:18px;font-weight:600}
+.nas-pool-metric-sub{font-size:11px;color:var(--hint);margin-top:4px}
+@media (max-width:380px){.nas-pool-metrics{grid-template-columns:1fr}}
 .nas-vdev-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-light);font-size:13px}
 .nas-vdev-row:last-child{border-bottom:none}
 .nas-vdev-indent{padding-left:20px}
@@ -1378,25 +1387,28 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 
 /* ── Servers tab pill toggle ─────────────────────────────────────────────── */
 .servers-pills {
-  display: flex;
-  gap: 4px;
-  padding: 12px 0 16px;
+  display: inline-flex;
+  gap: 3px;
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 3px;
+  margin: 12px 0 16px;
 }
 .servers-pill {
-  padding: 5px 18px;
-  border-radius: 20px;
-  border: 1.5px solid var(--border);
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: none;
   background: transparent;
-  color: var(--muted);
-  font: 500 13px/1 'DM Sans', sans-serif;
+  color: var(--hint);
+  font: 500 12.5px/1 'DM Sans', sans-serif;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 .servers-pill:hover { background: var(--subtle); color: var(--text); }
 .servers-pill.active {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--surface);
+  background: var(--hero-bg);
+  color: var(--hero-text);
 }
 
 /* ── Proxmox panel — shared & action bar ─────────────────────────────────── */
@@ -1443,28 +1455,9 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 }
 .pve-node-badge-ok  { background: var(--green-bg); color: var(--green-text); }
 .pve-node-badge-err { background: var(--red-bg);   color: var(--red-text); }
-.pve-node-stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-}
-.pve-stat-lbl { color: var(--muted); width: 30px; flex-shrink: 0; }
-.pve-stat-val { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.pve-bar {
-  flex: 1;
-  height: 5px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.pve-bar-fill {
-  height: 100%;
-  background: var(--green);
-  border-radius: 3px;
-  transition: width 0.3s;
-  max-width: 100%;
-}
+.pve-node-sparks{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pve-spark-hdr{display:flex;justify-content:space-between;font-size:11px;color:var(--hint);margin-bottom:5px}
+.pve-spark svg{display:block}
 .pve-node-uptime { font-size: 11px; color: var(--muted); }
 
 /* ── Proxmox guest table ─────────────────────────────────────────────────── */

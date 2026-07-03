@@ -106,18 +106,24 @@
       var cpuPct   = (n.cpu_percent || 0).toFixed(1);
       var memPct   = n.mem_total_bytes
         ? Math.round(n.mem_used_bytes / n.mem_total_bytes * 100) : 0;
-      var memUsed  = _fmtBytes(n.mem_used_bytes);
-      var memTotal = _fmtBytes(n.mem_total_bytes);
       var uptime   = _fmtUptime(n.uptime_seconds);
       return '<div class="pve-node-card">'
         + '<div class="pve-node-name">' + escapeHtml(n.name) + '</div>'
         + '<div class="pve-node-badge ' + okCls + '">' + label + '</div>'
-        + '<div class="pve-node-stat"><span class="pve-stat-lbl">CPU</span>'
-        +   '<div class="pve-bar"><div class="pve-bar-fill" style="width:' + cpuPct + '%"></div></div>'
-        +   '<span class="pve-stat-val">' + cpuPct + '%</span></div>'
-        + '<div class="pve-node-stat"><span class="pve-stat-lbl">RAM</span>'
-        +   '<div class="pve-bar"><div class="pve-bar-fill" style="width:' + memPct + '%"></div></div>'
-        +   '<span class="pve-stat-val">' + memUsed + ' / ' + memTotal + '</span></div>'
+        + '<div class="pve-node-sparks">'
+        +   '<div class="pve-spark">'
+        +     '<div class="pve-spark-hdr"><span>CPU</span><span>' + cpuPct + '%</span></div>'
+        +     '<svg width="100%" height="24" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline points="'
+        +       nwSparkPoints(n.cpu_history || [], 100, 24)
+        +     '" fill="none" stroke="var(--green)" stroke-width="1.6"/></svg>'
+        +   '</div>'
+        +   '<div class="pve-spark">'
+        +     '<div class="pve-spark-hdr"><span>RAM</span><span>' + memPct + '%</span></div>'
+        +     '<svg width="100%" height="24" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline points="'
+        +       nwSparkPoints(n.mem_history || [], 100, 24)
+        +     '" fill="none" stroke="var(--blue)" stroke-width="1.6"/></svg>'
+        +   '</div>'
+        + '</div>'
         + '<div class="pve-node-uptime">Up ' + uptime + '</div>'
         + '</div>';
     }).join('');

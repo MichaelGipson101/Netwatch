@@ -178,3 +178,19 @@ document.addEventListener('keydown', e => {
   const drawer = document.getElementById('drawer');
   if(drawer && drawer.classList.contains('open')) return trapFocus(drawer, e);
 });
+
+// Build an SVG <polyline> points string from numeric samples (oldest first).
+// x spans `w`, y spans `h` minus `pad` top/bottom, min..max normalized.
+// Returns '' with fewer than 2 finite samples (caller renders an empty svg).
+function nwSparkPoints(values, w, h, pad){
+  pad = pad === undefined ? 2 : pad;
+  const vals = (values || []).filter(v => typeof v === 'number' && isFinite(v));
+  if(vals.length < 2) return '';
+  const min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+  const span = (max - min) || 1;
+  const innerH = h - pad * 2;
+  return vals.map((v, i) =>
+    ((i / (vals.length - 1)) * w).toFixed(1) + ',' +
+    (pad + (1 - (v - min) / span) * innerH).toFixed(1)
+  ).join(' ');
+}

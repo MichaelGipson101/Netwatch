@@ -105,36 +105,23 @@ function renderPoolSection(pool) {
   var used = pool.capacity_used_bytes || 0;
   var total = pool.capacity_total_bytes || 0;
   var pct = total ? Math.round(used / total * 100) : 0;
-  var statusCls = pool.status === 'ONLINE' ? 'nas-status-ok' : 'nas-status-err';
-  var scrub = pool.last_scrub || {};
-  var scrubLabel = scrub.status === 'FINISHED' ? (scrub.errors ? 'Errors' : 'Clean') : (scrub.status || '—');
-  var scrubCls = scrub.errors ? 'nas-status-err' : 'nas-status-ok';
-  var scrubDate = scrub.end_time ? nasFmtDate(scrub.end_time) : '—';
-  var nextScrub = pool.next_scrub ? nasFmtDate(pool.next_scrub) : '—';
-  var nextDays = pool.next_scrub ? nasDaysAway(pool.next_scrub) : null;
-  var nextSub = nextDays !== null ? nextDays + ' day' + (nextDays === 1 ? '' : 's') + ' away' : '';
   var badgeCls = pool.status === 'ONLINE' ? 'nas-badge-ok' : 'nas-badge-err';
+  var nextDays = pool.next_scrub ? nasDaysAway(pool.next_scrub) : null;
 
-  return '<div class="nas-section-label">Pool health</div>' +
-    '<div class="nas-metrics">' +
-      '<div class="nas-metric"><div class="nas-metric-label">Pool status</div>' +
-        '<div class="nas-metric-value ' + statusCls + '">' + escapeHtml(pool.status) + '</div>' +
-        '<div class="nas-metric-sub">' + escapeHtml(pool.name) + '</div></div>' +
-      '<div class="nas-metric"><div class="nas-metric-label">Capacity used</div>' +
-        '<div class="nas-metric-value">' + nasFmtBytes(used) + '</div>' +
-        '<div class="nas-metric-sub">of ' + nasFmtBytes(total) + ' (' + pct + '%)</div></div>' +
-      '<div class="nas-metric"><div class="nas-metric-label">Last scrub</div>' +
-        '<div class="nas-metric-value ' + scrubCls + '">' + escapeHtml(scrubLabel) + '</div>' +
-        '<div class="nas-metric-sub">' + scrubDate + ' \xB7 ' + (scrub.errors || 0) + ' error(s)</div></div>' +
-      '<div class="nas-metric"><div class="nas-metric-label">Next scrub</div>' +
-        '<div class="nas-metric-value">' + nextScrub + '</div>' +
-        '<div class="nas-metric-sub">' + nextSub + '</div></div>' +
+  return '<div class="nas-pool-card">' +
+    '<div class="nas-pool-hdr">' +
+      '<span class="nas-pool-name">Pool: ' + escapeHtml(pool.name) + '</span>' +
+      '<span class="nas-badge ' + badgeCls + '">' + escapeHtml(pool.status) + '</span></div>' +
+    '<div class="nas-pool-metrics">' +
+      '<div class="nas-pool-metric"><div class="nas-pool-metric-lbl">Used</div>' +
+        '<div class="nas-pool-metric-val">' + pct + '%</div>' +
+        '<div class="nas-pool-metric-sub">' + nasFmtBytes(used) + ' of ' + nasFmtBytes(total) + '</div></div>' +
+      '<div class="nas-pool-metric"><div class="nas-pool-metric-lbl">Next scrub</div>' +
+        '<div class="nas-pool-metric-val">' + (nextDays !== null ? nextDays + 'd' : '—') + '</div>' +
+        '<div class="nas-pool-metric-sub">' + (pool.next_scrub ? nasFmtDate(pool.next_scrub) : '') + '</div></div>' +
     '</div>' +
-    '<div class="nas-card">' +
-      '<div class="nas-card-hdr"><span class="nas-card-title">VDEV layout</span>' +
-        '<span class="nas-badge ' + badgeCls + '">' + escapeHtml(pool.status) + '</span></div>' +
-      renderVdevs(pool.vdevs || []) +
-    '</div>';
+    '<div class="nas-vdev-list">' + renderVdevs(pool.vdevs || []) + '</div>' +
+  '</div>';
 }
 
 function renderVdevs(vdevs) {
