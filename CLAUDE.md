@@ -32,9 +32,11 @@ pytest tests/ -k "inventory"
 python3 monitor.py --restore <tarball> [--force]
 ```
 
-There's no build/lint step — it's plain Python served directly, and `dashboard.html` /
-`static/*.js`/`*.css` are read straight off disk at request time (static files cached
-client-side via `?v=` query strings, not server-rebuilt).
+There's no build/lint step — it's plain Python served directly. `static/*.js`/`*.css` are
+read off disk at request time (cached client-side via `?v=` query strings), but
+`dashboard.html` is loaded **once at startup** (`_load_dashboard_html`) — restart the server
+to see HTML changes. New files under `static/` must also be added to the `_STATIC_FILES`
+allowlist in `monitor.py` or they 404.
 
 First run requires creating an admin account (no auth configured = dashboard shows setup wizard):
 
