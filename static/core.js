@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     b.addEventListener('click', () => setTheme(b.dataset.themeBtn));
   });
 
-  let initialTab = localStorage.getItem('nw-tab') || 'topology';
+  let initialTab = localStorage.getItem('nw-tab') || 'overview';
   if (initialTab === 'storage') initialTab = 'servers';  // renamed in v3.41
   setTab(initialTab);
   // Restore Cards/Web view preference for the topology tab
@@ -57,6 +57,7 @@ function setTab(tab){
     tab === 'topology' && _topoView === 'web');
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
   localStorage.setItem('nw-tab', tab);
+  if(tab === 'overview'  && typeof initOverviewTab === 'function') initOverviewTab();
   if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();
   if(tab === 'servers'   && typeof initServersTab === 'function') initServersTab();
   if(tab === 'briefs') fetchBriefs();
@@ -429,6 +430,8 @@ async function refresh(){
     lastData = data;
     if(window.updateMiraStatus) window.updateMiraStatus(data);
     window.nwLastData = data;
+    if(document.getElementById('view-overview').classList.contains('active')
+       && typeof renderOverviewLive === 'function') renderOverviewLive(data);
     const down = data.hosts.filter(h => !h.is_up && h.status === 'DOWN').length;
     const fav = document.getElementById('favicon-link');
     if(fav){

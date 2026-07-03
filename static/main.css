@@ -1718,3 +1718,37 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   overflow: hidden;
 }
 .power-sparkline svg { display: block; width: 100%; }
+
+/* ── Overview tab ───────────────────────────────────────────────────────── */
+.ov-greeting{margin-bottom:22px}
+.ov-greeting-title{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.ov-greeting-sub{font-size:13px;color:var(--hint);margin-top:4px}
+.ov-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.ov-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow-1)}
+.ov-span2{grid-column:span 2}
+.ov-card-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.ov-card-title{font-size:13.5px;font-weight:600}
+.ov-viewall{background:none;border:none;font-size:11.5px;color:var(--hint);cursor:pointer;font-family:'DM Sans',sans-serif;padding:0}
+.ov-viewall:hover{color:var(--text)}
+.ov-big{font-size:28px;font-weight:600;letter-spacing:-.02em;margin-bottom:8px}
+.ov-num-dim{font-size:14px;font-weight:400;color:var(--hint)}
+.ov-hosts-line{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.ov-hosts-line .ov-big{font-size:32px;margin-bottom:0}
+.ov-big-sub{font-size:12px;color:var(--hint)}
+.ov-rows{display:flex;flex-direction:column;gap:10px}
+.ov-row{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.ov-row-top{padding-top:8px;border-top:1px solid var(--border-light)}
+.ov-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.ov-row-name{font-weight:500}
+.ov-trunc{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-row-meta{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);margin-left:auto;flex-shrink:0}
+.ov-empty{font-size:12px;color:var(--hint)}
+.ov-topo-box{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;height:110px;overflow:hidden}
+.ov-chips{display:flex;gap:6px;flex-wrap:wrap}
+.ov-chip{font-size:10.5px;background:var(--subtle);border:1px solid var(--border-light);padding:2px 8px;border-radius:5px}
+.ov-brief-date{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:6px}
+.ov-brief-title{font-size:13px;font-weight:600;margin-bottom:4px}
+.ov-brief-text{font-size:12.5px;color:var(--muted);line-height:1.55;margin:0}
+#view-overview .ov-row{padding:0}
+#ov-hosts-down .ov-row{padding:7px 0;border-top:1px solid var(--border-light)}
+@media (max-width:760px){.ov-grid{grid-template-columns:1fr}.ov-span2{grid-column:span 1}}

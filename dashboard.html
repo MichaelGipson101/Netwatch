@@ -230,6 +230,7 @@
   <div class="err-banner" id="err-banner">Lost connection to netwatch - retrying...</div>
 
   <div class="tabs" role="tablist" aria-label="Views">
+    <button class="tab" data-tab="overview" role="tab">Overview</button>
     <button class="tab" data-tab="hosts" role="tab">Hosts</button>
     <button class="tab" data-tab="topology" role="tab">Topology</button>
     <button class="tab" data-tab="events" role="tab">Events <span class="tab-count" id="events-count" style="display:none">0</span></button>
@@ -267,6 +268,14 @@
       </div>
       <div id="power-sparkline" class="power-sparkline"></div>
     </div>
+  </div>
+
+  <div class="view" id="view-overview">
+    <div class="ov-greeting">
+      <div class="ov-greeting-title" id="ov-greeting-title">Overview</div>
+      <div class="ov-greeting-sub">Here's a glimpse at everything, without clicking in.</div>
+    </div>
+    <div class="ov-grid" id="ov-grid"></div>
   </div>
 
   <div class="view" id="view-topology">
@@ -1002,6 +1011,7 @@
 </div>
 
 <script src="/static/utils.js?v={{VERSION}}"></script>
+<script src="/static/overview.js?v={{VERSION}}"></script>
 <script src="/static/core.js?v={{VERSION}}"></script>
 <script src="/static/topology.js?v={{VERSION}}"></script>
 <script src="/static/auth.js?v={{VERSION}}"></script>
