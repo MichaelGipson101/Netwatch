@@ -1533,6 +1533,9 @@ async function refreshPowerCard() {
       const ago = Math.round((Date.now() / 1000 - live.last_updated) / 60);
       updEl.textContent = ago < 2 ? 'just now' : ago + 'm ago';
     }
+    // D3 is lazy-loaded by the topology web view, which may never initialize
+    // (e.g. saved cards view) — load it on demand so the sparkline still draws.
+    if (typeof d3 === 'undefined') await ensureD3();
     renderPowerSparkline(data.history || []);
   } catch (_) { /* non-critical */ }
 }
