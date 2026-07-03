@@ -77,12 +77,15 @@ nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:
 .theme-toggle button.active{background:var(--subtle);color:var(--text)}
 .theme-toggle svg{width:14px;height:14px;display:block}
 
-.tabs{display:inline-flex;gap:3px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:22px}
-.tab{background:transparent;border:none;padding:7px 16px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:all .12s;display:inline-flex;align-items:center;gap:7px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:22px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{background:transparent;border:none;padding:8px 16px;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;color:var(--hint);cursor:pointer;transition:background .15s,color .15s;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;flex-shrink:0}
 .tab:hover{color:var(--text)}
-.tab.active{background:var(--text);color:var(--surface)}
+.tab.active{background:var(--hero-bg);color:var(--hero-text);font-weight:600}
 .tab-count{display:inline-block;background:var(--red-bg);color:var(--red-text);border-radius:9px;padding:1px 7px;font-family:'DM Mono',monospace;font-size:10px;font-weight:500;line-height:1.4}
-.tab.active .tab-count{background:var(--text-inverse-bg);color:var(--surface)}
+.tab.active .tab-count{background:var(--text-inverse-bg);color:var(--hero-text)}
+.tab-settings-btn{background:transparent;border:none;color:var(--hint);padding:8px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;margin-left:auto;flex-shrink:0;transition:color .15s}
+.tab-settings-btn:hover{color:var(--text)}
 
 .view{display:none}
 .view.active{display:block}
@@ -945,10 +948,9 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   #nav-auth{font-size:10px;gap:6px}
   #nav-auth button{padding:5px 8px}
 
-  /* ── Tabs row: scroll horizontally if needed instead of overflowing ───── */
-  .tabs{overflow-x:auto;scrollbar-width:none}
-  .tabs::-webkit-scrollbar{display:none}
-  .tab{flex-shrink:0;padding:9px 14px}
+  /* ── Tabs row: tighter pills on mobile (row already scrolls) ─────────── */
+  .tabs{gap:4px}
+  .tab{padding:7px 12px}
 
   /* ── Topology grid: smaller minimum so 2 cards fit on narrow phones ──── */
   .topo-grid{grid-template-columns:1fr;gap:10px}
@@ -1103,7 +1105,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 }
 @media (max-width: 480px){
   #clock{display:none}
-  .tabs{width:100%}
   .scard{padding:12px 14px}
   .scard-val{font-size:22px}
 }
@@ -1119,10 +1120,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 /* Light mode parity — subtle blur on floating menus */
 .user-dropdown{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .inv-export-menu{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-/* ── Deep Frost: tabs ── */
-[data-theme="dark"] .tabs{background:rgba(255,255,255,.055);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-color:rgba(255,255,255,.08)}
-[data-theme="dark"] .tab{border:1px solid transparent}
-[data-theme="dark"] .tab.active{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.12)}
 /* ── Deep Frost: modal overlay + panel ── */
 [data-theme="dark"] .modal-overlay{backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);background:rgba(0,0,0,.55)}
 [data-theme="dark"] .modal{background:rgba(18,17,15,.88);backdrop-filter:blur(28px) saturate(1.8);-webkit-backdrop-filter:blur(28px) saturate(1.8);border-color:rgba(255,255,255,.09);box-shadow:0 24px 64px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.08)}

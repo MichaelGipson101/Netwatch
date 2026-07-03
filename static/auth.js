@@ -26,8 +26,7 @@ function updateAuthUI(){
   if(_authState.logged_in){
     const label = escapeHtml(_authState.username) + (_authState.admin ? ' <span style="opacity:.5">(admin)</span>' : '');
     const backupItem = _authState.admin
-      ? '<button class="user-dropdown-item" onclick="toggleUserMenu();openSettings()">Settings</button>'
-      + '<button class="user-dropdown-item" onclick="toggleUserMenu();downloadBackup()">Download backup</button>'
+      ? '<button class="user-dropdown-item" onclick="toggleUserMenu();downloadBackup()">Download backup</button>'
       : '';
     navAuth.innerHTML =
       '<div class="user-menu" id="user-menu">'
@@ -52,6 +51,9 @@ function updateAuthUI(){
   if (window.nwLastNas && typeof renderNas === 'function') {
     renderNas(window.nwLastNas);
   }
+  // Settings gear lives next to the tabs; only admins may open Settings.
+  const gear = document.getElementById('tab-settings-btn');
+  if (gear) gear.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
 }
 
 let _userMenuOutsideClick = null;
