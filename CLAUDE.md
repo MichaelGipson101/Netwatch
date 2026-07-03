@@ -105,6 +105,23 @@ Major subsystems, in file order:
 no bundler, no framework, no CDN dependencies (D3 and fonts are vendored under `static/` so the
 dashboard works on an isolated LAN).
 
+**Every new dashboard feature must be checked at mobile widths (320–390px), not just desktop.**
+The dashboard is used from phones, not just at a desk. Follow the existing responsive
+conventions rather than inventing new ones: wide data tables get wrapped in
+`.pve-table-scroll` with an explicit `min-width` on the `<table>` at `@media (max-width: 600px)`
+so they scroll horizontally instead of squishing columns (see `.pve-guest-table`,
+`.pbs-backup-table`); fixed-width label/value pairs in flex rows need their own narrow
+breakpoint (`@media (max-width: 380px)`) shrinking widths/font-size rather than letting content
+overflow (see `.pbs-ds-name`/`.pbs-ds-val`). Verify with the browser's device toolbar or by
+checking `element.scrollWidth` vs `clientWidth` at 320px — don't assume desktop layout math
+holds at phone widths.
+
+**Bump `VERSION` (top of `monitor.py`) after every major task completion.** Static assets are
+cache-busted via `?v={{VERSION}}` in `dashboard.html`; if the version string doesn't change,
+browsers may keep serving stale cached JS/CSS after an edit, even though the server is reading
+the new file from disk. Bumping requires a service restart (`systemctl restart netwatch`) to take
+effect, since `{{VERSION}}` is substituted from the Python constant at request time.
+
 **Data files** (gitignored, live next to `monitor.py`, not in a subdirectory):
 `hosts.yaml` (ping targets + settings, copy from `hosts.yaml.example`), `auth.json` (users +
 Proxmox/TrueNAS/OpenRouter/ntfy credentials), `netwatch.db`/`-shm`/`-wal` (SQLite: history,

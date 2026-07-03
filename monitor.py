@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.57"
+VERSION = "3.58"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -4047,7 +4047,6 @@ def _h_get_ai_config(settings: dict, auth_manager=None) -> tuple:
 ALLOWED_AI_MODELS = frozenset({
     "openrouter/free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/deepseek-v4-flash:free",
     "google/gemma-4-31b-it:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
 })

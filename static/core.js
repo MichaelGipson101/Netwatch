@@ -1495,6 +1495,7 @@ async function refreshPowerCard() {
     const res = await fetch('/api/power');
     if (!res.ok) return;
     const data = await res.json();
+    window.nwLastPower = data;
     const card = document.getElementById('power-card');
     if (!card) return;
     if (!data.configured) { card.style.display = 'none'; return; }

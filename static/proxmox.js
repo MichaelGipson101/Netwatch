@@ -163,14 +163,17 @@
     }).join('');
 
     return '<div class="pbs-card">'
-      + '<div class="pbs-hdr">Backups</div>'
+      + '<div class="pbs-hdr" onclick="this.closest(\'.pbs-card\').classList.toggle(\'open\')">'
+        + 'Backups<span class="pbs-chevron">▾</span></div>'
       + warn
       + '<div class="pbs-datastores">' + (dsRows || '<div class="pve-unavailable">No datastores found.</div>') + '</div>'
-      + (bodyRows
-          ? '<div class="pve-table-scroll"><table class="pbs-backup-table">'
-            + '<thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Last Backup</th><th>Size</th><th>Status</th></tr></thead>'
-            + '<tbody>' + bodyRows + '</tbody></table></div>'
-          : '<div class="pve-unavailable">No backup history found.</div>')
+      + '<div class="pbs-body">'
+        + (bodyRows
+            ? '<div class="pve-table-scroll"><table class="pbs-backup-table">'
+              + '<thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Last Backup</th><th>Size</th><th>Status</th></tr></thead>'
+              + '<tbody>' + bodyRows + '</tbody></table></div>'
+            : '<div class="pve-unavailable">No backup history found.</div>')
+      + '</div>'
       + '</div>';
   }
 

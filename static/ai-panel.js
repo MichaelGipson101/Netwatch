@@ -64,11 +64,27 @@
   }
   window.updateMiraStatus = updateMiraStatus;
 
+  // The power card (Home Assistant) is rendered outside the tab-specific
+  // .view containers, so it's on-screen regardless of which tab is active —
+  // unlike PBS/TrueNAS data, which only appears within the servers view.
+  function _powerContext(){
+    const power = window.nwLastPower;
+    if(!power || !power.configured) return null;
+    const live = power.live || {};
+    return {
+      reachable: live.reachable,
+      watts: live.watts, voltage: live.voltage,
+      current_a: live.current_a, energy_kwh_today: live.energy_kwh,
+      last_updated: live.last_updated
+    };
+  }
+
   function _buildContext(){
     const tab = localStorage.getItem('nw-tab') || 'topology';
     if(tab === 'inventory'){
       return {
         page: 'inventory',
+        power: _powerContext(),
         items: (typeof _inventoryData !== 'undefined' ? _inventoryData : []).map(i => ({
           name: i.system, ip: i.ip, device_type: i.device_type,
           category: i.category, role: i.role,
@@ -81,13 +97,15 @@
       };
     }
     if(tab === 'events'){
-      return {page:'events', events:(lastData && lastData.events)||[]};
+      return {page:'events', power: _powerContext(), events:(lastData && lastData.events)||[]};
     }
     if(tab === 'servers'){
       const pve = window.nwLastProxmox;
       const nas = window.nwLastNas;
+      const pbs = window.nwLastPbs;
       return {
         page: 'servers',
+        power: _powerContext(),
         proxmox: pve ? {
           reachable: pve.reachable, error: pve.error || null,
           nodes: (pve.nodes || []).map(n => ({
@@ -111,6 +129,20 @@
           })),
           replication_tasks: (nas.replication_tasks || []).map(t => ({
             name: t.name, last_run: t.last_run, last_state: t.last_state
+          })),
+          alerts: (nas.alerts || []).map(a => ({
+            id: a.id, level: a.level, klass: a.klass, message: a.message
+          }))
+        } : null,
+        pbs: (pbs && pbs.error !== 'PBS not configured') ? {
+          reachable: pbs.reachable, error: pbs.error || null,
+          datastores: (pbs.datastores || []).map(d => ({
+            name: d.name, used_bytes: d.used_bytes,
+            total_bytes: d.total_bytes, percent: d.percent
+          })),
+          backups: (pbs.backups || []).map(b => ({
+            vmid: b.vmid, type: b.type, status: b.status,
+            last_backup_time: b.last_backup_time, size_bytes: b.size_bytes
           }))
         } : null
       };
@@ -118,6 +150,7 @@
     const hosts = (lastData && lastData.hosts)||[];
     return {
       page: tab,
+      power: _powerContext(),
       summary: lastData && lastData.summary,
       hosts: hosts.map(h => ({
         name:h.name, ip:h.ip, group:h.group, device_type:h.device_type,
@@ -134,6 +167,10 @@
     const d = document.createElement('div');
     d.className = 'ai-msg ' + role;
     if(role === 'assistant' && text) d.innerHTML = _renderMarkdown(text);
+    else if(role === 'assistant'){
+      d.classList.add('ai-msg-typing');
+      d.innerHTML = '<span class="ai-typing-dots"><span></span><span></span><span></span></span>';
+    }
     else d.textContent = text;
     _msgs.appendChild(d);
     _msgs.scrollTop = _msgs.scrollHeight;
@@ -204,9 +241,12 @@
           try{
             const parsed = JSON.parse(raw);
             const delta = parsed.choices?.[0]?.delta?.content || '';
-            assistantText += delta;
-            assistantDiv.innerHTML = _renderMarkdown(assistantText);
-            _msgs.scrollTop = _msgs.scrollHeight;
+            if(delta){
+              assistantText += delta;
+              assistantDiv.classList.remove('ai-msg-typing');
+              assistantDiv.innerHTML = _renderMarkdown(assistantText);
+              _msgs.scrollTop = _msgs.scrollHeight;
+            }
             if(parsed.usage){ _streamUsage = parsed.usage; _streamModel = parsed.model; }
           }catch(e){}
         }
@@ -219,7 +259,11 @@
           try{
             const parsed = JSON.parse(raw);
             const delta = parsed.choices?.[0]?.delta?.content || '';
-            if(delta){ assistantText += delta; assistantDiv.innerHTML = _renderMarkdown(assistantText); }
+            if(delta){
+              assistantText += delta;
+              assistantDiv.classList.remove('ai-msg-typing');
+              assistantDiv.innerHTML = _renderMarkdown(assistantText);
+            }
             if(parsed.usage){ _streamUsage = parsed.usage; _streamModel = parsed.model; }
           }catch(e){}
         }
@@ -376,7 +420,10 @@
       + 'Tone: atmospheric and precise. Short sentences. Stillness in the prose. '
       + 'Occasional warmth, not performative. '
       + 'No markdown headers or bullet overload in conversational replies. '
-      + 'Never say "Great question", "Certainly", "Of course", "I\'d be happy to", or "As an AI".\n\n';
+      + 'Never say "Great question", "Certainly", "Of course", "I\'d be happy to", or "As an AI".\n\n'
+      + 'ctx.power, if present, is live Home Assistant power monitoring for the homelab: '
+      + 'reachable, watts, voltage, current_a, energy_kwh_today, last_updated (unix seconds). '
+      + 'If power is null, HA power monitoring is not configured — say so rather than guessing.\n\n';
     if(ctx.page === 'inventory'){
       return base
         + 'You have the full hardware inventory below. Each item includes:\n'
@@ -394,12 +441,16 @@
     }
     if(ctx.page === 'servers'){
       return base
-        + 'You have Proxmox VE and TrueNAS data below, if configured and loaded.\n'
+        + 'You have Proxmox VE, TrueNAS, and Proxmox Backup Server data below, if configured and loaded.\n'
         + 'proxmox.nodes[]: name, status (online/offline), cpu_percent, mem_used_bytes, mem_total_bytes, '
         + 'uptime_seconds, and guests[] (vmid, name, type: qemu/lxc, status: running/stopped, cpu_percent, mem_used_bytes, mem_total_bytes).\n'
         + 'truenas.pools[]: name, status (ONLINE/degraded), capacity_used_bytes, capacity_total_bytes, '
-        + 'last_scrub (status, errors, end_time), next_scrub. truenas.replication_tasks[]: name, last_run, last_state.\n'
-        + 'If proxmox or truenas is null, that panel has not been opened yet this session or is not configured — say so rather than guessing.\n\n'
+        + 'last_scrub (status, errors, end_time), next_scrub. truenas.replication_tasks[]: name, last_run, last_state. '
+        + 'truenas.alerts[]: id, level (WARNING/CRITICAL etc.), klass, message — active TrueNAS-reported alerts, unrelated to pool/scrub status above.\n'
+        + 'pbs.datastores[]: name, used_bytes, total_bytes, percent — PBS storage capacity. '
+        + 'pbs.backups[]: vmid, type (vm/ct), status (ok/stale/failed/none), last_backup_time, size_bytes — most recent backup per guest. '
+        + 'A guest missing from pbs.backups has never been backed up.\n'
+        + 'If proxmox, truenas, or pbs is null, that panel has not been opened yet this session or is not configured — say so rather than guessing.\n\n'
         + 'Current page: servers\nLive data:\n' + JSON.stringify(ctx, null, 2);
     }
     return base

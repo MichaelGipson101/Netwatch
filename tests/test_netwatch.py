@@ -291,7 +291,7 @@ def _ai_config_server(settings, auth_manager=None):
 
 
 def test_ai_config_returns_model_without_leaking_key():
-    settings = {"ai_model": "deepseek/deepseek-v4-flash:free"}
+    settings = {"ai_model": "meta-llama/llama-3.3-70b-instruct:free"}
     am = _make_am_with_openrouter("sk-or-test-123")
     server, port = _ai_config_server(settings, auth_manager=am)
     t = _threading.Thread(target=server.handle_request)
@@ -300,7 +300,7 @@ def test_ai_config_returns_model_without_leaking_key():
         with _urlreq.urlopen(f"http://127.0.0.1:{port}/api/ai-config") as r:
             data = _json.loads(r.read())
         assert "api_key" not in data
-        assert data["model"] == "deepseek/deepseek-v4-flash:free"
+        assert data["model"] == "meta-llama/llama-3.3-70b-instruct:free"
     finally:
         server.server_close()
         t.join()
