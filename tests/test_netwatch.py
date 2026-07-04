@@ -2223,7 +2223,7 @@ def test_classify_backup_ok_saturday_after_friday_backup():
 def test_classify_backup_ok_sunday_after_friday_backup():
     from datetime import datetime, timezone
     friday_backup = datetime(2026, 1, 9, 20, 0, tzinfo=timezone.utc)   # Friday 20:00
-    sunday_check = datetime(2026, 1, 11, 20, 0, tzinfo=timezone.utc)   # Sunday 20:00 (48h raw, 24 business)
+    sunday_check = datetime(2026, 1, 11, 20, 0, tzinfo=timezone.utc)   # Sunday 20:00 (48h raw, 4 business)
     assert PBSPoller._classify_backup(friday_backup, "ok", 25, now=sunday_check) == "ok"
 
 
