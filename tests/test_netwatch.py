@@ -2254,6 +2254,44 @@ def test_group_backups_skips_records_without_type_or_id():
     assert poller._group_backups(snaps) == []
 
 
+def test_business_hours_elapsed_same_weekday_no_weekend():
+    from datetime import datetime, timezone, timedelta
+    start = datetime(2026, 1, 12, 9, 0, tzinfo=timezone.utc)   # Monday 09:00
+    end = datetime(2026, 1, 12, 15, 0, tzinfo=timezone.utc)    # Monday 15:00
+    assert PBSPoller._business_hours_elapsed(start, end) == 6.0
+
+
+def test_business_hours_elapsed_spans_one_weekend():
+    from datetime import datetime, timezone
+    start = datetime(2026, 1, 9, 20, 0, tzinfo=timezone.utc)   # Friday 20:00
+    end = datetime(2026, 1, 12, 20, 0, tzinfo=timezone.utc)    # Monday 20:00 (72h raw)
+    # Sat + Sun fully excluded (48h) -> 24 business hours remain
+    assert PBSPoller._business_hours_elapsed(start, end) == 24.0
+
+
+def test_business_hours_elapsed_spans_two_weekends():
+    from datetime import datetime, timezone
+    start = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)   # Friday 20:00
+    end = datetime(2026, 1, 16, 20, 0, tzinfo=timezone.utc)    # Friday 20:00, 14 days later (336h raw)
+    # 4 full weekend days excluded (96h) -> 240 business hours remain
+    assert PBSPoller._business_hours_elapsed(start, end) == 240.0
+
+
+def test_business_hours_elapsed_partial_day_boundary():
+    from datetime import datetime, timezone
+    start = datetime(2026, 1, 9, 23, 0, tzinfo=timezone.utc)   # Friday 23:00
+    end = datetime(2026, 1, 10, 1, 0, tzinfo=timezone.utc)     # Saturday 01:00 (2h raw)
+    # 1h on Friday (business) + 1h on Saturday (weekend, excluded) -> 1 business hour remains
+    assert PBSPoller._business_hours_elapsed(start, end) == 1.0
+
+
+def test_business_hours_elapsed_end_before_start_returns_zero():
+    from datetime import datetime, timezone
+    start = datetime(2026, 1, 12, 15, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 12, 9, 0, tzinfo=timezone.utc)
+    assert PBSPoller._business_hours_elapsed(start, end) == 0.0
+
+
 # ============================================================================
 # PBSPoller — alerting and full poll cycle
 # ============================================================================

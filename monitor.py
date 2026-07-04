@@ -3219,6 +3219,33 @@ class PBSPoller:
             return "stale"
         return "ok"
 
+    @staticmethod
+    def _business_hours_elapsed(start, end):
+        """Hours between two aware datetimes, excluding any time that falls on a
+        Saturday or Sunday in whichever timezone the datetimes already carry -
+        used so a Fri-night backup's staleness clock pauses across the weekend
+        instead of accumulating two days of "missed backup" before Monday's job
+        has even run. Deliberately does not call .astimezone() - see this
+        plan's Global Constraints for why (ambient-local-timezone conversion
+        made test results depend on the test-runner machine's timezone)."""
+        from datetime import timedelta
+        if end <= start:
+            return 0.0
+        total_hours = (end - start).total_seconds() / 3600.0
+        weekend_hours = 0.0
+        day = start.date()
+        one_day = timedelta(days=1)
+        while day <= end.date():
+            if day.weekday() >= 5:  # Saturday=5, Sunday=6
+                day_start = datetime(day.year, day.month, day.day, tzinfo=start.tzinfo)
+                day_end = day_start + one_day
+                overlap_start = max(start, day_start)
+                overlap_end = min(end, day_end)
+                if overlap_end > overlap_start:
+                    weekend_hours += (overlap_end - overlap_start).total_seconds() / 3600.0
+            day += one_day
+        return total_hours - weekend_hours
+
     @classmethod
     def _group_backups(cls, snapshots, now=None):
         """Group PBS snapshot records by (backup-type, backup-id) and keep
