@@ -52,6 +52,18 @@ function clearTopoPositions(){
   localStorage.removeItem(TOPO_POSITIONS_KEY);
 }
 
+const TOPO_LAST_LAYOUT_KEY = 'nw-topo-last-layout';
+
+function loadTopoLastLayout(){
+  try { return JSON.parse(localStorage.getItem(TOPO_LAST_LAYOUT_KEY) || '{}'); }
+  catch(e){ return {}; }
+}
+function saveTopoLastLayout(nodes){
+  const snapshot = {};
+  nodes.forEach(n => { snapshot[n.id] = { x: n.x, y: n.y }; });
+  localStorage.setItem(TOPO_LAST_LAYOUT_KEY, JSON.stringify(snapshot));
+}
+
 function ensureD3(){
   if(_topoD3Loaded) return Promise.resolve();
   if(_topoD3Loading) return _topoD3Loading;
@@ -281,6 +293,7 @@ function renderTopologyWeb(){
     .force('center', d3.forceCenter(width / 2, height / 2))
     .force('collide', d3.forceCollide().radius(d => nodeRadiusFor(d) + 10));
   _topoSimulation = sim;
+  sim.on('end', () => saveTopoLastLayout(renderNodes));
 
   // Edges
   _topoEdgeSel = null;  // clear until rebuilt below
