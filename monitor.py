@@ -3208,14 +3208,17 @@ class PBSPoller:
 
         `last_backup_time` is an aware UTC datetime or None if the guest has
         no backup history at all - that's "none", not "stale", since there's
-        nothing to alert on for a guest that's simply never been backed up."""
-        from datetime import timedelta
+        nothing to alert on for a guest that's simply never been backed up.
+
+        Staleness is measured in business hours (Sat/Sun excluded) rather than
+        flat wall-clock hours, so a Fri-night backup doesn't read as stale over
+        the weekend on an M-F backup schedule - see PBSPoller._business_hours_elapsed."""
         if last_backup_time is None:
             return "none"
         if verify_state == "failed":
             return "failed"
         now = now or datetime.now(tz=timezone.utc)
-        if (now - last_backup_time) > timedelta(hours=stale_hours):
+        if PBSPoller._business_hours_elapsed(last_backup_time, now) > stale_hours:
             return "stale"
         return "ok"
 

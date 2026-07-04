@@ -2201,7 +2201,7 @@ def test_classify_backup_failed_when_verification_failed():
 
 def test_classify_backup_stale_after_threshold():
     from datetime import datetime, timezone, timedelta
-    now = datetime.now(tz=timezone.utc)
+    now = datetime(2026, 1, 7, 12, 0, tzinfo=timezone.utc)   # Wednesday - no weekend in the 26h window
     old = now - timedelta(hours=26)
     assert PBSPoller._classify_backup(old, "ok", 25, now=now) == "stale"
 
@@ -2211,6 +2211,35 @@ def test_classify_backup_ok_just_under_threshold():
     now = datetime.now(tz=timezone.utc)
     almost = now - timedelta(hours=24, minutes=59)
     assert PBSPoller._classify_backup(almost, None, 25, now=now) == "ok"
+
+
+def test_classify_backup_ok_saturday_after_friday_backup():
+    from datetime import datetime, timezone
+    friday_backup = datetime(2026, 1, 9, 20, 0, tzinfo=timezone.utc)   # Friday 20:00
+    saturday_check = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc) # Saturday 12:00 (16h raw)
+    assert PBSPoller._classify_backup(friday_backup, "ok", 25, now=saturday_check) == "ok"
+
+
+def test_classify_backup_ok_sunday_after_friday_backup():
+    from datetime import datetime, timezone
+    friday_backup = datetime(2026, 1, 9, 20, 0, tzinfo=timezone.utc)   # Friday 20:00
+    sunday_check = datetime(2026, 1, 11, 20, 0, tzinfo=timezone.utc)   # Sunday 20:00 (48h raw, 24 business)
+    assert PBSPoller._classify_backup(friday_backup, "ok", 25, now=sunday_check) == "ok"
+
+
+def test_classify_backup_stale_monday_night_if_still_missing():
+    from datetime import datetime, timezone
+    friday_backup = datetime(2026, 1, 9, 20, 0, tzinfo=timezone.utc)    # Friday 20:00
+    monday_night_check = datetime(2026, 1, 12, 22, 0, tzinfo=timezone.utc)  # Monday 22:00
+    # raw elapsed = 74h; weekend excluded = 48h; business = 26h > 25h threshold
+    assert PBSPoller._classify_backup(friday_backup, "ok", 25, now=monday_night_check) == "stale"
+
+
+def test_classify_backup_failed_still_fires_on_saturday():
+    from datetime import datetime, timezone
+    friday_backup = datetime(2026, 1, 9, 20, 0, tzinfo=timezone.utc)
+    saturday_check = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
+    assert PBSPoller._classify_backup(friday_backup, "failed", 25, now=saturday_check) == "failed"
 
 
 def test_group_backups_keeps_latest_per_guest():
