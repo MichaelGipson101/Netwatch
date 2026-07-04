@@ -75,7 +75,8 @@
         + '<svg width="100%" height="26" viewBox="0 0 100 26" preserveAspectRatio="none">'
         + '<polyline id="ov-power-spark" points="" fill="none" stroke="var(--blue)" stroke-width="1.6"/></svg>')
       + _card('topology', 'Topology', 'topology', '',
-        '<div class="ov-topo-box"><svg id="ov-topo-svg" width="100%" height="100%" viewBox="0 0 200 110"></svg></div>')
+        '<div class="ov-topo-box"><svg id="ov-topo-svg" width="100%" height="100%" viewBox="0 0 200 110"></svg>'
+        + '<div class="ov-empty ov-topo-placeholder" id="ov-topo-placeholder" style="display:none">Open Topology to build the map</div></div>')
       + _card('servers', 'Servers', 'servers', '', '<div id="ov-servers-list" class="ov-rows"></div>')
       + _card('events', 'Events', 'events', '', '<div id="ov-events-list" class="ov-rows"></div>')
       + _card('inventory', 'Inventory', 'inventory', '',
@@ -104,12 +105,13 @@
     document.getElementById('ov-power-spark').setAttribute('points', nwSparkPoints(watts, 100, 26));
   }
 
-  // ── Topology preview: a static mini render of the real web ─────────────
-  // Same data (/api/topology), same icon sprites, same status/edge classes as
-  // topology.js — just non-interactive and fitted into the card. Positions come
-  // from the user's saved layout (nw-topo-positions) when present; otherwise a
-  // short synchronous force simulation lays the web out.
-  var _topoPreview = null;   // { nodes, edges } with resolved x/y
+  // ── Topology preview: renders topology.js's persisted layout ───────────
+  // topology.js is the sole owner of layout computation — it saves the settled
+  // force-simulation layout to localStorage (nw-topo-last-layout) whenever its
+  // simulation cools. This card only reads that snapshot and draws it: no
+  // simulation, no D3 dependency here.
+  var _topoPreview = null;             // { nodes, edges, nodeMap } with resolved x/y
+  var _topoShowingPlaceholder = false; // true while the "open Topology" placeholder is shown
 
   // Rendered on-screen icon sizes (CSS px). The draw pass converts these to
   // viewBox units so icons stay legible however wide the layout spreads.
@@ -127,48 +129,37 @@
         var edges = data.edges.filter(function (e) { return nodeMap[e.source] && nodeMap[e.target]; })
           .map(function (e) { return Object.assign({}, e); });
         if (!nodes.length) { _renderTopoFallback(); return; }
-        return ensureD3().then(function () {
-          var saved = (typeof loadTopoPositions === 'function') ? loadTopoPositions() : {};
-          var missing = false, pinned = [];
-          nodes.forEach(function (n) {
-            var p = saved[n.id];
-            if (p) { n.x = p.x; n.y = p.y; n.fx = p.x; n.fy = p.y; pinned.push(n); }
-            else missing = true;
-          });
-          if (missing) {
-            // Anchor the simulation at the centroid of any user-arranged
-            // (pinned) nodes so free nodes settle among them instead of
-            // stretching toward the origin, far from the saved layout.
-            var cx0 = 0, cy0 = 0;
-            if (pinned.length) {
-              pinned.forEach(function (p) { cx0 += p.fx; cy0 += p.fy; });
-              cx0 /= pinned.length; cy0 /= pinned.length;
-            }
-            nodes.forEach(function (n, i) {
-              if (n.fx === undefined) {
-                var a = i * 2.4;
-                n.x = cx0 + Math.cos(a) * 60;
-                n.y = cy0 + Math.sin(a) * 60;
-              }
-            });
-            var sim = d3.forceSimulation(nodes)
-              .force('link', d3.forceLink(edges).id(function (d) { return d.id; })
-                .distance(function (d) { return d.connection_type === 'virtual' ? 45 : 95; })
-                .strength(0.6))
-              .force('charge', d3.forceManyBody().strength(-350))
-              .force('center', d3.forceCenter(cx0, cy0))
-              // stronger y pull flattens the web to roughly the card's 2:1 aspect
-              .force('x', d3.forceX(cx0).strength(0.04))
-              .force('y', d3.forceY(cy0).strength(0.16))
-              .force('collide', d3.forceCollide().radius(34))
-              .stop();
-            for (var i = 0; i < 250; i++) sim.tick();
+        var saved = (typeof loadTopoLastLayout === 'function') ? loadTopoLastLayout() : {};
+        var knownIds = Object.keys(saved);
+        if (!knownIds.length) { _renderTopoPlaceholder(); return; }
+        var cx0 = 0, cy0 = 0;
+        knownIds.forEach(function (id) { cx0 += saved[id].x; cy0 += saved[id].y; });
+        cx0 /= knownIds.length; cy0 /= knownIds.length;
+        nodes.forEach(function (n, i) {
+          var p = saved[n.id];
+          if (p) { n.x = p.x; n.y = p.y; }
+          else {
+            // A node the saved layout doesn't know about yet (added to
+            // inventory since the last settle) — place it near the centroid
+            // of known positions rather than simulating anything.
+            var a = i * 2.4;
+            n.x = cx0 + Math.cos(a) * 60;
+            n.y = cy0 + Math.sin(a) * 60;
           }
-          _topoPreview = { nodes: nodes, edges: edges, nodeMap: nodeMap };
-          _drawTopoPreview();
-          if (window.nwLastData) _updateTopoPreviewStatus(window.nwLastData.hosts || []);
         });
+        _topoPreview = { nodes: nodes, edges: edges, nodeMap: nodeMap };
+        _drawTopoPreview();
+        if (window.nwLastData) _updateTopoPreviewStatus(window.nwLastData.hosts || []);
       }).catch(function () {});
+  }
+
+  function _renderTopoPlaceholder () {
+    _topoPreview = null;
+    _topoShowingPlaceholder = true;
+    var svg = document.getElementById('ov-topo-svg');
+    var ph = document.getElementById('ov-topo-placeholder');
+    if (svg) svg.style.display = 'none';
+    if (ph) ph.style.display = '';
   }
 
   function _edgeEndpointId (v) { return typeof v === 'object' ? v.id : v; }
@@ -184,6 +175,10 @@
   function _drawTopoPreview () {
     var svg = document.getElementById('ov-topo-svg');
     if (!svg || !_topoPreview) return;
+    svg.style.display = '';
+    _topoShowingPlaceholder = false;
+    var ph = document.getElementById('ov-topo-placeholder');
+    if (ph) ph.style.display = 'none';
     var nodes = _topoPreview.nodes, edges = _topoPreview.edges, nodeMap = _topoPreview.nodeMap;
     var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     nodes.forEach(function (n) {
@@ -228,6 +223,7 @@
   function _updateTopoPreviewStatus (hosts) {
     var svg = document.getElementById('ov-topo-svg');
     if (!svg) return;
+    if (_topoShowingPlaceholder) return;
     if (!_topoPreview) { _renderTopoFallback(hosts); return; }
     var macStatus = {}, ipStatus = {};
     (hosts || []).forEach(function (h) {
@@ -254,6 +250,10 @@
   function _renderTopoFallback (hosts) {
     var svg = document.getElementById('ov-topo-svg');
     if (!svg) return;
+    svg.style.display = '';
+    _topoShowingPlaceholder = false;
+    var ph = document.getElementById('ov-topo-placeholder');
+    if (ph) ph.style.display = 'none';
     svg.setAttribute('viewBox', '0 0 200 110');
     var sats = (hosts || (window.nwLastData && window.nwLastData.hosts) || []).slice(0, 6);
     var cx = 100, cy = 55, r = 40;
