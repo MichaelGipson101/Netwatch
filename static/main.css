@@ -47,8 +47,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);fon
 .shell{max-width:1280px;margin:0 auto;padding:28px 20px}
 
 nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;position:sticky;top:0;z-index:30;background:var(--nav-bg);backdrop-filter:blur(14px) saturate(1.6);-webkit-backdrop-filter:blur(14px) saturate(1.6);border-bottom:1px solid var(--border);padding:10px 0;margin-left:-20px;margin-right:-20px;padding-left:20px;padding-right:20px}
-.nav-glow{position:fixed;top:-170px;left:50%;transform:translateX(-50%);width:560px;height:320px;z-index:-1;pointer-events:none;background:radial-gradient(closest-side,rgba(22,163,74,.10),transparent);animation:nav-glow-breathe 6s ease-in-out infinite}
-[data-theme="dark"] .nav-glow{background:radial-gradient(closest-side,rgba(34,197,94,.14),transparent)}
+.nav-glow{position:fixed;top:-180px;left:50%;transform:translateX(-50%);width:640px;height:420px;z-index:-1;pointer-events:none;background:radial-gradient(closest-side,rgba(22,163,74,.16),transparent);animation:nav-glow-breathe 6s ease-in-out infinite}
+[data-theme="dark"] .nav-glow{background:radial-gradient(closest-side,rgba(34,197,94,.20),transparent)}
 
 @keyframes nav-glow-breathe{
   0%,100%{opacity:.75;transform:translateX(-50%) scale(1)}
@@ -951,7 +951,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   /* ── Nav: single compact row ─────────────────────────────────────────── */
   nav{padding:8px 12px;margin-left:-12px;margin-right:-12px;gap:8px}
   .nw-logo{height:22px}
-  .nav-glow{width:320px;height:200px;top:-120px}
+  .nav-glow{width:360px;height:260px;top:-130px}
   #pip{display:none}
   .nav-right{gap:8px}
   #nav-auth{font-size:10px;gap:6px}
