@@ -43,7 +43,6 @@
   --hero-bg:#e8e6e0;--hero-text:#0f0e0d;
   --dot-color:rgba(255,255,255,.06);
 }
-html{background:var(--bg)}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;transition:background .2s,color .2s}
 .shell{max-width:1280px;margin:0 auto;padding:28px 20px}
 
