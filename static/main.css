@@ -54,7 +54,8 @@ nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:
   0%,100%{opacity:.75;transform:translateX(-50%) scale(1)}
   50%    {opacity:1;transform:translateX(-50%) scale(1.05)}
 }
-.logo{font-family:'DM Mono',monospace;font-size:16px;font-weight:500;letter-spacing:.06em}
+.logo{font-family:'DM Mono',monospace;font-size:16px;font-weight:500;letter-spacing:.06em;background:none;border:none;padding:0;color:inherit;cursor:pointer;display:inline-flex;align-items:center;opacity:1;transition:opacity .15s}
+.logo:hover{opacity:.8}
 .nw-logo{height:26px;width:auto;vertical-align:middle}
 .nav-right{display:flex;align-items:center;gap:12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);flex-wrap:wrap}
 .live-pip{display:flex;align-items:center;gap:6px}

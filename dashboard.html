@@ -210,12 +210,12 @@
   <div class="nav-glow" aria-hidden="true"></div>
 
   <nav>
-    <div class="logo">
+    <button type="button" class="logo" onclick="setTab('overview')" aria-label="Go to Overview">
       <svg class="nw-logo" role="img" viewBox="0 0 168 32" xmlns="http://www.w3.org/2000/svg" aria-label="Netwatch">
         <polyline points="2,16 12,16 17,8 22,24 27,16 30,16" style="stroke:var(--green)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
         <text x="40" y="22" font-family="'DM Mono','Courier New',monospace" font-size="14" font-weight="500" letter-spacing="2px"><tspan fill="currentColor">NET</tspan><tspan style="fill:var(--green)">WATCH</tspan></text>
       </svg>
-    </div>
+    </button>
     <div class="nav-right">
       <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Theme">
         <button data-theme-btn="light" title="Light" aria-label="Light theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
