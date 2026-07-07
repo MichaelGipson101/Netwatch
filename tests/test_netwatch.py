@@ -2135,14 +2135,14 @@ def test_pve_paused_guest_fires_alert():
 from monitor import PBSPoller
 
 
-def _make_pbs_poller():
+def _make_pbs_poller(proxmox_poller=None):
     am = MagicMock()
     am.data = {
         "pbs_url": "https://pbs.test:8007",
         "pbs_api_token_id": "root@pbs!Netwatch",
         "pbs_api_token_secret": "test-uuid",
     }
-    return PBSPoller(am, alert_settings={}, alert_port=8080)
+    return PBSPoller(am, alert_settings={}, alert_port=8080, proxmox_poller=proxmox_poller)
 
 
 def test_pbs_get_config_returns_tuple():
@@ -2361,6 +2361,68 @@ def test_pbs_check_alerts_no_alert_for_none_status():
     with patch("monitor._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 0
+
+
+def _set_proxmox_guests(proxmox_poller, vmids):
+    with proxmox_poller._lock:
+        proxmox_poller._cache["nodes"] = [{
+            "name": "pve",
+            "guests": [{"vmid": v} for v in vmids],
+        }]
+
+
+def test_pbs_check_alerts_skips_guest_deleted_from_proxmox():
+    proxmox_poller = _make_proxmox_poller()
+    _set_proxmox_guests(proxmox_poller, [108])   # 120 no longer exists
+    poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
+    backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 0
+
+
+def test_pbs_check_alerts_still_fires_for_guest_still_in_proxmox():
+    proxmox_poller = _make_proxmox_poller()
+    _set_proxmox_guests(proxmox_poller, [108])
+    poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
+    backups = [{"type": "vm", "vmid": 108, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 1
+
+
+def test_pbs_check_alerts_fires_when_no_proxmox_poller_wired():
+    # No Proxmox poller configured at all (e.g. PBS-only setup) - can't know
+    # guest existence, so preserve today's behavior rather than going silent.
+    poller = _make_pbs_poller(proxmox_poller=None)
+    backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 1
+
+
+def test_pbs_check_alerts_fires_when_proxmox_never_successfully_polled():
+    # Proxmox poller exists but hasn't fetched a guest list yet - don't treat
+    # "no data yet" as "guest deleted".
+    proxmox_poller = _make_proxmox_poller()
+    poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
+    backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)
+    assert mock_send.call_count == 1
+
+
+def test_pbs_check_alerts_clears_alert_once_guest_deleted_from_proxmox():
+    proxmox_poller = _make_proxmox_poller()
+    _set_proxmox_guests(proxmox_poller, [108, 120])
+    poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
+    backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
+    with patch("monitor._send_alert_async") as mock_send:
+        poller._check_alerts(backups)   # fires while 120 still exists
+        _set_proxmox_guests(proxmox_poller, [108])   # 120 deleted from Proxmox
+        poller._check_alerts(backups)   # must not re-fire once deleted
+    assert mock_send.call_count == 1
+    assert poller._alert_state["pbs-backup-ct-120"] is False
 
 
 def test_pbs_poll_builds_cache_from_fetch():

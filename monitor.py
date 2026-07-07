@@ -21,7 +21,7 @@ from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BRAND   = "NETWATCH"
-VERSION = "3.67"
+VERSION = "3.68"
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -3138,10 +3138,11 @@ class PBSPoller:
     POLL_INTERVAL_SECONDS = 300   # 5 minutes; backups run nightly, no need for Proxmox's 60s cadence
     STALE_HOURS = 25              # grace window for daily backup jobs, matches NASPoller.REPLICATION_STALE_HOURS
 
-    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None, proxmox_poller=None):
         self._auth_manager = auth_manager
         self._alert_settings = alert_settings or {}
         self._alert_port = alert_port
+        self._proxmox_poller = proxmox_poller
         self._cache = {
             "reachable": False,
             "last_updated": None,
@@ -3297,9 +3298,28 @@ class PBSPoller:
     def _clear_alert(self, condition_id):
         self._alert_state[condition_id] = False
 
+    def _known_guest_vmids(self):
+        """VMIDs currently present in Proxmox, or None if that's not known
+        (no Proxmox poller wired, or it hasn't successfully polled yet) -
+        PBS keeps backup snapshots long after a guest is deleted from
+        Proxmox, so without this a deleted VM/LXC's last backup just gets
+        older forever and re-fires a "stale backup" alert on every restart."""
+        if self._proxmox_poller is None:
+            return None
+        nodes = self._proxmox_poller.get_cache().get("nodes")
+        if not nodes:
+            return None
+        return {
+            g["vmid"] for n in nodes for g in n.get("guests", []) if g.get("vmid") is not None
+        }
+
     def _check_alerts(self, backups):
+        known_vmids = self._known_guest_vmids()
         for b in backups:
             cid = f"pbs-backup-{b['type']}-{b['vmid']}"
+            if known_vmids is not None and b["vmid"] not in known_vmids:
+                self._clear_alert(cid)
+                continue
             if b["status"] == "failed":
                 self._fire_alert(cid, f"Backup for {b['type'].upper()} {b['vmid']} failed verification")
             elif b["status"] == "stale":
@@ -5750,7 +5770,7 @@ def main():
         ha_poller.start(stop_event)
         print(f"[netwatch] HA poller -> polling Home Assistant every {HAPoller.POLL_INTERVAL_SECONDS}s")
 
-    pbs_poller = PBSPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    pbs_poller = PBSPoller(auth_manager, alert_settings=settings, alert_port=args.port, proxmox_poller=proxmox_poller)
     _pbs_url, _, _ = pbs_poller._get_config()
     if _pbs_url:
         pbs_poller.start(stop_event)
