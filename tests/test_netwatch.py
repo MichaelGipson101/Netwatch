@@ -10,7 +10,7 @@ import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
 from netwatch.storage import _column_exists
 from netwatch.storage import export_inventory_to_xlsx
-from monitor import NASPoller
+from netwatch.pollers import NASPoller
 import monitor as _mon
 from monitor import (
     _h_get_ai_config, _h_get_backup_status, _h_get_inventory_backup_status, _h_get_hosts,
@@ -1602,7 +1602,7 @@ def _make_nas_poller():
 def test_alert_fires_once_on_repeated_degraded():
     poller = _make_nas_poller()
     pools = [{"name": "tank", "status": "DEGRADED", "last_scrub": {"errors": 0}, "next_scrub": None}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(pools, [])
         poller._check_alerts(pools, [])
     assert mock_send.call_count == 1  # fired once, not twice
@@ -1612,7 +1612,7 @@ def test_alert_rearmed_after_clear():
     poller = _make_nas_poller()
     pools_degraded = [{"name": "tank", "status": "DEGRADED", "last_scrub": {"errors": 0}, "next_scrub": None}]
     pools_ok = [{"name": "tank", "status": "ONLINE", "last_scrub": {"errors": 0}, "next_scrub": None}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(pools_degraded, [])  # fires
         poller._check_alerts(pools_ok, [])         # clears
         poller._check_alerts(pools_degraded, [])  # re-arms → fires again
@@ -1624,7 +1624,7 @@ def test_replication_stale_alert():
     from datetime import datetime, timezone, timedelta
     old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=30)).isoformat()
     tasks = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "FINISHED", "enabled": True}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts([], tasks)
     assert mock_send.call_count == 1
 
@@ -1636,7 +1636,7 @@ def test_replication_disabled_task_does_not_alert_when_stale():
     from datetime import datetime, timezone, timedelta
     old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=200)).isoformat()
     tasks = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "ERROR", "enabled": False}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts([], tasks)
     assert mock_send.call_count == 0
 
@@ -1647,10 +1647,10 @@ def test_replication_disabled_task_clears_existing_alert():
     old_run = (datetime.now(tz=timezone.utc) - timedelta(hours=200)).isoformat()
     enabled_task = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "ERROR", "enabled": True}]
     disabled_task = [{"id": 1, "name": "tank→backup", "last_run": old_run, "last_state": "ERROR", "enabled": False}]
-    with patch("monitor._send_alert_async"):
+    with patch("netwatch.pollers._send_alert_async"):
         poller._check_alerts([], enabled_task)  # fires, alert_state[cid] = True
     assert poller._alert_state.get("replication_1") is True
-    with patch("monitor._send_alert_async"):
+    with patch("netwatch.pollers._send_alert_async"):
         poller._check_alerts([], disabled_task)  # disabling must clear it
     assert poller._alert_state.get("replication_1") is False
 
@@ -1661,7 +1661,7 @@ def test_replication_cid_uses_explicit_none_check_for_id_zero():
     explicit `is not None` check instead."""
     poller = _make_nas_poller()
     tasks = [{"id": 0, "name": "tank→backup", "last_run": None, "last_state": "ERROR", "enabled": True}]
-    with patch("monitor._send_alert_async"):
+    with patch("netwatch.pollers._send_alert_async"):
         poller._check_alerts([], tasks)
     assert "replication_0" in poller._alert_state
     assert "replication_tank→backup" not in poller._alert_state
@@ -1670,7 +1670,7 @@ def test_replication_cid_uses_explicit_none_check_for_id_zero():
 def test_truenas_alert_fires_once():
     poller = _make_nas_poller()
     alerts = [{"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING", "message": "USB disk warning"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts([], [], alerts)
         poller._check_alerts([], [], alerts)
     assert mock_send.call_count == 1
@@ -1679,10 +1679,10 @@ def test_truenas_alert_fires_once():
 def test_truenas_alert_clears_when_no_longer_present():
     poller = _make_nas_poller()
     alerts = [{"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING", "message": "USB disk warning"}]
-    with patch("monitor._send_alert_async"):
+    with patch("netwatch.pollers._send_alert_async"):
         poller._check_alerts([], [], alerts)  # fires, sets alert_state["truenas_alert_a1"] = True
     assert poller._alert_state.get("truenas_alert_a1") is True
-    with patch("monitor._send_alert_async"):
+    with patch("netwatch.pollers._send_alert_async"):
         poller._check_alerts([], [], [])  # alert resolved/disappeared from TrueNAS's list
     assert poller._alert_state.get("truenas_alert_a1") is False
 
@@ -1690,7 +1690,7 @@ def test_truenas_alert_clears_when_no_longer_present():
 def test_truenas_alert_rearmed_after_clear():
     poller = _make_nas_poller()
     alerts = [{"id": "a1", "klass": "PoolUSBDisks", "level": "WARNING", "message": "USB disk warning"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts([], [], alerts)   # fires
         poller._check_alerts([], [], [])        # clears
         poller._check_alerts([], [], alerts)   # re-arms -> fires again
@@ -1700,7 +1700,7 @@ def test_truenas_alert_rearmed_after_clear():
 def test_check_alerts_without_alerts_arg_still_works():
     """Backward compatibility: existing call sites pass only (pools, tasks)."""
     poller = _make_nas_poller()
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts([], [])
     assert mock_send.call_count == 0
 
@@ -1959,7 +1959,7 @@ def test_proxmox_vmid_in_vm_type_properties():
 # ProxmoxPoller — data fetch and transformation
 # ============================================================================
 
-from monitor import ProxmoxPoller
+from netwatch.pollers import ProxmoxPoller
 
 
 def _make_proxmox_poller():
@@ -2075,17 +2075,17 @@ def _make_nodes(node_status="online", guest_status="running", vmid=108):
 def test_pve_node_offline_alert_fires_once():
     poller = _make_proxmox_poller()
     nodes_offline = _make_nodes(node_status="offline")
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(nodes_offline, [])
         poller._check_alerts(nodes_offline, [])
     assert mock_send.call_count == 1
 
 
 def test_pve_node_offline_alert_message_mentions_corosync():
-    from monitor import ProxmoxPoller
+    from netwatch.pollers import ProxmoxPoller
     poller = _make_proxmox_poller()
     nodes_offline = _make_nodes(node_status="offline")
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(nodes_offline, [])
     args = mock_send.call_args[0]
     assert "corosync" in args[2]
@@ -2096,7 +2096,7 @@ def test_pve_node_alert_rearmed_after_clear():
     poller = _make_proxmox_poller()
     offline = _make_nodes(node_status="offline")
     online  = _make_nodes(node_status="online")
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(offline, [])  # fires
         poller._check_alerts(online, [])   # clears
         poller._check_alerts(offline, [])  # re-arms → fires
@@ -2107,7 +2107,7 @@ def test_pve_unexpected_stop_fires_alert():
     poller = _make_proxmox_poller()
     prev   = _make_nodes(guest_status="running")
     now    = _make_nodes(guest_status="stopped")
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(now, prev)
     assert mock_send.call_count == 1
     args = mock_send.call_args[0]
@@ -2119,7 +2119,7 @@ def test_pve_exempted_stop_does_not_alert():
     poller.exempt_vmid(108, seconds=60)
     prev = _make_nodes(guest_status="running")
     now  = _make_nodes(guest_status="stopped")
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(now, prev)
     assert mock_send.call_count == 0
 
@@ -2127,7 +2127,7 @@ def test_pve_exempted_stop_does_not_alert():
 def test_pve_paused_guest_fires_alert():
     poller = _make_proxmox_poller()
     nodes = _make_nodes(guest_status="paused")
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(nodes, [])
     assert mock_send.call_count == 1
     args = mock_send.call_args[0]
@@ -2138,7 +2138,7 @@ def test_pve_paused_guest_fires_alert():
 # PBSPoller — config, SSL, fetch, classification/grouping logic
 # ============================================================================
 
-from monitor import PBSPoller
+from netwatch.pollers import PBSPoller
 
 
 def _make_pbs_poller(proxmox_poller=None):
@@ -2334,7 +2334,7 @@ def test_business_hours_elapsed_end_before_start_returns_zero():
 def test_pbs_check_alerts_fires_once_for_failed():
     poller = _make_pbs_poller()
     backups = [{"type": "vm", "vmid": 108, "status": "failed", "last_backup_time": "2026-07-01T00:00:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
         poller._check_alerts(backups)
     assert mock_send.call_count == 1
@@ -2343,7 +2343,7 @@ def test_pbs_check_alerts_fires_once_for_failed():
 def test_pbs_check_alerts_fires_for_stale():
     poller = _make_pbs_poller()
     backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 1
     args = mock_send.call_args[0]
@@ -2354,7 +2354,7 @@ def test_pbs_check_alerts_rearms_after_clear():
     poller = _make_pbs_poller()
     failed = [{"type": "vm", "vmid": 108, "status": "failed", "last_backup_time": None}]
     ok     = [{"type": "vm", "vmid": 108, "status": "ok",     "last_backup_time": None}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(failed)  # fires
         poller._check_alerts(ok)      # clears
         poller._check_alerts(failed)  # re-arms -> fires again
@@ -2364,7 +2364,7 @@ def test_pbs_check_alerts_rearms_after_clear():
 def test_pbs_check_alerts_no_alert_for_none_status():
     poller = _make_pbs_poller()
     backups = [{"type": "vm", "vmid": 108, "status": "none", "last_backup_time": None}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 0
 
@@ -2382,7 +2382,7 @@ def test_pbs_check_alerts_skips_guest_deleted_from_proxmox():
     _set_proxmox_guests(proxmox_poller, [108])   # 120 no longer exists
     poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
     backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 0
 
@@ -2392,7 +2392,7 @@ def test_pbs_check_alerts_still_fires_for_guest_still_in_proxmox():
     _set_proxmox_guests(proxmox_poller, [108])
     poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
     backups = [{"type": "vm", "vmid": 108, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 1
 
@@ -2402,7 +2402,7 @@ def test_pbs_check_alerts_fires_when_no_proxmox_poller_wired():
     # guest existence, so preserve today's behavior rather than going silent.
     poller = _make_pbs_poller(proxmox_poller=None)
     backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 1
 
@@ -2413,7 +2413,7 @@ def test_pbs_check_alerts_fires_when_proxmox_never_successfully_polled():
     proxmox_poller = _make_proxmox_poller()
     poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
     backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)
     assert mock_send.call_count == 1
 
@@ -2423,7 +2423,7 @@ def test_pbs_check_alerts_clears_alert_once_guest_deleted_from_proxmox():
     _set_proxmox_guests(proxmox_poller, [108, 120])
     poller = _make_pbs_poller(proxmox_poller=proxmox_poller)
     backups = [{"type": "ct", "vmid": 120, "status": "stale", "last_backup_time": "2026-06-28T01:02:00+00:00"}]
-    with patch("monitor._send_alert_async") as mock_send:
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts(backups)   # fires while 120 still exists
         _set_proxmox_guests(proxmox_poller, [108])   # 120 deleted from Proxmox
         poller._check_alerts(backups)   # must not re-fire once deleted
@@ -3032,7 +3032,7 @@ def test_power_readings_none_values_stored(tmp_path):
 # HAPoller tests
 # ============================================================================
 
-from monitor import HAPoller as _HAPoller
+from netwatch.pollers import HAPoller as _HAPoller
 
 
 def _make_ha_poller(tmp_path):
@@ -3135,7 +3135,7 @@ def test_h_get_power_not_configured():
 
 def test_h_get_power_configured(tmp_path):
     from netwatch.storage import HistoryDB
-    from monitor import HAPoller
+    from netwatch.pollers import HAPoller
     db = HistoryDB(str(tmp_path / "p.db"))
     ts = int(_time.time())
     db.insert_power_reading(ts, 47.3, 230.1, 0.21, 1.234)
@@ -3159,7 +3159,7 @@ def test_h_get_power_configured(tmp_path):
 
 def test_h_get_power_force_triggers_poll(tmp_path):
     from netwatch.storage import HistoryDB
-    from monitor import HAPoller
+    from netwatch.pollers import HAPoller
     db = HistoryDB(str(tmp_path / "p.db"))
     am = MagicMock()
     am.data = {
@@ -3306,7 +3306,7 @@ def test_post_settings_empty_still_clears_secret(tmp_path):
 # ── Proxmox node CPU/RAM sparkline history ──────────────────────────────────
 
 def test_proxmox_append_history_tracks_and_caps():
-    from monitor import ProxmoxPoller
+    from netwatch.pollers import ProxmoxPoller
 
     history = {}
     def node(cpu, mem_used, mem_total):
