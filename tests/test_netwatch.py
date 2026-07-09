@@ -56,7 +56,7 @@ def test_real_operationalerror_propagates_on_bad_sql():
 
 
 import tempfile, time
-from monitor import AuthManager
+from netwatch.auth import AuthManager
 
 
 def _make_auth(tmpdir, db_path=None):
