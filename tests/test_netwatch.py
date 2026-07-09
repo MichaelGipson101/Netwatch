@@ -8,8 +8,8 @@ import threading as _threading
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
-from monitor import _column_exists
-from monitor import export_inventory_to_xlsx
+from netwatch.storage import _column_exists
+from netwatch.storage import export_inventory_to_xlsx
 from monitor import NASPoller
 import monitor as _mon
 from monitor import (
@@ -100,7 +100,8 @@ def test_no_db_path_works_as_before():
 
 # ── device_type in /api/status ──────────────────────────────────────────────
 
-from monitor import HistoryDB, InventoryDB, build_api_payload, make_handler
+from netwatch.storage import HistoryDB, InventoryDB
+from monitor import build_api_payload, make_handler
 
 
 class _FakeHost:
@@ -772,14 +773,14 @@ def test_should_log_transition_steady_state():
 # ── WAL cap + prune without VACUUM ───────────────────────────────────────────
 
 def test_journal_size_limit_pragma_set(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     assert hdb.conn.execute("PRAGMA journal_size_limit").fetchone()[0] == 16777216
     hdb.close()
 
 
 def test_prune_deletes_old_keeps_recent_no_vacuum(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
     now = int(time.time())
     hdb.conn.execute("INSERT INTO pings (host_ip, timestamp, is_up, latency_ms) VALUES (?,?,?,?)",
@@ -795,7 +796,7 @@ def test_prune_deletes_old_keeps_recent_no_vacuum(tmp_path):
 # ── Brief CRUD ───────────────────────────────────────────────────────────────
 
 def test_insert_brief_and_get_briefs(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     import json
     hdb = HistoryDB(str(tmp_path / "t.db"))
     ts = int(time.time())
@@ -812,7 +813,7 @@ def test_insert_brief_and_get_briefs(tmp_path):
 
 
 def test_get_briefs_returns_newest_first(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     import json
     hdb = HistoryDB(str(tmp_path / "t.db"))
     now = int(time.time())
@@ -825,7 +826,7 @@ def test_get_briefs_returns_newest_first(tmp_path):
 
 
 def test_get_briefs_excludes_old(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     import json
     hdb = HistoryDB(str(tmp_path / "t.db"))
     now = int(time.time())
@@ -838,7 +839,7 @@ def test_get_briefs_excludes_old(tmp_path):
 
 
 def test_prune_deletes_old_briefs(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     import json
     hdb = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
     now = int(time.time())
@@ -855,7 +856,8 @@ def test_prune_deletes_old_briefs(tmp_path):
 
 def test_h_post_brief_stores_and_returns_ok(tmp_path):
     import json
-    from monitor import HistoryDB, _h_post_brief
+    from netwatch.storage import HistoryDB
+    from monitor import _h_post_brief
     hdb = HistoryDB(str(tmp_path / "t.db"))
     data = {
         "subject": "BRIEF // Today",
@@ -873,7 +875,8 @@ def test_h_post_brief_stores_and_returns_ok(tmp_path):
 
 
 def test_h_post_brief_missing_field_returns_400(tmp_path):
-    from monitor import HistoryDB, _h_post_brief
+    from netwatch.storage import HistoryDB
+    from monitor import _h_post_brief
     hdb = HistoryDB(str(tmp_path / "t.db"))
     # missing 'narrative'
     status, body = _h_post_brief(hdb, {"subject": "X", "stats": {}})
@@ -884,7 +887,8 @@ def test_h_post_brief_missing_field_returns_400(tmp_path):
 
 def test_h_get_briefs_returns_list_without_analysis(tmp_path):
     import json
-    from monitor import HistoryDB, _h_post_brief, _h_get_briefs
+    from netwatch.storage import HistoryDB
+    from monitor import _h_post_brief, _h_get_briefs
     hdb = HistoryDB(str(tmp_path / "t.db"))
     _h_post_brief(hdb, {
         "subject": "BRIEF",
@@ -904,7 +908,7 @@ def test_h_get_briefs_returns_list_without_analysis(tmp_path):
 # ── Batched ping inserts ─────────────────────────────────────────────────────
 
 def test_record_ping_buffers_until_flush(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db_path = str(tmp_path / "t.db")
     hdb = HistoryDB(db_path)
     hdb.record_ping("10.0.0.1", True, 5.0)
@@ -916,7 +920,7 @@ def test_record_ping_buffers_until_flush(tmp_path):
 
 
 def test_buffer_threshold_autoflush(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db_path = str(tmp_path / "t.db")
     hdb = HistoryDB(db_path)
     hdb.FLUSH_MAX = 3
@@ -928,7 +932,7 @@ def test_buffer_threshold_autoflush(tmp_path):
 
 
 def test_recent_pings_sees_buffered_rows(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     hdb.record_ping("10.0.0.1", True, 5.0)
     hdb.record_ping("10.0.0.1", False, None)
@@ -937,7 +941,7 @@ def test_recent_pings_sees_buffered_rows(tmp_path):
 
 
 def test_close_flushes_buffer(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db_path = str(tmp_path / "t.db")
     hdb = HistoryDB(db_path)
     hdb.record_ping("10.0.0.1", True, 5.0)
@@ -1189,7 +1193,7 @@ def test_non_dict_json_body_rejected(tmp_path):
 # ── /api/history: bucketed latency series ────────────────────────────────────
 
 def test_history_series_buckets_and_aggregates(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     now = int(time.time())
     rows = [("10.0.0.1", now - 30, 1, 10.0), ("10.0.0.1", now - 20, 1, 20.0),
@@ -1204,14 +1208,15 @@ def test_history_series_buckets_and_aggregates(tmp_path):
 
 
 def test_history_series_clamps_hours(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     assert hdb.history_series("10.0.0.1", hours=9999)["points"] == []
     hdb.close()
 
 
 def test_h_get_history_requires_ip(tmp_path):
-    from monitor import HistoryDB, _h_get_history
+    from netwatch.storage import HistoryDB
+    from monitor import _h_get_history
     hdb = HistoryDB(str(tmp_path / "t.db"))
     code, body = _h_get_history("/api/history", hdb)
     assert code == 400
@@ -1221,7 +1226,8 @@ def test_h_get_history_requires_ip(tmp_path):
 
 
 def test_h_get_history_returns_points(tmp_path):
-    from monitor import HistoryDB, _h_get_history
+    from netwatch.storage import HistoryDB
+    from monitor import _h_get_history
     hdb = HistoryDB(str(tmp_path / "t.db"))
     hdb.record_ping("10.0.0.1", True, 12.0)
     code, body = _h_get_history("/api/history?ip=10.0.0.1&hours=1", hdb)
@@ -1239,7 +1245,7 @@ def _insert_ping(hdb, ip, ts, up, lat):
 
 
 def test_rollup_aggregates_complete_days_only(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     now = int(time.time())
     _insert_ping(hdb, "10.0.0.1", now - 86400, True, 10.0)   # yesterday
@@ -1253,7 +1259,7 @@ def test_rollup_aggregates_complete_days_only(tmp_path):
 
 
 def test_rollup_is_idempotent(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     _insert_ping(hdb, "10.0.0.1", int(time.time()) - 86400, True, 10.0)
     hdb.rollup_days(); hdb.rollup_days()
@@ -1262,7 +1268,7 @@ def test_rollup_is_idempotent(tmp_path):
 
 
 def test_daily_history_survives_prune(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
     old = int(time.time()) - 8 * 86400
     _insert_ping(hdb, "10.0.0.1", old, True, 10.0)
@@ -1328,7 +1334,7 @@ def _insert_incident(hdb, started, ended=None, dur=None):
             ("10.0.0.9", "TestHost", "G", started, ended, dur))
 
 def test_list_incidents_includes_epoch_ts(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     now = int(time.time())
     _insert_incident(hdb, now - 30, now, 30)
@@ -1336,7 +1342,7 @@ def test_list_incidents_includes_epoch_ts(tmp_path):
     assert inc["started_ts"] == now - 30
 
 def test_started_str_time_only_for_today(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     now = int(time.time())
     _insert_incident(hdb, now - 60, now, 60)
@@ -1345,7 +1351,7 @@ def test_started_str_time_only_for_today(tmp_path):
     assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", inc["started_str"])
 
 def test_started_str_includes_date_for_older_events(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     old = int(time.time()) - 3 * 86400
     _insert_incident(hdb, old, old + 60, 60)
@@ -1354,7 +1360,7 @@ def test_started_str_includes_date_for_older_events(tmp_path):
     assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{2}:\d{2}", inc["started_str"])
 
 def test_open_incident_uses_provided_started_at(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     past_ts = int(time.time()) - 120
     hdb.open_incident("1.2.3.4", "TestHost", "G", started_at=past_ts)
@@ -1365,7 +1371,7 @@ def test_open_incident_uses_provided_started_at(tmp_path):
 
 
 def test_open_incident_defaults_to_now_when_no_started_at(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     hdb = HistoryDB(str(tmp_path / "t.db"))
     before = int(time.time())
     hdb.open_incident("1.2.3.4", "TestHost", "G")
@@ -1944,7 +1950,7 @@ def test_h_post_settings_saves_proxmox_secret_to_auth_manager():
 # ============================================================================
 
 def test_proxmox_vmid_in_vm_type_properties():
-    from monitor import INVENTORY_TYPE_PROPERTIES
+    from netwatch.storage import INVENTORY_TYPE_PROPERTIES
     vm_keys = [p[0] for p in INVENTORY_TYPE_PROPERTIES.get("vm", [])]
     assert "proxmox_vmid" in vm_keys
 
@@ -2676,7 +2682,7 @@ def test_pve_action_rejects_node_with_slash():
 
 def _build_fixture_backup(tmp_path):
     """Build a real backup tarball via create_backup_tarball, for restore tests."""
-    from monitor import create_backup_tarball
+    from netwatch.storage import create_backup_tarball
     src_dir = tmp_path / "source"
     src_dir.mkdir()
     config_path = str(src_dir / "hosts.yaml")
@@ -2702,7 +2708,7 @@ def _build_fixture_backup(tmp_path):
 
 
 def test_restore_backup_happy_path(tmp_path):
-    from monitor import restore_backup
+    from netwatch.storage import restore_backup
     tarball_path, manifest = _build_fixture_backup(tmp_path)
 
     dest_dir = tmp_path / "dest"
@@ -2722,7 +2728,7 @@ def test_restore_backup_happy_path(tmp_path):
 
 
 def test_restore_backup_refuses_to_overwrite_without_force(tmp_path):
-    from monitor import restore_backup
+    from netwatch.storage import restore_backup
     tarball_path, _ = _build_fixture_backup(tmp_path)
 
     dest_dir = tmp_path / "dest"
@@ -2739,7 +2745,7 @@ def test_restore_backup_refuses_to_overwrite_without_force(tmp_path):
 
 
 def test_restore_backup_force_overwrites(tmp_path):
-    from monitor import restore_backup
+    from netwatch.storage import restore_backup
     tarball_path, _ = _build_fixture_backup(tmp_path)
 
     dest_dir = tmp_path / "dest"
@@ -2756,7 +2762,7 @@ def test_restore_backup_force_overwrites(tmp_path):
 
 
 def test_restore_backup_rejects_invalid_tarball(tmp_path):
-    from monitor import restore_backup
+    from netwatch.storage import restore_backup
     not_a_backup = tmp_path / "not-a-backup.tar.gz"
     import tarfile
     with tarfile.open(str(not_a_backup), "w:gz") as tar:
@@ -2773,19 +2779,21 @@ def test_restore_backup_rejects_invalid_tarball(tmp_path):
 
 
 def test_restore_backup_missing_tarball_file(tmp_path):
-    from monitor import restore_backup
+    from netwatch.storage import restore_backup
     ok, message = restore_backup(str(tmp_path / "does-not-exist.tar.gz"), str(tmp_path / "hosts.yaml"))
     assert ok is False
     assert "not found" in message.lower()
 
 
 def test_restore_backup_warns_on_newer_manifest_version(tmp_path, monkeypatch):
-    from monitor import restore_backup
-    import monitor as _mon
+    from netwatch.storage import restore_backup
     tarball_path, _ = _build_fixture_backup(tmp_path)
 
-    # Pretend this monitor.py is older than the backup's manifest version
-    monkeypatch.setattr(_mon, "BACKUP_MANIFEST_VERSION", 0)
+    # Pretend this monitor.py is older than the backup's manifest version.
+    # Must patch the attribute on its defining module (netwatch.storage), not
+    # on monitor's re-export, since restore_backup's body reads the
+    # module-global from its own module's namespace.
+    monkeypatch.setattr("netwatch.storage.BACKUP_MANIFEST_VERSION", 0)
 
     dest_dir = tmp_path / "dest"
     dest_dir.mkdir()
@@ -2909,7 +2917,8 @@ def test_make_ssl_ctx_verify_disabled_ignores_ca_cert():
 
 def test_incident_log_record_down_passes_started_at(tmp_path):
     """record_down forwards started_at to open_incident."""
-    from monitor import HistoryDB, IncidentLog, HostState
+    from netwatch.storage import HistoryDB
+    from monitor import IncidentLog, HostState
     hdb = HistoryDB(str(tmp_path / "t.db"))
     log = IncidentLog(hdb)
     host = HostState(name="H", ip="10.0.0.1", group="G", interval=60, always_on=True)
@@ -2923,7 +2932,8 @@ def test_incident_log_record_down_passes_started_at(tmp_path):
 
 def test_incident_not_opened_below_threshold(tmp_path):
     """Fewer than NTFY_DOWN_THRESHOLD consecutive misses must not open an incident."""
-    from monitor import HistoryDB, IncidentLog, HostState, NTFY_DOWN_THRESHOLD
+    from netwatch.storage import HistoryDB
+    from monitor import IncidentLog, HostState, NTFY_DOWN_THRESHOLD
     hdb = HistoryDB(str(tmp_path / "t.db"))
     inc_log = IncidentLog(hdb)
     host = HostState(name="H", ip="10.0.0.2", group="G", interval=60, always_on=True)
@@ -2945,7 +2955,8 @@ def test_incident_not_opened_below_threshold(tmp_path):
 
 def test_incident_opened_at_threshold_with_correct_start(tmp_path):
     """At exactly NTFY_DOWN_THRESHOLD consecutive misses an incident opens, backdated."""
-    from monitor import HistoryDB, IncidentLog, HostState, NTFY_DOWN_THRESHOLD
+    from netwatch.storage import HistoryDB
+    from monitor import IncidentLog, HostState, NTFY_DOWN_THRESHOLD
     hdb = HistoryDB(str(tmp_path / "t.db"))
     inc_log = IncidentLog(hdb)
     host = HostState(name="H", ip="10.0.0.3", group="G", interval=60, always_on=True)
@@ -2969,7 +2980,7 @@ def test_incident_opened_at_threshold_with_correct_start(tmp_path):
 import time as _time
 
 def test_power_readings_roundtrip(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db = HistoryDB(str(tmp_path / "t.db"))
     ts = int(_time.time())
     db.insert_power_reading(ts, 47.3, 230.1, 0.21, 1.234)
@@ -2983,7 +2994,7 @@ def test_power_readings_roundtrip(tmp_path):
 
 
 def test_power_readings_filters_by_days(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db = HistoryDB(str(tmp_path / "t.db"))
     old_ts = int(_time.time()) - 8 * 86400
     recent_ts = int(_time.time()) - 1 * 86400
@@ -2995,7 +3006,7 @@ def test_power_readings_filters_by_days(tmp_path):
 
 
 def test_power_readings_pruned(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db = HistoryDB(str(tmp_path / "t.db"), retention_days=7)
     old_ts = int(_time.time()) - 8 * 86400
     db.insert_power_reading(old_ts, 10.0, 230.0, 0.04, 0.1)
@@ -3005,7 +3016,7 @@ def test_power_readings_pruned(tmp_path):
 
 
 def test_power_readings_none_values_stored(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     db = HistoryDB(str(tmp_path / "t.db"))
     ts = int(_time.time())
     db.insert_power_reading(ts, 47.3, None, None, None)
@@ -3023,7 +3034,7 @@ from monitor import HAPoller as _HAPoller
 
 
 def _make_ha_poller(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     am = MagicMock()
     am.data = {
         "ha_url": "http://ha.test:8123",
@@ -3080,7 +3091,7 @@ def test_ha_poller_network_error_sets_unreachable(tmp_path):
 
 
 def test_ha_poller_unconfigured_does_not_poll(tmp_path):
-    from monitor import HistoryDB
+    from netwatch.storage import HistoryDB
     am = MagicMock()
     am.data = {"ha_url": "", "ha_token": ""}
     db = HistoryDB(str(tmp_path / "ha.db"))
@@ -3121,7 +3132,8 @@ def test_h_get_power_not_configured():
 
 
 def test_h_get_power_configured(tmp_path):
-    from monitor import HistoryDB, HAPoller
+    from netwatch.storage import HistoryDB
+    from monitor import HAPoller
     db = HistoryDB(str(tmp_path / "p.db"))
     ts = int(_time.time())
     db.insert_power_reading(ts, 47.3, 230.1, 0.21, 1.234)
@@ -3144,7 +3156,8 @@ def test_h_get_power_configured(tmp_path):
 
 
 def test_h_get_power_force_triggers_poll(tmp_path):
-    from monitor import HistoryDB, HAPoller
+    from netwatch.storage import HistoryDB
+    from monitor import HAPoller
     db = HistoryDB(str(tmp_path / "p.db"))
     am = MagicMock()
     am.data = {
