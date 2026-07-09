@@ -75,7 +75,7 @@ Major subsystems, by module:
   (`start_discovery_scan` / `get_discovery_state`), and Pi host-health reads (`read_pi_health`).
 - `netwatch/pollers.py` — `NASPoller` / `ProxmoxPoller` / `PBSPoller` / `HAPoller`: background
   pollers (TrueNAS every 900s, Proxmox every 60s) that hit those APIs directly and drive ntfy
-  alerting via `netwatch.network.send_ntfy_alert` on state change. `NASPoller` also fetches
+  alerting via `netwatch.network._send_alert_async` on state change. `NASPoller` also fetches
   TrueNAS's own `/api/v2.0/alert/list`, filters to WARNING+ via `_filter_alerts()` (excluding any
   klass in the user-configurable `truenas_ignored_alert_klasses` setting), and fires/clears ntfy
   alerts keyed by TrueNAS's own alert `id` — see `_check_alerts`. Scrub-schedule math
