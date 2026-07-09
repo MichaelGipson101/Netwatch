@@ -13,7 +13,7 @@ import time
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from monitor import send_ntfy_alert  # noqa: E402
+from netwatch.network import send_ntfy_alert  # noqa: E402
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hosts.yaml")
 
