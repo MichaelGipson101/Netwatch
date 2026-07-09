@@ -2827,24 +2827,24 @@ def test_restore_cli_exits_before_server_startup(tmp_path):
 # ── _tui_status_role ─────────────────────────────────────────────────────────
 
 def test_tui_status_role_wait_when_pending():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     assert _tui_status_role(pend=True, is_up=False, status="WAIT") == "wait"
 
 
 def test_tui_status_role_pending_wins_over_degraded():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     # Defensive priority check: pend must win even if status somehow already
     # says DEGRADED before the first check has completed.
     assert _tui_status_role(pend=True, is_up=True, status="DEGRADED") == "wait"
 
 
 def test_tui_status_role_degraded_when_up_but_degraded():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     assert _tui_status_role(pend=False, is_up=True, status="DEGRADED") == "degraded"
 
 
 def test_tui_status_role_degraded_wins_over_up():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     # This is the actual regression this task fixes: a DEGRADED host has
     # is_up == True, so a naive "if is_up: return up" check (the current
     # bug in draw_tui) would misclassify it as healthy.
@@ -2852,17 +2852,17 @@ def test_tui_status_role_degraded_wins_over_up():
 
 
 def test_tui_status_role_up_when_healthy():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     assert _tui_status_role(pend=False, is_up=True, status="UP") == "up"
 
 
 def test_tui_status_role_idle_when_down_and_not_always_on():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     assert _tui_status_role(pend=False, is_up=False, status="IDLE") == "idle"
 
 
 def test_tui_status_role_down_when_down_and_always_on():
-    from monitor import _tui_status_role
+    from netwatch.tui import _tui_status_role
     assert _tui_status_role(pend=False, is_up=False, status="DOWN") == "down"
 
 
