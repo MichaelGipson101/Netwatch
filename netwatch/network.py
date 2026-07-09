@@ -77,13 +77,12 @@ def _save_detected_mac(config_path, host_ip, detected_mac):
     """
     with _ARP_WRITE_LOCK:
         try:
-            # Deferred import: load_yaml lives in monitor.py until Task 5
-            # moves it to netwatch/hosts.py. Importing at module level here
-            # would create a circular import (monitor.py imports this module
-            # near the top of the file, before load_yaml is defined), so we
-            # import lazily inside the function instead - safe because this
-            # only runs long after monitor.py has finished loading.
-            from monitor import load_yaml
+            # Deferred import: netwatch/hosts.py imports several helpers from
+            # this module (netwatch.network) at module level, so a
+            # module-level import in this direction would be a circular
+            # import. Importing lazily inside the function instead is safe -
+            # this only runs long after both modules have finished loading.
+            from netwatch.hosts import load_yaml
             cfg = load_yaml(config_path) or {}
         except Exception as e:
             logging.warning(f"ARP detect: could not read {config_path}: {e}")

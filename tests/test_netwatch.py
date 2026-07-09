@@ -753,19 +753,19 @@ def test_h_post_auth_user_delete_not_found():
 # ── Transition-only logging ──────────────────────────────────────────────────
 
 def test_should_log_transition_first_ping():
-    from monitor import _should_log_transition
+    from netwatch.hosts import _should_log_transition
     assert _should_log_transition(None, True) is True
     assert _should_log_transition(None, False) is True
 
 
 def test_should_log_transition_state_change():
-    from monitor import _should_log_transition
+    from netwatch.hosts import _should_log_transition
     assert _should_log_transition(True, False) is True
     assert _should_log_transition(False, True) is True
 
 
 def test_should_log_transition_steady_state():
-    from monitor import _should_log_transition
+    from netwatch.hosts import _should_log_transition
     assert _should_log_transition(True, True) is False
     assert _should_log_transition(False, False) is False
 
@@ -1031,7 +1031,7 @@ def test_api_payload_settings_allowlist():
 # ── Config write hardening ───────────────────────────────────────────────────
 
 def test_save_hosts_config_sets_0600(tmp_path):
-    from monitor import save_hosts_config
+    from netwatch.hosts import save_hosts_config
     path = str(tmp_path / "hosts.yaml")
     save_hosts_config(path, [{"name": "a", "ip": "10.0.0.1"}])
     assert os.stat(path).st_mode & 0o777 == 0o600
@@ -1107,7 +1107,7 @@ def test_post_with_wrong_csrf_token_rejected(tmp_path):
 
 
 def test_post_with_correct_csrf_token_accepted(tmp_path):
-    from monitor import HostManager
+    from netwatch.hosts import HostManager
 
     # Uses a real HostManager/tmp config instead of _auth_test_server, whose hardcoded
     # /dev/null config path can't survive this test's successful (200) config-writing POST.
@@ -2918,7 +2918,7 @@ def test_make_ssl_ctx_verify_disabled_ignores_ca_cert():
 def test_incident_log_record_down_passes_started_at(tmp_path):
     """record_down forwards started_at to open_incident."""
     from netwatch.storage import HistoryDB
-    from monitor import IncidentLog, HostState
+    from netwatch.hosts import IncidentLog, HostState
     hdb = HistoryDB(str(tmp_path / "t.db"))
     log = IncidentLog(hdb)
     host = HostState(name="H", ip="10.0.0.1", group="G", interval=60, always_on=True)
@@ -2933,7 +2933,8 @@ def test_incident_log_record_down_passes_started_at(tmp_path):
 def test_incident_not_opened_below_threshold(tmp_path):
     """Fewer than NTFY_DOWN_THRESHOLD consecutive misses must not open an incident."""
     from netwatch.storage import HistoryDB
-    from monitor import IncidentLog, HostState, NTFY_DOWN_THRESHOLD
+    from netwatch.hosts import IncidentLog, HostState
+    from netwatch.network import NTFY_DOWN_THRESHOLD
     hdb = HistoryDB(str(tmp_path / "t.db"))
     inc_log = IncidentLog(hdb)
     host = HostState(name="H", ip="10.0.0.2", group="G", interval=60, always_on=True)
@@ -2956,7 +2957,8 @@ def test_incident_not_opened_below_threshold(tmp_path):
 def test_incident_opened_at_threshold_with_correct_start(tmp_path):
     """At exactly NTFY_DOWN_THRESHOLD consecutive misses an incident opens, backdated."""
     from netwatch.storage import HistoryDB
-    from monitor import IncidentLog, HostState, NTFY_DOWN_THRESHOLD
+    from netwatch.hosts import IncidentLog, HostState
+    from netwatch.network import NTFY_DOWN_THRESHOLD
     hdb = HistoryDB(str(tmp_path / "t.db"))
     inc_log = IncidentLog(hdb)
     host = HostState(name="H", ip="10.0.0.3", group="G", interval=60, always_on=True)
