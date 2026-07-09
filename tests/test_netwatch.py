@@ -1284,7 +1284,8 @@ def test_daily_history_survives_prune(tmp_path):
 # ── Static asset cache busting ───────────────────────────────────────────────
 
 def test_dashboard_html_version_substitution(tmp_path):
-    from monitor import _load_dashboard_html, VERSION
+    from netwatch import VERSION
+    from netwatch.__main__ import _load_dashboard_html
     (tmp_path / "dashboard.html").write_text('<script src="/static/core.js?v={{VERSION}}"></script>')
     out = _load_dashboard_html(str(tmp_path))
     assert "{{VERSION}}" not in out
@@ -2578,11 +2579,11 @@ def test_system_restart_closes_resources_then_execs_in_order():
 
 def test_system_restart_execs_with_current_interpreter_and_argv():
     with patch("os.execv") as mock_execv, \
-         patch.object(_mon.sys, "argv", ["monitor.py", "--no-tui", "--port", "8080"]):
+         patch.object(sys, "argv", ["monitor.py", "--no-tui", "--port", "8080"]):
         _h_post_system_restart(MagicMock(), MagicMock())
     mock_execv.assert_called_once_with(
-        _mon.sys.executable,
-        [_mon.sys.executable, "monitor.py", "--no-tui", "--port", "8080"],
+        sys.executable,
+        [sys.executable, "monitor.py", "--no-tui", "--port", "8080"],
     )
 
 
