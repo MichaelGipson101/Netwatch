@@ -3305,6 +3305,39 @@ def test_post_settings_empty_still_clears_secret(tmp_path):
     assert "truenas_api_key" not in auth.data
 
 
+def test_settings_mutation_visible_to_host_manager_and_nas_poller(tmp_path):
+    """_h_post_settings must mutate the same settings dict object that
+    HostManager and NASPoller were constructed with - not a copy - so a
+    saved change is visible without a restart."""
+    import threading
+    import yaml
+    from netwatch.hosts import HostManager
+    from netwatch.pollers import NASPoller
+    from netwatch.http_handlers import _h_post_settings
+
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        yaml.safe_dump({"settings": {"default_interval": 5}, "hosts": []}, f)
+
+    settings = {"default_interval": 5}
+    host_manager = HostManager(
+        config_path, ping_timeout=2, history_window=100,
+        global_stop=threading.Event(), alert_settings=settings, alert_port=8080,
+    )
+    nas_poller = NASPoller(auth_manager=None, alert_settings=settings, alert_port=8080)
+
+    status, _ = _h_post_settings(
+        {"default_interval": 30}, config_path, settings, auth_manager=None
+    )
+
+    assert status == 200
+    assert settings["default_interval"] == 30
+    assert host_manager.alert_settings["default_interval"] == 30
+    assert nas_poller._alert_settings["default_interval"] == 30
+    assert host_manager.alert_settings is settings
+    assert nas_poller._alert_settings is settings
+
+
 # ── Proxmox node CPU/RAM sparkline history ──────────────────────────────────
 
 def test_proxmox_append_history_tracks_and_caps():
