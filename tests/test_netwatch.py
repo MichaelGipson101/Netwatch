@@ -12,7 +12,7 @@ from netwatch.storage import _column_exists
 from netwatch.storage import export_inventory_to_xlsx
 from netwatch.pollers import NASPoller
 import monitor as _mon
-from monitor import (
+from netwatch.http_handlers import (
     _h_get_ai_config, _h_get_backup_status, _h_get_inventory_backup_status, _h_get_hosts,
     _h_get_auth_status, _h_get_auth_users,
     _h_get_inventory, _h_get_inventory_record,
@@ -101,7 +101,8 @@ def test_no_db_path_works_as_before():
 # ── device_type in /api/status ──────────────────────────────────────────────
 
 from netwatch.storage import HistoryDB, InventoryDB
-from monitor import build_api_payload, make_handler
+from netwatch.http_handlers import build_api_payload
+from monitor import make_handler
 
 
 class _FakeHost:
@@ -360,7 +361,7 @@ def test_h_get_ai_config_default_model():
 # ── _h_get_backup_status ─────────────────────────────────────────────────────
 
 def test_h_get_backup_status_not_configured(monkeypatch, tmp_path):
-    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setattr("netwatch.http_handlers.NAS_BACKUP_STATUS_PATH", str(tmp_path / "missing.json"))
     code, body = _h_get_backup_status()
     assert code == 200
     assert body == {"configured": False}
@@ -373,7 +374,7 @@ def test_h_get_backup_status_reads_success_file(monkeypatch, tmp_path):
         "filename": "netwatch-backup-test.tar.gz", "size_bytes": 123,
         "files": {"monitor.py": 10},
     }))
-    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(status_path))
+    monkeypatch.setattr("netwatch.http_handlers.NAS_BACKUP_STATUS_PATH", str(status_path))
     code, body = _h_get_backup_status()
     assert code == 200
     assert body["configured"] is True
@@ -384,7 +385,7 @@ def test_h_get_backup_status_reads_success_file(monkeypatch, tmp_path):
 def test_h_get_backup_status_reads_failure_file(monkeypatch, tmp_path):
     status_path = tmp_path / "_status.json"
     status_path.write_text(_json.dumps({"ok": False, "checked_at": 1700000000, "error": "boom"}))
-    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(status_path))
+    monkeypatch.setattr("netwatch.http_handlers.NAS_BACKUP_STATUS_PATH", str(status_path))
     code, body = _h_get_backup_status()
     assert code == 200
     assert body["configured"] is True
@@ -395,7 +396,7 @@ def test_h_get_backup_status_reads_failure_file(monkeypatch, tmp_path):
 def test_h_get_backup_status_handles_corrupt_file(monkeypatch, tmp_path):
     status_path = tmp_path / "_status.json"
     status_path.write_text("not valid json")
-    monkeypatch.setattr(_mon, "NAS_BACKUP_STATUS_PATH", str(status_path))
+    monkeypatch.setattr("netwatch.http_handlers.NAS_BACKUP_STATUS_PATH", str(status_path))
     code, body = _h_get_backup_status()
     assert code == 200
     assert body["configured"] is False
@@ -404,7 +405,7 @@ def test_h_get_backup_status_handles_corrupt_file(monkeypatch, tmp_path):
 # ── _h_get_inventory_backup_status ───────────────────────────────────────────
 
 def test_h_get_inventory_backup_status_not_configured(monkeypatch, tmp_path):
-    monkeypatch.setattr(_mon, "NAS_INVENTORY_STATUS_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setattr("netwatch.http_handlers.NAS_INVENTORY_STATUS_PATH", str(tmp_path / "missing.json"))
     code, body = _h_get_inventory_backup_status()
     assert code == 200
     assert body == {"configured": False}
@@ -416,7 +417,7 @@ def test_h_get_inventory_backup_status_reads_success_file(monkeypatch, tmp_path)
         "ok": True, "checked_at": 1700000000,
         "filename": "netwatch-inventory-all.xlsx", "size_bytes": 456,
     }))
-    monkeypatch.setattr(_mon, "NAS_INVENTORY_STATUS_PATH", str(status_path))
+    monkeypatch.setattr("netwatch.http_handlers.NAS_INVENTORY_STATUS_PATH", str(status_path))
     code, body = _h_get_inventory_backup_status()
     assert code == 200
     assert body["configured"] is True
@@ -857,7 +858,7 @@ def test_prune_deletes_old_briefs(tmp_path):
 def test_h_post_brief_stores_and_returns_ok(tmp_path):
     import json
     from netwatch.storage import HistoryDB
-    from monitor import _h_post_brief
+    from netwatch.http_handlers import _h_post_brief
     hdb = HistoryDB(str(tmp_path / "t.db"))
     data = {
         "subject": "BRIEF // Today",
@@ -876,7 +877,7 @@ def test_h_post_brief_stores_and_returns_ok(tmp_path):
 
 def test_h_post_brief_missing_field_returns_400(tmp_path):
     from netwatch.storage import HistoryDB
-    from monitor import _h_post_brief
+    from netwatch.http_handlers import _h_post_brief
     hdb = HistoryDB(str(tmp_path / "t.db"))
     # missing 'narrative'
     status, body = _h_post_brief(hdb, {"subject": "X", "stats": {}})
@@ -888,7 +889,7 @@ def test_h_post_brief_missing_field_returns_400(tmp_path):
 def test_h_get_briefs_returns_list_without_analysis(tmp_path):
     import json
     from netwatch.storage import HistoryDB
-    from monitor import _h_post_brief, _h_get_briefs
+    from netwatch.http_handlers import _h_post_brief, _h_get_briefs
     hdb = HistoryDB(str(tmp_path / "t.db"))
     _h_post_brief(hdb, {
         "subject": "BRIEF",
@@ -1015,7 +1016,7 @@ def test_csrf_token_for_cookie_differs_per_secret():
 # ── /api/status settings allowlist ───────────────────────────────────────────
 
 def test_api_payload_settings_allowlist():
-    from monitor import build_api_payload
+    from netwatch.http_handlers import build_api_payload
 
     class _FakeHM:
         def list_hosts(self):
@@ -1216,7 +1217,7 @@ def test_history_series_clamps_hours(tmp_path):
 
 def test_h_get_history_requires_ip(tmp_path):
     from netwatch.storage import HistoryDB
-    from monitor import _h_get_history
+    from netwatch.http_handlers import _h_get_history
     hdb = HistoryDB(str(tmp_path / "t.db"))
     code, body = _h_get_history("/api/history", hdb)
     assert code == 400
@@ -1227,7 +1228,7 @@ def test_h_get_history_requires_ip(tmp_path):
 
 def test_h_get_history_returns_points(tmp_path):
     from netwatch.storage import HistoryDB
-    from monitor import _h_get_history
+    from netwatch.http_handlers import _h_get_history
     hdb = HistoryDB(str(tmp_path / "t.db"))
     hdb.record_ping("10.0.0.1", True, 12.0)
     code, body = _h_get_history("/api/history?ip=10.0.0.1&hours=1", hdb)
@@ -1757,7 +1758,7 @@ def test_filter_alerts_empty_ignore_list_string():
 
 # ── _h_post_nas_ignore_alert / _h_post_nas_unignore_alert ────────────────────
 
-from monitor import _h_post_nas_ignore_alert, _h_post_nas_unignore_alert
+from netwatch.http_handlers import _h_post_nas_ignore_alert, _h_post_nas_unignore_alert
 
 
 def test_ignore_alert_requires_klass():
@@ -1836,7 +1837,7 @@ def test_get_cache_returns_copy():
 # /api/nas handler tests
 # ============================================================================
 
-from monitor import _h_get_nas
+from netwatch.http_handlers import _h_get_nas
 
 
 def test_h_get_nas_when_poller_is_none():
@@ -1893,7 +1894,7 @@ def test_poll_skipped_when_unconfigured():
 # Auth routing — Proxmox credential keys
 # ============================================================================
 
-from monitor import _AUTH_STORED_KEYS, _h_get_settings, _h_post_settings
+from netwatch.http_handlers import _AUTH_STORED_KEYS, _h_get_settings, _h_post_settings
 
 
 def _make_am_with_proxmox():
@@ -1925,7 +1926,7 @@ def test_h_get_settings_reads_proxmox_creds_from_auth_manager():
     assert status == 200
     assert body["proxmox_url"] == "https://pve.test:8006"
     # secrets are redacted on the way out — sentinel proves the key was read
-    from monitor import SECRET_PLACEHOLDER
+    from netwatch.http_handlers import SECRET_PLACEHOLDER
     assert body["proxmox_token_secret"] == SECRET_PLACEHOLDER
 
 
@@ -2464,7 +2465,7 @@ def test_pbs_poll_sets_unreachable_on_fetch_error():
 # /api/proxmox handler
 # ============================================================================
 
-from monitor import _h_get_proxmox
+from netwatch.http_handlers import _h_get_proxmox
 
 
 def test_h_get_proxmox_when_poller_is_none():
@@ -2506,7 +2507,7 @@ def test_h_get_proxmox_without_force_does_not_poll():
 # /api/nas/acknowledge-alert handler
 # ============================================================================
 
-from monitor import _h_post_nas_acknowledge_alert
+from netwatch.http_handlers import _h_post_nas_acknowledge_alert
 
 
 def test_acknowledge_alert_requires_id():
@@ -2560,7 +2561,7 @@ def test_acknowledge_alert_handles_http_error_and_skips_repoll():
 # /api/system/restart handler
 # ============================================================================
 
-from monitor import _h_post_system_restart
+from netwatch.http_handlers import _h_post_system_restart
 
 
 def test_system_restart_closes_resources_then_execs_in_order():
@@ -2595,7 +2596,7 @@ def test_system_restart_tolerates_missing_history_db_and_auth_manager():
 # /api/proxmox/action handler
 # ============================================================================
 
-from monitor import _h_post_proxmox_action
+from netwatch.http_handlers import _h_post_proxmox_action
 
 
 def _make_auth_manager_with_pve():
@@ -3124,7 +3125,7 @@ def test_ha_poller_get_cache_returns_deep_copy(tmp_path):
 # _h_get_power handler tests
 # ============================================================================
 
-from monitor import _h_get_power as _hgp
+from netwatch.http_handlers import _h_get_power as _hgp
 
 
 def test_h_get_power_not_configured():
@@ -3177,7 +3178,7 @@ def test_h_get_power_force_triggers_poll(tmp_path):
 # /api/pbs handler
 # ============================================================================
 
-from monitor import _h_get_pbs
+from netwatch.http_handlers import _h_get_pbs
 
 
 def test_h_get_pbs_when_poller_is_none():
@@ -3257,7 +3258,7 @@ def test_h_post_settings_saves_pbs_secret_to_auth_manager():
 # ── /api/settings secret redaction ──────────────────────────────────────────
 
 def test_get_settings_redacts_secrets():
-    from monitor import _h_get_settings, SECRET_PLACEHOLDER
+    from netwatch.http_handlers import _h_get_settings, SECRET_PLACEHOLDER
 
     class FakeAuth:
         lock = _threading.Lock()
@@ -3271,7 +3272,7 @@ def test_get_settings_redacts_secrets():
 
 
 def test_post_settings_sentinel_keeps_existing_secret(tmp_path):
-    from monitor import _h_post_settings, SECRET_PLACEHOLDER
+    from netwatch.http_handlers import _h_post_settings, SECRET_PLACEHOLDER
 
     class FakeAuth:
         lock = _threading.Lock()
@@ -3288,7 +3289,7 @@ def test_post_settings_sentinel_keeps_existing_secret(tmp_path):
 
 
 def test_post_settings_empty_still_clears_secret(tmp_path):
-    from monitor import _h_post_settings
+    from netwatch.http_handlers import _h_post_settings
 
     class FakeAuth:
         lock = _threading.Lock()
