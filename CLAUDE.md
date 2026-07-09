@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Netwatch is a single-process homelab monitor: continuous ICMP ping monitoring, a SQLite-backed
 inventory CMDB, a D3.js network topology graph, Proxmox/TrueNAS dashboards, and an AI assistant
-("Mira") proxied through OpenRouter — all served from one Python file (`monitor.py`, ~5100 lines)
-with no framework. It's designed to run unattended on a Raspberry Pi via systemd. Stdlib +
-PyYAML + openpyxl only; no pip-installed web framework.
+("Mira") proxied through OpenRouter — served from the `netwatch/` Python package (~5900 lines
+across 9 modules) with no framework. `monitor.py` at the repo root is a thin entrypoint shim
+(`from netwatch.__main__ import main`). It's designed to run unattended on a Raspberry Pi via
+systemd. Stdlib + PyYAML + openpyxl only; no pip-installed web framework.
 
 ## Commands
 
@@ -34,9 +35,9 @@ python3 monitor.py --restore <tarball> [--force]
 
 There's no build/lint step — it's plain Python served directly. `static/*.js`/`*.css` are
 read off disk at request time (cached client-side via `?v=` query strings), but
-`dashboard.html` is loaded **once at startup** (`_load_dashboard_html`) — restart the server
-to see HTML changes. New files under `static/` must also be added to the `_STATIC_FILES`
-allowlist in `monitor.py` or they 404.
+`dashboard.html` is loaded **once at startup** (`_load_dashboard_html`, in
+`netwatch/__main__.py`) — restart the server to see HTML changes. New files under `static/`
+must also be added to the `_STATIC_FILES` allowlist in `netwatch/server.py` or they 404.
 
 First run requires creating an admin account (no auth configured = dashboard shows setup wizard):
 
@@ -48,26 +49,33 @@ curl -X POST http://localhost:8080/api/auth/setup \
 
 ## Architecture
 
-**Everything lives in `monitor.py`.** It's organized top-to-bottom as a sequence of mostly
-independent subsystems rather than packages/modules — when working on a feature, search for
-the relevant class or `_h_*` handler function rather than expecting a directory structure.
+**Everything lives in the `netwatch/` package.** `monitor.py` at the repo root is now just a
+thin entrypoint shim (`from netwatch.__main__ import main`) kept for backwards-compatible
+invocation (`python3 monitor.py ...`) — it has no logic of its own. The package is organized
+as one module per subsystem rather than the old single-file layout — when working on a feature,
+go to the relevant module below (or search for the class / `_h_*` handler function; module
+boundaries mostly follow the subsystem list that used to be "in file order" in the monolith).
 
-Major subsystems, in file order:
-- `HostState` / `HostManager` / `poll_host` — per-host ping loop, status state machine
-  (up/down/idle/degraded/pending), one thread per host.
-- `IncidentLog` — records status transitions with duration, persisted via `HistoryDB`.
-- `AuthManager` — session-cookie auth, brute-force lockout (persisted in SQLite so it survives
-  restarts), CSRF tokens issued at login/setup.
-- `HistoryDB` — SQLite layer for ping history, daily uptime rollups, incidents, lockouts.
-  Pings are batched and flushed every 30s (`_flush_loop`); old data is pruned daily
-  (`_prune_loop`). Schema migrations are ad hoc via `_column_exists()` + `ALTER TABLE` guards,
-  not a migration framework — when adding a column, follow that pattern.
-- `InventoryDB` — the CMDB: 9 device types (host/VM/network/UPS/disk/peripheral/tablet/phone/
-  printer) each with type-specific JSON-ish fields, plus arbitrary connection edges between
-  records. Backed by the same SQLite file as `HistoryDB`. Supports XLSX import/export
+Major subsystems, by module:
+- `netwatch/hosts.py` — `HostState` / `HostManager` / `poll_host` (per-host ping loop, status
+  state machine: up/down/idle/degraded/pending, one thread per host) and `IncidentLog` (records
+  status transitions with duration, persisted via `HistoryDB`).
+- `netwatch/auth.py` — `AuthManager`: session-cookie auth, brute-force lockout (persisted in
+  SQLite so it survives restarts), CSRF tokens issued at login/setup.
+- `netwatch/storage.py` — `HistoryDB`: SQLite layer for ping history, daily uptime rollups,
+  incidents, lockouts. Pings are batched and flushed every 30s (`_flush_loop`); old data is
+  pruned daily (`_prune_loop`). Schema migrations are ad hoc via `_column_exists()` +
+  `ALTER TABLE` guards, not a migration framework — when adding a column, follow that pattern.
+  Also `InventoryDB`: the CMDB, 9 device types (host/VM/network/UPS/disk/peripheral/tablet/
+  phone/printer) each with type-specific JSON-ish fields, plus arbitrary connection edges
+  between records. Backed by the same SQLite file as `HistoryDB`. Supports XLSX import/export
   (`export_inventory_to_xlsx` / `import_inventory_from_xlsx`) and nmap-based discovery.
-- `NASPoller` / `ProxmoxPoller` — background pollers (TrueNAS every 900s, Proxmox every 60s)
-  that hit those APIs directly and drive ntfy alerting on state change. `NASPoller` also fetches
+- `netwatch/network.py` — `send_ntfy_alert` / ntfy plumbing, `send_wol_packet` / MAC detection
+  helpers (Wake-on-LAN with broadcast-address auto-detection), nmap-based discovery
+  (`start_discovery_scan` / `get_discovery_state`), and Pi host-health reads (`read_pi_health`).
+- `netwatch/pollers.py` — `NASPoller` / `ProxmoxPoller` / `PBSPoller` / `HAPoller`: background
+  pollers (TrueNAS every 900s, Proxmox every 60s) that hit those APIs directly and drive ntfy
+  alerting via `netwatch.network.send_ntfy_alert` on state change. `NASPoller` also fetches
   TrueNAS's own `/api/v2.0/alert/list`, filters to WARNING+ via `_filter_alerts()` (excluding any
   klass in the user-configurable `truenas_ignored_alert_klasses` setting), and fires/clears ntfy
   alerts keyed by TrueNAS's own alert `id` — see `_check_alerts`. Scrub-schedule math
@@ -75,31 +83,35 @@ Major subsystems, in file order:
   actual runs, separate from the cron's check frequency) and the NAS's configured timezone
   (`/api/v2.0/system/info`'s `timezone` field, via `zoneinfo`) — don't assume the cron's
   hour/minute fields are UTC.
-- `send_wol_packet` / MAC detection helpers — Wake-on-LAN, with broadcast-address
-  auto-detection.
-- `build_topology_payload` / `build_api_payload` — assemble the JSON the frontend polls;
-  topology payload merges live host status onto inventory records + connection edges.
-- **HTTP layer**: `make_handler()` builds a `BaseHTTPRequestHandler` subclass with `do_GET`/
-  `do_POST` implemented as long if/elif chains over `self.path` (no routing library/decorator
-  table). Each branch calls a `_h_get_*`/`_h_post_*` handler function that takes whatever state
-  it needs as explicit arguments (these are unit-testable in isolation — see how
-  `tests/test_netwatch.py` imports them directly). When adding an endpoint, add a branch in
-  `do_GET`/`do_POST` plus a `_h_*` function, following the existing naming convention.
-- TUI: `draw_tui`, `_init_tui_colors`, `_tui_status_role` — curses-based terminal view, used
-  when `--no-tui` is *not* passed. Falls back gracefully (256-color → 8-color → monochrome) and
-  catches `curses.error` so an unsupported terminal doesn't crash the process — it prints a
-  hint to use `--no-tui` instead.
-- `main()` — wires everything together: loads `hosts.yaml`, starts `HistoryDB`/prune/flush
-  threads, starts pollers conditionally (only if Proxmox/TrueNAS are configured), starts the
-  web server in a thread, then runs either the TUI or a headless sleep loop. SIGTERM is routed
-  through `KeyboardInterrupt` so shutdown flushes buffered pings and checkpoints the WAL.
+- `netwatch/http_handlers.py` — `build_topology_payload` / `build_api_payload` (assemble the
+  JSON the frontend polls; topology payload merges live host status onto inventory records +
+  connection edges) plus every `_h_get_*`/`_h_post_*` handler function, each taking whatever
+  state it needs as explicit arguments (these are unit-testable in isolation — see how
+  `tests/test_netwatch.py` imports them directly). When adding an endpoint, add a `_h_*`
+  function here and wire it up as a branch in `netwatch/server.py`'s `do_GET`/`do_POST`,
+  following the existing naming convention.
+- `netwatch/server.py` — **HTTP layer**: `make_handler()` builds a `BaseHTTPRequestHandler`
+  subclass with `do_GET`/`do_POST` implemented as long if/elif chains over `self.path` (no
+  routing library/decorator table), dispatching to the `_h_*` handlers in `http_handlers.py`.
+  Also owns `start_web_server()` and the `_STATIC_FILES` allowlist.
+- `netwatch/tui.py` — `draw_tui`, `_init_tui_colors`, `_tui_status_role`: curses-based terminal
+  view, used when `--no-tui` is *not* passed. Falls back gracefully (256-color → 8-color →
+  monochrome) and catches `curses.error` so an unsupported terminal doesn't crash the process —
+  it prints a hint to use `--no-tui` instead.
+- `netwatch/__main__.py` — `main()`: wires everything together: loads `hosts.yaml`, starts
+  `HistoryDB`/prune/flush threads, starts pollers conditionally (only if Proxmox/TrueNAS are
+  configured), starts the web server in a thread, then runs either the TUI or a headless sleep
+  loop. SIGTERM is routed through `KeyboardInterrupt` so shutdown flushes buffered pings and
+  checkpoints the WAL. Also owns `_load_dashboard_html`.
   **Important:** `settings` (the dict loaded from `hosts.yaml`) is passed by reference into
   `HostManager`, `NASPoller`, `ProxmoxPoller`, *and* the web server's handler closure — all as
-  the *same* dict object, not copies. `_h_post_settings` relies on this: it mutates `settings`
-  in place so a change saved via the API is immediately visible to every poller without a
-  restart. If you ever find yourself writing `{**settings, ...}` to build a "local" settings
-  dict for one consumer, stop — that silently reintroduces the exact bug fixed in `00480af`
-  (settings changes appearing to save but not taking effect until the next restart).
+  the *same* dict object, not copies, even though they now live in different modules.
+  `_h_post_settings` relies on this: it mutates `settings` in place so a change saved via the
+  API is immediately visible to every poller without a restart. If you ever find yourself
+  writing `{**settings, ...}` to build a "local" settings dict for one consumer, stop — that
+  silently reintroduces the exact bug fixed in `00480af` (settings changes appearing to save but
+  not taking effect until the next restart). See `tests/test_netwatch.py`'s settings
+  dict-identity test for a regression check that spans module boundaries.
 
 **Frontend**: `dashboard.html` is the shell, loaded fresh from disk per request (not templated).
 `static/*.js` are separate vanilla-JS modules per dashboard area (`core.js`, `topology.js`,
@@ -118,7 +130,7 @@ overflow (see `.pbs-ds-name`/`.pbs-ds-val`). Verify with the browser's device to
 checking `element.scrollWidth` vs `clientWidth` at 320px — don't assume desktop layout math
 holds at phone widths.
 
-**Bump `VERSION` (top of `monitor.py`) after every major task completion.** Static assets are
+**Bump `VERSION` (in `netwatch/__init__.py`) after every major task completion.** Static assets are
 cache-busted via `?v={{VERSION}}` in `dashboard.html`; if the version string doesn't change,
 browsers may keep serving stale cached JS/CSS after an edit, even though the server is reading
 the new file from disk. Bumping requires a service restart (`systemctl restart netwatch`) to take
@@ -147,9 +159,11 @@ inventory, lockouts), `monitor.log` (rotating, 10MB × 3).
 
 ## Testing notes
 
-`tests/test_netwatch.py` imports internals directly from `monitor` (handler functions, classes,
-even private helpers like `_column_exists`) rather than hitting the HTTP layer for most cases —
-follow that pattern for new tests: call the `_h_*` handler function with constructed
-state/mocks rather than spinning up a real server, unless the test specifically targets HTTP
-plumbing (a few tests do use `ThreadingHTTPServer` directly for that). `tests/conftest.py` just
-puts the repo root on `sys.path` so `monitor` is importable.
+`tests/test_netwatch.py` imports internals directly from the `netwatch` submodules (handler
+functions, classes, even private helpers like `netwatch.storage._column_exists`) rather than
+hitting the HTTP layer for most cases — follow that pattern for new tests: call the `_h_*`
+handler function with constructed state/mocks rather than spinning up a real server, unless the
+test specifically targets HTTP plumbing (a few tests do use `ThreadingHTTPServer` directly for
+that, and one locates `monitor.py` itself via `import monitor` to exercise the entrypoint shim).
+`tests/conftest.py` just puts the repo root on `sys.path` so both `netwatch` and `monitor` are
+importable.
