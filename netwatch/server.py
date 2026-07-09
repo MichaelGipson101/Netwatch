@@ -60,7 +60,9 @@ _STATIC_FILES = {
 }
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None):
+    static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): pass
 
@@ -168,8 +170,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if fname not in _STATIC_FILES:
                     self._send_json(404, {'error': 'not found'})
                     return
-                base_dir = os.path.dirname(os.path.abspath(config_path))
-                fpath = os.path.join(base_dir, 'static', fname)
+                fpath = os.path.join(static_dir, fname)
                 try:
                     with open(fpath, 'rb') as f:
                         body = f.read()
@@ -423,7 +424,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
 
             if self.path == "/api/inventory-import":
-                if not self._require_auth(): return
+                if not self._require_auth(admin_only=True): return
                 if not inventory_db:
                     self._send_json(500, {"error": "inventory not available"}); return
                 try:
@@ -602,8 +603,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, static_dir=static_dir))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():

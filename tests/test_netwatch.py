@@ -1066,6 +1066,34 @@ def test_post_hosts_requires_admin(tmp_path):
         t.join()
 
 
+def test_inventory_import_requires_admin(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    auth.create_user("bob", "password123")
+    server, port, t = _auth_test_server(auth)
+    try:
+        cookie = auth.make_session_cookie("bob")
+        req = _urlreq.Request(
+            f"http://127.0.0.1:{port}/api/inventory-import",
+            data=b"--x--\r\n",
+            method="POST",
+            headers={
+                "Cookie": f"nw_session={cookie}",
+                "Content-Type": "multipart/form-data; boundary=x",
+            },
+        )
+        try:
+            _urlreq.urlopen(req)
+            assert False, "expected 403"
+        except _urlerr.HTTPError as e:
+            assert e.code == 403
+            body = _json.loads(e.read())
+            assert body["error"] == "admin_required"
+    finally:
+        server.server_close()
+        t.join()
+
+
 def test_post_without_csrf_token_rejected(tmp_path):
     auth = AuthManager(str(tmp_path / "auth.json"))
     auth.create_user("root", "password123", admin=True)
@@ -1315,6 +1343,31 @@ def test_vendored_asset_files_exist_on_disk():
     base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
     for fname in ['d3.v7.min.js', 'fonts.css', 'dmsans-400.woff2', 'dmmono-400.woff2']:
         assert os.path.exists(os.path.join(base, fname)), fname
+
+
+def test_static_assets_do_not_depend_on_config_directory(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    static_dir = tmp_path / "assets"
+    static_dir.mkdir()
+    (static_dir / "core.js").write_text("window.netwatchTest = true;", encoding="utf-8")
+
+    handler = make_handler(
+        None, {}, str(config_dir / "hosts.yaml"),
+        dashboard_html="",
+        static_dir=str(static_dir),
+    )
+    server = _THTS(("127.0.0.1", 0), handler)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        with _urlreq.urlopen(f"http://127.0.0.1:{server.server_address[1]}/static/core.js?v=test") as r:
+            assert r.status == 200
+            assert r.read() == b"window.netwatchTest = true;"
+    finally:
+        server.server_close()
+        t.join()
+
 
 def test_dmsans_weights_are_distinct():
     import hashlib
