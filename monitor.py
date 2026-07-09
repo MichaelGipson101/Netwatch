@@ -19,9 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-BRAND   = "NETWATCH"
-VERSION = "3.69"
+from netwatch import BRAND, VERSION
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:

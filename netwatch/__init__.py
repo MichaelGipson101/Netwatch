@@ -1,0 +1,2 @@
+BRAND = "NETWATCH"
+VERSION = "3.69"
