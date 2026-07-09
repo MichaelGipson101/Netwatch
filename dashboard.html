@@ -813,26 +813,17 @@
           <div class="settings-section-hdr">TrueNAS</div>
           <label class="form-field">URL<input type="text" id="s-truenas_url" placeholder="https://truenas.local"></label>
           <label class="form-field">API key
-            <div class="field-with-toggle">
-              <input type="password" id="s-truenas_api_key" placeholder="Paste API key from TrueNAS" autocomplete="off">
-              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-truenas_api_key')">Show</button>
-            </div>
+            <input type="password" id="s-truenas_api_key" placeholder="Paste API key from TrueNAS" autocomplete="off">
           </label>
           <div class="settings-section-hdr" style="margin-top:8px">Proxmox VE</div>
           <label class="form-field">URL<input type="text" id="s-proxmox_url" placeholder="https://proxmox.local:8006"></label>
           <label class="form-field">Username<input type="text" id="s-proxmox_user" placeholder="root@pam" autocomplete="off"></label>
           <label class="form-field">Password
-            <div class="field-with-toggle">
-              <input type="password" id="s-proxmox_password" placeholder="or use API token below" autocomplete="off">
-              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-proxmox_password')">Show</button>
-            </div>
+            <input type="password" id="s-proxmox_password" placeholder="or use API token below" autocomplete="off">
           </label>
           <label class="form-field">API token ID<input type="text" id="s-proxmox_token_id" placeholder="netwatch@pam!token" autocomplete="off"></label>
           <label class="form-field">API token secret
-            <div class="field-with-toggle">
-              <input type="password" id="s-proxmox_token_secret" placeholder="token secret value" autocomplete="off">
-              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-proxmox_token_secret')">Show</button>
-            </div>
+            <input type="password" id="s-proxmox_token_secret" placeholder="token secret value" autocomplete="off">
           </label>
           <label class="form-field">Node name<input type="text" id="s-proxmox_node" placeholder="pve"></label>
           <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="s-proxmox_verify_ssl" checked> Verify Proxmox's TLS certificate</label>
@@ -844,10 +835,7 @@
           <label class="form-field">URL<input type="text" id="s-pbs_url" placeholder="https://pbs.local:8007"></label>
           <label class="form-field">API token ID<input type="text" id="s-pbs_api_token_id" placeholder="root@pbs!netwatch" autocomplete="off"></label>
           <label class="form-field">API token secret
-            <div class="field-with-toggle">
-              <input type="password" id="s-pbs_api_token_secret" placeholder="token secret value" autocomplete="off">
-              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-pbs_api_token_secret')">Show</button>
-            </div>
+            <input type="password" id="s-pbs_api_token_secret" placeholder="token secret value" autocomplete="off">
           </label>
           <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="s-pbs_verify_ssl" checked> Verify PBS's TLS certificate</label>
           <label class="form-field">PBS CA cert path
@@ -856,10 +844,7 @@
           <div class="settings-section-hdr" style="margin-top:8px">Home Assistant</div>
           <label class="form-field">URL<input type="text" id="s-ha_url" placeholder="http://192.168.x.x:8123"></label>
           <label class="form-field">Access token
-            <div class="field-with-toggle">
-              <input type="password" id="s-ha_token" placeholder="Long-lived access token from HA profile" autocomplete="off">
-              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-ha_token')">Show</button>
-            </div>
+            <input type="password" id="s-ha_token" placeholder="Long-lived access token from HA profile" autocomplete="off">
           </label>
           <label class="form-field">Power entity ID<input type="text" id="s-ha_entity_power" placeholder="sensor.tapo_p115_current_power"></label>
           <label class="form-field">Voltage entity ID<input type="text" id="s-ha_entity_voltage" placeholder="sensor.tapo_p115_voltage"></label>
@@ -873,10 +858,7 @@
         <div class="form-stack">
           <p class="form-hint">The AI assistant uses OpenRouter. Leave blank to disable.</p>
           <label class="form-field">OpenRouter API key
-            <div class="field-with-toggle">
-              <input type="password" id="s-openrouter_api_key" placeholder="sk-or-..." autocomplete="off">
-              <button type="button" class="toggle-vis-btn" onclick="toggleFieldVis('s-openrouter_api_key')">Show</button>
-            </div>
+            <input type="password" id="s-openrouter_api_key" placeholder="sk-or-..." autocomplete="off">
           </label>
           <label class="form-field">Model<input type="text" id="s-ai_model" placeholder="openrouter/free"></label>
         </div>
