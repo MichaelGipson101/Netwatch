@@ -102,7 +102,7 @@ def test_no_db_path_works_as_before():
 
 from netwatch.storage import HistoryDB, InventoryDB
 from netwatch.http_handlers import build_api_payload
-from monitor import make_handler
+from netwatch.server import make_handler
 
 
 class _FakeHost:
@@ -1294,7 +1294,7 @@ def test_dashboard_html_version_substitution(tmp_path):
 # ── static asset self-hosting ────────────────────────────────────────────
 
 def test_static_whitelist_includes_vendored_assets():
-    from monitor import _STATIC_FILES
+    from netwatch.server import _STATIC_FILES
     expected = {
         'd3.v7.min.js': 'application/javascript',
         'fonts.css': 'text/css',
