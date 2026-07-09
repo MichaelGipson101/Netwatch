@@ -89,7 +89,6 @@ class HistoryDB:
     BUFFER_HARD_CAP = 5000   # drop oldest beyond this if SQLite is wedged
 
     def __init__(self, db_path, retention_days=30):
-        import sqlite3
         self.db_path = db_path
         self.retention_days = retention_days
         self.lock = threading.Lock()
@@ -1238,7 +1237,6 @@ def create_backup_tarball(config_path, auth_path):
     """
     import io
     import json as _json
-    import sqlite3
     import socket
     import tarfile
     import tempfile
@@ -1331,11 +1329,13 @@ def restore_backup(tarball_path, config_path, force=False):
     """Restore hosts.yaml, auth.json, and netwatch.db from a backup tarball
     built by create_backup_tarball().
 
-    Deliberately does NOT extract the tarball's bundled monitor.py: the
-    tarball is meant to be a fully self-contained emergency artifact usable
-    on its own, but when --restore runs after a fresh git clone (the normal
-    redeploy path), overwriting freshly-cloned code with whatever version
-    made the backup would silently downgrade it.
+    Deliberately does NOT extract the tarball's bundled monitor.py: when
+    --restore runs after a fresh git clone (the normal redeploy path),
+    overwriting freshly-cloned code with whatever version made the backup
+    would silently downgrade it. (The bundled monitor.py is a thin
+    entrypoint shim as of the netwatch/ package split - it alone can't run
+    the app without the rest of the netwatch/ package, which the tarball
+    does not include; git clone is the supported way to get runnable code.)
 
     Returns (ok, message). Never raises for expected failure conditions
     (missing/invalid tarball, conflicting destination files) - callers can
