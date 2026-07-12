@@ -13,7 +13,7 @@ import logging
 
 from netwatch import VERSION
 from netwatch.auth import AuthManager
-from netwatch.storage import HistoryDB, InventoryDB, _flush_loop, _prune_loop, restore_backup
+from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup
 from netwatch.hosts import HostManager, IncidentLog, load_yaml
 from netwatch.pollers import NASPoller, ProxmoxPoller, PBSPoller, HAPoller
 from netwatch.server import start_web_server
@@ -101,6 +101,7 @@ def main():
     inventory_db = InventoryDB(history_db)
     inv_count = len(inventory_db.list_all())
     print(f"[netwatch] Inventory  -> {inv_count} record(s)")
+    quicklinks_db = QuickLinksDB(history_db)
 
     # Daily prune task
     pt = threading.Thread(target=_prune_loop, args=(history_db, stop_event), daemon=True, name="prune")
@@ -154,7 +155,7 @@ def main():
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "static_dir": os.path.join(base_dir, "static")},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db},
             daemon=True
         )
         wt.start()

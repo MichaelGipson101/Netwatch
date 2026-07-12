@@ -1412,6 +1412,56 @@ def test_inventory_import_requires_admin(tmp_path):
         t.join()
 
 
+def test_quicklinks_create_requires_admin(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    auth.create_user("bob", "password123")
+    server, port, t = _auth_test_server(auth)
+    try:
+        cookie = auth.make_session_cookie("bob")
+        req = _urlreq.Request(
+            f"http://127.0.0.1:{port}/api/quicklinks",
+            data=b'{"label": "X", "url": "https://x.example"}',
+            method="POST",
+            headers={"Cookie": f"nw_session={cookie}"},
+        )
+        try:
+            _urlreq.urlopen(req)
+            assert False, "expected 403"
+        except _urlerr.HTTPError as e:
+            assert e.code == 403
+            body = _json.loads(e.read())
+            assert body["error"] == "admin_required"
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_quicklinks_get_allows_non_admin(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    auth.create_user("bob", "password123")
+    hdb, qldb = _make_qldb(str(tmp_path))
+    handler = make_handler(None, {}, "/dev/null", auth_manager=auth, quicklinks_db=qldb)
+    server = _THTS(("127.0.0.1", 0), handler)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        cookie = auth.make_session_cookie("bob")
+        req = _urlreq.Request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/quicklinks",
+            headers={"Cookie": f"nw_session={cookie}"},
+        )
+        res = _urlreq.urlopen(req)
+        assert res.status == 200
+        body = _json.loads(res.read())
+        assert body == {"links": []}
+    finally:
+        server.server_close()
+        t.join()
+        hdb.close()
+
+
 def test_post_without_csrf_token_rejected(tmp_path):
     auth = AuthManager(str(tmp_path / "auth.json"))
     auth.create_user("root", "password123", admin=True)

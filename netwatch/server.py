@@ -27,6 +27,8 @@ from netwatch.http_handlers import (
     _h_post_inventory_delete, _h_post_connection_create, _h_post_connection_update,
     _h_post_connection_delete, _h_post_discover, _h_post_detect_mac, _h_post_wake,
     _h_post_hosts, _h_post_auth_users, _h_post_auth_password, _h_post_auth_user_delete,
+    _h_get_quicklinks, _h_post_quicklinks_create, _h_post_quicklinks_update,
+    _h_post_quicklinks_delete, _h_post_quicklinks_move,
 )
 
 
@@ -57,10 +59,11 @@ _STATIC_FILES = {
     'icon-512.png':    'image/png',
     'apple-touch-icon.png':'image/png',
     'mira-avatar.png': 'image/png',
+    'quicklinks.js':'application/javascript; charset=utf-8',
 }
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None, quicklinks_db=None):
     static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
     class Handler(BaseHTTPRequestHandler):
@@ -195,6 +198,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/inventory-backup-status":
                 if not self._require_auth(admin_only=True): return
                 self._send_json(*_h_get_inventory_backup_status())
+                return
+            if self.path == "/api/quicklinks":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_quicklinks(quicklinks_db))
                 return
             if self.path == "/api/ai-config":
                 if not self._require_auth(): return
@@ -423,6 +430,32 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self._send_json(*_h_post_inventory_update(self.path, data, inventory_db))
                 return
 
+            if self.path == "/api/quicklinks":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_quicklinks_create(data, quicklinks_db))
+                return
+
+            if self.path.startswith("/api/quicklinks/") and self.path.endswith("/delete"):
+                if not self._require_auth(admin_only=True): return
+                self._send_json(*_h_post_quicklinks_delete(self.path, quicklinks_db))
+                return
+
+            if self.path.startswith("/api/quicklinks/") and self.path.endswith("/move"):
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_quicklinks_move(self.path, data, quicklinks_db))
+                return
+
+            if self.path.startswith("/api/quicklinks/"):
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_quicklinks_update(self.path, data, quicklinks_db))
+                return
+
             if self.path == "/api/inventory-import":
                 if not self._require_auth(admin_only=True): return
                 if not inventory_db:
@@ -603,8 +636,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, static_dir=static_dir))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None, quicklinks_db=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, static_dir=static_dir, quicklinks_db=quicklinks_db))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():
