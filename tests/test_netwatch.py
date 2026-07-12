@@ -10,6 +10,7 @@ import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
 from netwatch.storage import _column_exists
 from netwatch.storage import export_inventory_to_xlsx
+from netwatch.storage import QuickLinksDB
 from netwatch.pollers import NASPoller
 import monitor as _mon
 from netwatch.http_handlers import (
@@ -261,6 +262,48 @@ def test_export_scope_defaults_to_hosts():
         assert data is not None
         wb = openpyxl.load_workbook(io.BytesIO(data))
         assert wb.active.max_row == 1  # header only, no host records
+        hdb.close()
+
+
+def _make_qldb(tmpdir):
+    db_path = os.path.join(tmpdir, "quicklinks_test.db")
+    hdb = HistoryDB(db_path)
+    qldb = QuickLinksDB(hdb)
+    return hdb, qldb
+
+
+# ── QuickLinksDB ──────────────────────────────────────────────────────────────
+
+def test_quicklinks_list_empty():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        assert qldb.list_links() == []
+        hdb.close()
+
+
+def test_quicklinks_create_and_list():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.lanternstack.dev", "🖥")
+        assert isinstance(link_id, int)
+        links = qldb.list_links()
+        assert len(links) == 1
+        assert links[0]["id"] == link_id
+        assert links[0]["label"] == "Proxmox"
+        assert links[0]["url"] == "https://pve.lanternstack.dev"
+        assert links[0]["icon"] == "🖥"
+        assert links[0]["sort_order"] == 0
+        hdb.close()
+
+
+def test_quicklinks_create_assigns_increasing_sort_order():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        id1 = qldb.create_link("First", "https://a.example", "")
+        id2 = qldb.create_link("Second", "https://b.example", "")
+        links = qldb.list_links()
+        assert [l["id"] for l in links] == [id1, id2]
+        assert [l["sort_order"] for l in links] == [0, 1]
         hdb.close()
 
 

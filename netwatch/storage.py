@@ -991,6 +991,52 @@ class InventoryDB:
         return out
 
 
+class QuickLinksDB:
+    """SQLite-backed quick-links list for the Overview tab. Lives in the same
+    database as everything else (shares HistoryDB's connection/lock), so
+    existing backup/restore covers it automatically with no extra plumbing."""
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS quick_links (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        label      TEXT NOT NULL,
+        url        TEXT NOT NULL,
+        icon       TEXT,
+        sort_order INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_quicklinks_sort ON quick_links(sort_order);
+    """
+
+    def __init__(self, history_db):
+        self.history_db = history_db
+        self.lock = history_db.lock
+        self.conn = history_db.conn
+        self.conn.executescript(self.SCHEMA)
+
+    def list_links(self):
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT id, label, url, icon, sort_order, created_at "
+                "FROM quick_links ORDER BY sort_order"
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def create_link(self, label, url, icon):
+        with self.lock:
+            cur = self.conn.execute("SELECT MAX(sort_order) FROM quick_links")
+            row = cur.fetchone()
+            next_order = (row[0] + 1) if row and row[0] is not None else 0
+            ts = int(time.time())
+            cur = self.conn.execute(
+                "INSERT INTO quick_links (label, url, icon, sort_order, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (label, url, icon, next_order, ts),
+            )
+            return cur.lastrowid
+
+
 def export_inventory_to_xlsx(inventory_db, scope='hosts'):
     """Build an XLSX file in memory containing inventory records.
 
