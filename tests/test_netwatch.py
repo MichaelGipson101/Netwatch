@@ -25,6 +25,7 @@ from netwatch.http_handlers import (
     _h_post_auth_users, _h_post_auth_password, _h_post_auth_user_delete,
     _h_get_ai_usage,
     _h_get_quicklinks, _h_post_quicklinks_create,
+    _h_post_quicklinks_update, _h_post_quicklinks_delete, _h_post_quicklinks_move,
 )
 
 
@@ -849,6 +850,122 @@ def test_h_post_quicklinks_create_icon_truncated():
         assert code == 200
         links = qldb.list_links()
         assert len(links[0]["icon"]) == 8
+        hdb.close()
+
+
+# ── _h_post_quicklinks_update / _delete / _move ──────────────────────────────
+
+def test_h_post_quicklinks_update_no_db():
+    code, body = _h_post_quicklinks_update("/api/quicklinks/1", {"label": "X"}, None)
+    assert code == 500
+
+
+def test_h_post_quicklinks_update_bad_id():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_update("/api/quicklinks/abc", {"label": "X"}, qldb)
+        assert code == 400
+        hdb.close()
+
+
+def test_h_post_quicklinks_update_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_update("/api/quicklinks/9999", {"label": "X"}, qldb)
+        assert code == 404
+        hdb.close()
+
+
+def test_h_post_quicklinks_update_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        code, body = _h_post_quicklinks_update(f"/api/quicklinks/{link_id}", {"label": "PVE"}, qldb)
+        assert code == 200
+        assert body["ok"] is True
+        assert qldb.list_links()[0]["label"] == "PVE"
+        hdb.close()
+
+
+def test_h_post_quicklinks_update_empty_label_rejected():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        code, body = _h_post_quicklinks_update(f"/api/quicklinks/{link_id}", {"label": "  "}, qldb)
+        assert code == 400
+        hdb.close()
+
+
+def test_h_post_quicklinks_update_invalid_url_rejected():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        code, body = _h_post_quicklinks_update(f"/api/quicklinks/{link_id}", {"url": "ftp://x"}, qldb)
+        assert code == 400
+        hdb.close()
+
+
+def test_h_post_quicklinks_delete_no_db():
+    code, body = _h_post_quicklinks_delete("/api/quicklinks/1/delete", None)
+    assert code == 500
+
+
+def test_h_post_quicklinks_delete_bad_id():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_delete("/api/quicklinks/abc/delete", qldb)
+        assert code == 400
+        hdb.close()
+
+
+def test_h_post_quicklinks_delete_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_delete("/api/quicklinks/9999/delete", qldb)
+        assert code == 404
+        hdb.close()
+
+
+def test_h_post_quicklinks_delete_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        code, body = _h_post_quicklinks_delete(f"/api/quicklinks/{link_id}/delete", qldb)
+        assert code == 200
+        assert qldb.list_links() == []
+        hdb.close()
+
+
+def test_h_post_quicklinks_move_no_db():
+    code, body = _h_post_quicklinks_move("/api/quicklinks/1/move", {"direction": "up"}, None)
+    assert code == 500
+
+
+def test_h_post_quicklinks_move_invalid_direction():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        code, body = _h_post_quicklinks_move(f"/api/quicklinks/{link_id}/move", {"direction": "sideways"}, qldb)
+        assert code == 400
+        hdb.close()
+
+
+def test_h_post_quicklinks_move_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_move("/api/quicklinks/9999/move", {"direction": "up"}, qldb)
+        assert code == 404
+        hdb.close()
+
+
+def test_h_post_quicklinks_move_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        id1 = qldb.create_link("First", "https://a.example", "")
+        id2 = qldb.create_link("Second", "https://b.example", "")
+        code, body = _h_post_quicklinks_move(f"/api/quicklinks/{id2}/move", {"direction": "up"}, qldb)
+        assert code == 200
+        assert [l["id"] for l in qldb.list_links()] == [id2, id1]
         hdb.close()
 
 

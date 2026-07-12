@@ -811,6 +811,61 @@ def _h_post_quicklinks_create(body: dict, quicklinks_db) -> tuple:
     return 200, {"ok": True, "id": link_id}
 
 
+def _h_post_quicklinks_update(path: str, body: dict, quicklinks_db) -> tuple:
+    if not quicklinks_db:
+        return 500, {"error": "quick links not available"}
+    try:
+        link_id = int(path.split("/")[-1])
+    except ValueError:
+        return 400, {"error": "invalid id"}
+    fields = {}
+    if "label" in body:
+        label = str(body["label"]).strip()
+        if not label:
+            return 400, {"error": "label cannot be empty"}
+        fields["label"] = label
+    if "url" in body:
+        url = str(body["url"]).strip()
+        if not _validate_url(url):
+            return 400, {"error": "url must start with http:// or https://"}
+        fields["url"] = url
+    if "icon" in body:
+        fields["icon"] = str(body["icon"] or "")[:8]
+    ok = quicklinks_db.update_link(link_id, **fields)
+    if not ok:
+        return 404, {"error": "link not found"}
+    return 200, {"ok": True}
+
+
+def _h_post_quicklinks_delete(path: str, quicklinks_db) -> tuple:
+    if not quicklinks_db:
+        return 500, {"error": "quick links not available"}
+    try:
+        link_id = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    ok = quicklinks_db.delete_link(link_id)
+    if not ok:
+        return 404, {"error": "link not found"}
+    return 200, {"ok": True}
+
+
+def _h_post_quicklinks_move(path: str, body: dict, quicklinks_db) -> tuple:
+    if not quicklinks_db:
+        return 500, {"error": "quick links not available"}
+    try:
+        link_id = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    direction = body.get("direction")
+    if direction not in ("up", "down"):
+        return 400, {"error": "direction must be 'up' or 'down'"}
+    ok = quicklinks_db.move_link(link_id, direction)
+    if not ok:
+        return 404, {"error": "link not found"}
+    return 200, {"ok": True}
+
+
 def _h_post_connection_create(path: str, body: dict, inventory_db) -> tuple:
     if not inventory_db:
         return 500, {"error": "inventory not available"}
