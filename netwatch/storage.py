@@ -1036,6 +1036,50 @@ class QuickLinksDB:
             )
             return cur.lastrowid
 
+    def update_link(self, link_id, **fields):
+        sets, vals = [], []
+        for f in ("label", "url", "icon"):
+            if f in fields:
+                sets.append(f"{f} = ?")
+                vals.append(fields[f])
+        if not sets:
+            return True  # nothing to update, id existing or not is irrelevant
+        vals.append(link_id)
+        with self.lock:
+            cur = self.conn.execute(
+                f"UPDATE quick_links SET {', '.join(sets)} WHERE id = ?", vals
+            )
+            return cur.rowcount > 0
+
+    def delete_link(self, link_id):
+        with self.lock:
+            cur = self.conn.execute("DELETE FROM quick_links WHERE id = ?", (link_id,))
+            return cur.rowcount > 0
+
+    def move_link(self, link_id, direction):
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT id, sort_order FROM quick_links ORDER BY sort_order"
+            )
+            rows = cur.fetchall()
+            ids = [r[0] for r in rows]
+            if link_id not in ids:
+                return False
+            idx = ids.index(link_id)
+            if direction == "up":
+                if idx == 0:
+                    return True  # no neighbor above, no-op
+                other_idx = idx - 1
+            else:
+                if idx == len(rows) - 1:
+                    return True  # no neighbor below, no-op
+                other_idx = idx + 1
+            this_id, this_order = rows[idx]
+            other_id, other_order = rows[other_idx]
+            self.conn.execute("UPDATE quick_links SET sort_order = ? WHERE id = ?", (other_order, this_id))
+            self.conn.execute("UPDATE quick_links SET sort_order = ? WHERE id = ?", (this_order, other_id))
+            return True
+
 
 def export_inventory_to_xlsx(inventory_db, scope='hosts'):
     """Build an XLSX file in memory containing inventory records.

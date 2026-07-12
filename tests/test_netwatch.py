@@ -307,6 +307,98 @@ def test_quicklinks_create_assigns_increasing_sort_order():
         hdb.close()
 
 
+def test_quicklinks_update_link():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "🖥")
+        ok = qldb.update_link(link_id, label="Proxmox VE", icon="🖧")
+        assert ok is True
+        links = qldb.list_links()
+        assert links[0]["label"] == "Proxmox VE"
+        assert links[0]["icon"] == "🖧"
+        assert links[0]["url"] == "https://pve.example"  # untouched field preserved
+        hdb.close()
+
+
+def test_quicklinks_update_link_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        ok = qldb.update_link(9999, label="Nope")
+        assert ok is False
+        hdb.close()
+
+
+def test_quicklinks_update_link_no_fields_is_noop():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        ok = qldb.update_link(link_id)
+        assert ok is True
+        hdb.close()
+
+
+def test_quicklinks_delete_link():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        link_id = qldb.create_link("Proxmox", "https://pve.example", "")
+        ok = qldb.delete_link(link_id)
+        assert ok is True
+        assert qldb.list_links() == []
+        hdb.close()
+
+
+def test_quicklinks_delete_link_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        ok = qldb.delete_link(9999)
+        assert ok is False
+        hdb.close()
+
+
+def test_quicklinks_move_link_swaps_adjacent_sort_order():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        id1 = qldb.create_link("First", "https://a.example", "")
+        id2 = qldb.create_link("Second", "https://b.example", "")
+        ok = qldb.move_link(id2, "up")
+        assert ok is True
+        links = qldb.list_links()
+        assert [l["id"] for l in links] == [id2, id1]
+        hdb.close()
+
+
+def test_quicklinks_move_link_first_up_is_noop():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        id1 = qldb.create_link("First", "https://a.example", "")
+        id2 = qldb.create_link("Second", "https://b.example", "")
+        ok = qldb.move_link(id1, "up")
+        assert ok is True
+        links = qldb.list_links()
+        assert [l["id"] for l in links] == [id1, id2]  # unchanged
+        hdb.close()
+
+
+def test_quicklinks_move_link_last_down_is_noop():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        id1 = qldb.create_link("First", "https://a.example", "")
+        id2 = qldb.create_link("Second", "https://b.example", "")
+        ok = qldb.move_link(id2, "down")
+        assert ok is True
+        links = qldb.list_links()
+        assert [l["id"] for l in links] == [id1, id2]  # unchanged
+        hdb.close()
+
+
+def test_quicklinks_move_link_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        ok = qldb.move_link(9999, "up")
+        assert ok is False
+        hdb.close()
+
+
 class _FakeAuthManagerForAiConfig:
     """Holds openrouter_api_key like a real AuthManager, and reports an
     always-authenticated admin session so _require_auth() lets requests
