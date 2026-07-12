@@ -24,6 +24,7 @@ from netwatch.http_handlers import (
     _h_post_detect_mac, _h_post_wake, _h_post_hosts,
     _h_post_auth_users, _h_post_auth_password, _h_post_auth_user_delete,
     _h_get_ai_usage,
+    _h_get_quicklinks, _h_post_quicklinks_create,
 )
 
 
@@ -783,6 +784,71 @@ def test_h_post_inventory_create_success():
         assert code == 200
         assert body["ok"] is True
         assert isinstance(body["id"], int)
+        hdb.close()
+
+
+# ── _h_get_quicklinks / _h_post_quicklinks_create ────────────────────────────
+
+def test_h_get_quicklinks_no_db():
+    code, body = _h_get_quicklinks(None)
+    assert code == 500
+    assert "error" in body
+
+
+def test_h_get_quicklinks_empty():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_get_quicklinks(qldb)
+        assert code == 200
+        assert body["links"] == []
+        hdb.close()
+
+
+def test_h_post_quicklinks_create_no_db():
+    code, body = _h_post_quicklinks_create({"label": "X", "url": "https://x.example"}, None)
+    assert code == 500
+    assert "error" in body
+
+
+def test_h_post_quicklinks_create_success():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_create(
+            {"label": "Proxmox", "url": "https://pve.example", "icon": "🖥"}, qldb
+        )
+        assert code == 200
+        assert body["ok"] is True
+        assert isinstance(body["id"], int)
+        hdb.close()
+
+
+def test_h_post_quicklinks_create_missing_label():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_create({"label": "  ", "url": "https://x.example"}, qldb)
+        assert code == 400
+        assert "label" in body["error"]
+        hdb.close()
+
+
+def test_h_post_quicklinks_create_invalid_url():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_create({"label": "X", "url": "javascript:alert(1)"}, qldb)
+        assert code == 400
+        assert "url" in body["error"]
+        hdb.close()
+
+
+def test_h_post_quicklinks_create_icon_truncated():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdb, qldb = _make_qldb(tmpdir)
+        code, body = _h_post_quicklinks_create(
+            {"label": "X", "url": "https://x.example", "icon": "123456789012"}, qldb
+        )
+        assert code == 200
+        links = qldb.list_links()
+        assert len(links[0]["icon"]) == 8
         hdb.close()
 
 

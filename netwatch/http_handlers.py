@@ -791,6 +791,26 @@ def _h_post_inventory_delete(path: str, inventory_db) -> tuple:
     return 200, {"ok": True}
 
 
+def _h_get_quicklinks(quicklinks_db) -> tuple:
+    if not quicklinks_db:
+        return 500, {"error": "quick links not available"}
+    return 200, {"links": quicklinks_db.list_links()}
+
+
+def _h_post_quicklinks_create(body: dict, quicklinks_db) -> tuple:
+    if not quicklinks_db:
+        return 500, {"error": "quick links not available"}
+    label = str(body.get("label", "")).strip()
+    url = str(body.get("url", "")).strip()
+    icon = str(body.get("icon") or "")[:8]
+    if not label:
+        return 400, {"error": "label is required"}
+    if not _validate_url(url):
+        return 400, {"error": "url must start with http:// or https://"}
+    link_id = quicklinks_db.create_link(label, url, icon)
+    return 200, {"ok": True, "id": link_id}
+
+
 def _h_post_connection_create(path: str, body: dict, inventory_db) -> tuple:
     if not inventory_db:
         return 500, {"error": "inventory not available"}
