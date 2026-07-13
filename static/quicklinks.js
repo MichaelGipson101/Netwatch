@@ -65,14 +65,17 @@
       return '<div class="ql-edit-row" data-id="' + l.id + '">'
         + '<input type="text" class="ql-row-icon" value="' + escapeHtml(l.icon || '') + '" maxlength="8"'
         + ' onblur="saveQuickLinkField(' + l.id + ',\'icon\',this.value)">'
+        + '<div class="ql-edit-row-fields">'
         + '<input type="text" class="ql-row-label" value="' + escapeHtml(l.label) + '"'
         + ' onblur="saveQuickLinkField(' + l.id + ',\'label\',this.value)">'
         + '<input type="text" class="ql-row-url" value="' + escapeHtml(l.url) + '"'
         + ' onblur="saveQuickLinkField(' + l.id + ',\'url\',this.value)">'
+        + '</div>'
+        + '<div class="ql-row-actions">'
         + '<button type="button" class="ql-row-btn" onclick="moveQuickLink(' + l.id + ',\'up\')" aria-label="Move up">▲</button>'
         + '<button type="button" class="ql-row-btn" onclick="moveQuickLink(' + l.id + ',\'down\')" aria-label="Move down">▼</button>'
         + '<button type="button" class="ql-row-btn ql-row-del" onclick="deleteQuickLink(' + l.id + ')" aria-label="Delete">×</button>'
-        + '</div>';
+        + '</div></div>';
     }).join('') || '<div class="ov-empty">No quick links yet — add one below.</div>';
   }
 
