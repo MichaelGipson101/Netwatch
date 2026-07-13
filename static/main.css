@@ -1776,6 +1776,16 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .ov-ql-pill:hover{background:var(--border-light)}
 .ov-ql-edit-btn{background:none;border:none;font-size:14px;color:var(--hint);cursor:pointer;padding:0;line-height:1}
 .ov-ql-edit-btn:hover{color:var(--text)}
+.ql-edit-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.ql-edit-row input{flex:1;min-width:60px}
+.ql-row-icon{max-width:60px;flex:0 0 60px}
+.ql-row-btn{background:none;border:1px solid var(--border-light);border-radius:6px;color:var(--hint);cursor:pointer;padding:4px 8px;font-size:11px;flex-shrink:0}
+.ql-row-btn:hover{color:var(--text);background:var(--subtle)}
+.ql-row-del:hover{color:var(--red-text);border-color:var(--red-bg)}
+.ql-edit-add-row{display:flex;gap:6px;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);flex-wrap:wrap}
+.ql-edit-add-row input{flex:1;min-width:60px}
+.ql-add-icon{max-width:60px;flex:0 0 60px}
+@media (max-width:480px){.ql-edit-row input,.ql-edit-add-row input{min-width:100%;flex:1 1 100%}}
 #view-overview .ov-row{padding:0}
 #ov-hosts-down .ov-row{padding:7px 0;border-top:1px solid var(--border-light)}
 @media (max-width:760px){.ov-grid{grid-template-columns:1fr}.ov-span2{grid-column:span 1}}

@@ -583,6 +583,28 @@
   </form>
 </div>
 
+<div class="modal-overlay" id="ql-edit-overlay">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-hdr">
+      <div class="modal-title">Quick links</div>
+      <button type="button" class="modal-close-btn" onclick="closeQuickLinksEditor()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="ql-edit-rows"></div>
+      <div class="ql-edit-add-row">
+        <input type="text" class="ql-add-icon" placeholder="icon" maxlength="8">
+        <input type="text" class="ql-add-label" placeholder="Label">
+        <input type="text" class="ql-add-url" placeholder="https://...">
+        <button type="button" class="btn btn-primary" onclick="addQuickLink()">Add</button>
+      </div>
+      <div id="ql-edit-error" style="font-size:12px;color:var(--red-text);min-height:16px;margin-top:8px"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" onclick="closeQuickLinksEditor()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="import-overlay">
   <div class="modal" style="max-width:520px">
     <div class="modal-hdr">

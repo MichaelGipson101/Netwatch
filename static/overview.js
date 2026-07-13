@@ -85,7 +85,7 @@
       + _card('briefs', 'Latest brief', 'briefs', '', '<div id="ov-brief-body" class="ov-empty">No briefs yet</div>')
       + _card('quicklinks', 'Quick Links', null, '',
         '<div class="ov-ql-pills" id="ov-ql-pills"></div>',
-        '<button class="ov-ql-edit-btn" id="ov-ql-edit-btn" style="display:none" aria-label="Edit quick links" title="Edit quick links">✎</button>');
+        '<button class="ov-ql-edit-btn" id="ov-ql-edit-btn" onclick="openQuickLinksEditor()" style="display:none" aria-label="Edit quick links" title="Edit quick links">✎</button>');
   }
 
   function _card (id, title, tab, extraCls, body, headerControl) {

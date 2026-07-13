@@ -54,6 +54,9 @@ function updateAuthUI(){
   // Settings gear lives next to the tabs; only admins may open Settings.
   const gear = document.getElementById('tab-settings-btn');
   if (gear) gear.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
+  // Quick Links pencil lives in the Overview card header; only admins may edit.
+  const qlEdit = document.getElementById('ov-ql-edit-btn');
+  if (qlEdit) qlEdit.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
 }
 
 let _userMenuOutsideClick = null;
