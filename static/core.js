@@ -65,6 +65,7 @@ function setTab(tab){
   if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();
   if(tab === 'servers'   && typeof initServersTab === 'function') initServersTab();
   if(tab === 'briefs') fetchBriefs();
+  if(tab === 'quicklinks' && typeof mountQuickLinksPage === 'function') mountQuickLinksPage();
   // Re-fetch topology when switching to the tab (but only after D3 has loaded
   // at least once — initial load is handled by setTopoView on page boot).
   if(tab === 'topology' && _topoD3Loaded && typeof fetchAndRenderTopologyWeb === 'function') fetchAndRenderTopologyWeb();

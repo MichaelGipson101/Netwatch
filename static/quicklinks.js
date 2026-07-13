@@ -19,6 +19,35 @@
     el.textContent = String(_links.length);
   }
 
+  window.mountQuickLinksPage = function () {
+    fetch('/api/quicklinks').then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) { _links = d.links || []; _renderCount(); _renderCards(); } })
+      .catch(function () {});
+  };
+
+  function _renderCards () {
+    var el = document.getElementById('ql-page-grid');
+    if (!el) return;
+    if (!_links.length) {
+      var isAdmin = (typeof _authState !== 'undefined' && _authState.logged_in && _authState.admin);
+      el.innerHTML = isAdmin
+        ? '<div class="ov-empty">No quick links yet — click "Edit links" above to add your first one.</div>'
+        : '<div class="ov-empty">No quick links yet</div>';
+      return;
+    }
+    el.innerHTML = _links.map(function (l) {
+      return '<a class="ql-card" href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer">'
+        + '<span class="ql-card-icon">' + escapeHtml(l.icon || '\u{1F517}') + '</span>'
+        + '<span class="ql-card-label">' + escapeHtml(l.label) + '</span>'
+        + '<span class="ql-card-domain">' + escapeHtml(_domainOf(l.url)) + '</span></a>';
+    }).join('');
+  }
+
+  function _domainOf (url) {
+    try { return new URL(url).hostname; }
+    catch (e) { return url; }
+  }
+
   // ── Admin edit modal ──────────────────────────────────────────────────
   window.openQuickLinksEditor = function () {
     document.getElementById('ql-edit-overlay').classList.add('open');

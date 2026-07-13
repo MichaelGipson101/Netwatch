@@ -55,7 +55,7 @@ function updateAuthUI(){
   const gear = document.getElementById('tab-settings-btn');
   if (gear) gear.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
   // Quick Links pencil lives in the Overview card header; only admins may edit.
-  const qlEdit = document.getElementById('ov-ql-edit-btn');
+  const qlEdit = document.getElementById('ql-page-edit-btn');
   if (qlEdit) qlEdit.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
 }
 
