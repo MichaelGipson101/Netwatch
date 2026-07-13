@@ -1771,6 +1771,11 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .ov-brief-date{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:6px}
 .ov-brief-title{font-size:13px;font-weight:600;margin-bottom:4px}
 .ov-brief-text{font-size:12.5px;color:var(--muted);line-height:1.55;margin:0}
+.ov-ql-pills{display:flex;flex-wrap:wrap;gap:8px}
+.ov-ql-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:var(--subtle);border:1px solid var(--border-light);font-size:12.5px;color:var(--text);text-decoration:none;transition:background .15s}
+.ov-ql-pill:hover{background:var(--border-light)}
+.ov-ql-edit-btn{background:none;border:none;font-size:14px;color:var(--hint);cursor:pointer;padding:0;line-height:1}
+.ov-ql-edit-btn:hover{color:var(--text)}
 #view-overview .ov-row{padding:0}
 #ov-hosts-down .ov-row{padding:7px 0;border-top:1px solid var(--border-light)}
 @media (max-width:760px){.ov-grid{grid-template-columns:1fr}.ov-span2{grid-column:span 1}}
