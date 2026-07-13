@@ -84,9 +84,8 @@
       + _card('inventory', 'Inventory', 'inventory', '',
         '<div class="ov-big" id="ov-inv-count">-</div><div class="ov-chips" id="ov-inv-chips"></div>')
       + _card('briefs', 'Latest brief', 'briefs', '', '<div id="ov-brief-body" class="ov-empty">No briefs yet</div>')
-      + _card('quicklinks', 'Quick Links', null, '',
-        '<div class="ov-ql-pills" id="ov-ql-pills"></div>',
-        '<button class="ov-ql-edit-btn" id="ov-ql-edit-btn" onclick="openQuickLinksEditor()" style="display:none" aria-label="Edit quick links" title="Edit quick links">✎</button>');
+      + _card('quicklinks', 'Quick Links', 'quicklinks', '',
+        '<div class="ov-big" id="ov-ql-count">-</div><div class="ov-big-sub">quick links</div>');
   }
 
   function _card (id, title, tab, extraCls, body, headerControl) {

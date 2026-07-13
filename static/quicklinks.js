@@ -9,25 +9,14 @@
 
   window.mountQuickLinksCard = function () {
     fetch('/api/quicklinks').then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d) { _links = d.links || []; _renderPills(); } })
+      .then(function (d) { if (d) { _links = d.links || []; _renderCount(); } })
       .catch(function () {});
   };
 
-  function _renderPills () {
-    var el = document.getElementById('ov-ql-pills');
+  function _renderCount () {
+    var el = document.getElementById('ov-ql-count');
     if (!el) return;
-    if (!_links.length) {
-      var isAdmin = (typeof _authState !== 'undefined' && _authState.logged_in && _authState.admin);
-      el.innerHTML = isAdmin
-        ? '<div class="ov-empty">No quick links yet — click ✎ above to add your first one.</div>'
-        : '<div class="ov-empty">No quick links yet</div>';
-      return;
-    }
-    el.innerHTML = _links.map(function (l) {
-      return '<a class="ov-ql-pill" href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer">'
-        + '<span class="ov-ql-icon">' + escapeHtml(l.icon || '\u{1F517}') + '</span>'
-        + '<span class="ov-ql-label">' + escapeHtml(l.label) + '</span></a>';
-    }).join('');
+    el.textContent = String(_links.length);
   }
 
   // ── Admin edit modal ──────────────────────────────────────────────────
@@ -108,7 +97,7 @@
       .then(function (d) {
         if (!d) return;
         _links = d.links || [];
-        _renderPills();
+        _renderCount();
         _renderEditRows();
       });
   }
