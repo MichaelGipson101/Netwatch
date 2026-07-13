@@ -1,7 +1,6 @@
-/* Quick Links — Overview card. Fetches /api/quicklinks on mount and renders
-   pill buttons; admin edit-modal wiring lives in the second half of this
-   file (openQuickLinksEditor and friends), added once the modal markup
-   exists in dashboard.html. */
+/* Quick Links — Overview count summary, dedicated page card grid, and admin
+   edit modal. Fetches /api/quicklinks on mount; edit mutations refresh
+   the grid, count, and modal via _refreshAndRender(). */
 (function () {
   'use strict';
 
@@ -130,6 +129,7 @@
         if (!d) return;
         _links = d.links || [];
         _renderCount();
+        _renderCards();
         _renderEditRows();
       });
   }
