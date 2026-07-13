@@ -70,6 +70,8 @@ Major subsystems, by module:
   phone/printer) each with type-specific JSON-ish fields, plus arbitrary connection edges
   between records. Backed by the same SQLite file as `HistoryDB`. Supports XLSX import/export
   (`export_inventory_to_xlsx` / `import_inventory_from_xlsx`) and nmap-based discovery.
+  Also `QuickLinksDB`: the Overview tab's admin-editable bookmark list (label/url/icon +
+  manual sort order), same connection/lock-sharing pattern as `InventoryDB`.
 - `netwatch/network.py` — `send_ntfy_alert` / ntfy plumbing, `send_wol_packet` / MAC detection
   helpers (Wake-on-LAN with broadcast-address auto-detection), nmap-based discovery
   (`start_discovery_scan` / `get_discovery_state`), and Pi host-health reads (`read_pi_health`).
