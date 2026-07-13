@@ -17,7 +17,10 @@
     var el = document.getElementById('ov-ql-pills');
     if (!el) return;
     if (!_links.length) {
-      el.innerHTML = '<div class="ov-empty">No quick links yet</div>';
+      var isAdmin = (typeof _authState !== 'undefined' && _authState.logged_in && _authState.admin);
+      el.innerHTML = isAdmin
+        ? '<div class="ov-empty">No quick links yet — click ✎ above to add your first one.</div>'
+        : '<div class="ov-empty">No quick links yet</div>';
       return;
     }
     el.innerHTML = _links.map(function (l) {

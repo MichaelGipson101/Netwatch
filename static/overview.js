@@ -18,6 +18,7 @@
 
   window.initOverviewTab = function () {
     _renderShell();
+    if (typeof updateAuthUI === 'function') updateAuthUI();
     var hour = new Date().getHours();
     var greet = hour < 5 ? 'Good night.' : hour < 12 ? 'Good morning.'
               : hour < 18 ? 'Good afternoon.' : 'Good evening.';
