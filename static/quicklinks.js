@@ -1,6 +1,8 @@
 /* Quick Links — Overview count summary, dedicated page card grid, and admin
-   edit modal. Fetches /api/quicklinks on mount; edit mutations refresh
-   the grid, count, and modal via _refreshAndRender(). */
+   edit modal. Fetches /api/quicklinks on mount; edit mutations patch the
+   local _links array and re-render in place (no refetch, no full edit-row
+   rebuild on field save — rebuilding those rows would blow away focus and
+   in-progress keystrokes in a sibling field on the same onblur). */
 (function () {
   'use strict';
 
@@ -88,20 +90,43 @@
         var err = document.getElementById('ql-edit-error');
         if (!res.ok) { if (err) err.textContent = res.body.error || 'Save failed'; return; }
         if (err) err.textContent = '';
-        return _refreshAndRender();
+        var link = _links.filter(function (l) { return l.id === id; })[0];
+        if (link) link[field] = value;
+        // Don't rebuild #ql-edit-rows here: it's still focused (this just
+        // fired from its own onblur) and a sibling field may be mid-edit.
+        _renderCards();
       }).catch(function () {});
   };
 
   window.moveQuickLink = function (id, direction) {
     apiFetch('/api/quicklinks/' + id + '/move', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({direction: direction})
-    }).then(function () { return _refreshAndRender(); }).catch(function () {});
+    }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (res) {
+        if (!res || !res.ok) return;
+        var idx = _links.findIndex(function (l) { return l.id === id; });
+        if (idx === -1) return;
+        var otherIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (otherIdx < 0 || otherIdx >= _links.length) return; // matches server no-op at either end
+        var tmp = _links[idx];
+        _links[idx] = _links[otherIdx];
+        _links[otherIdx] = tmp;
+        _renderCards();
+        _renderEditRows();
+      }).catch(function () {});
   };
 
   window.deleteQuickLink = function (id) {
     if (!confirm('Delete this quick link?')) return;
     apiFetch('/api/quicklinks/' + id + '/delete', { method: 'POST' })
-      .then(function () { return _refreshAndRender(); }).catch(function () {});
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (res) {
+        if (!res || !res.ok) return;
+        _links = _links.filter(function (l) { return l.id !== id; });
+        _renderCount();
+        _renderCards();
+        _renderEditRows();
+      }).catch(function () {});
   };
 
   window.addQuickLink = function () {
@@ -119,18 +144,10 @@
         document.querySelector('.ql-add-icon').value = '';
         document.querySelector('.ql-add-label').value = '';
         document.querySelector('.ql-add-url').value = '';
-        return _refreshAndRender();
-      }).catch(function () {});
-  };
-
-  function _refreshAndRender () {
-    return fetch('/api/quicklinks').then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) {
-        if (!d) return;
-        _links = d.links || [];
+        _links.push({id: res.body.id, label: label, url: url, icon: icon});
         _renderCount();
         _renderCards();
         _renderEditRows();
-      });
-  }
+      }).catch(function () {});
+  };
 })();
