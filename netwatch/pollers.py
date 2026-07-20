@@ -562,6 +562,9 @@ class PBSPoller:
             "error": None,
             "datastores": [],
             "backups": [],
+            "cpu_percent": None,
+            "mem_used_bytes": None,
+            "mem_total_bytes": None,
         }
         self._lock = threading.Lock()
         self._alert_state = {}    # condition_id -> bool (True = currently alerting)
@@ -614,6 +617,18 @@ class PBSPoller:
             "total_bytes": total,
             "avail_bytes": raw.get("avail") or 0,
             "percent":     round(used / total * 100, 1) if total else 0.0,
+        }
+
+    @staticmethod
+    def _parse_node_status(raw):
+        # PBS's own status endpoint reports `cpu` as a 0-1 fraction (unlike
+        # Proxmox VE's node status, also a fraction, but kept separate here
+        # since PBS is a standalone host with no cluster context).
+        mem = raw.get("memory") or {}
+        return {
+            "cpu_percent":     round((raw.get("cpu") or 0.0) * 100, 1),
+            "mem_used_bytes":  mem.get("used") or 0,
+            "mem_total_bytes": mem.get("total") or 0,
         }
 
     @staticmethod
@@ -759,6 +774,8 @@ class PBSPoller:
                                     f"/api2/json/admin/datastore/{store}/snapshots")
                 all_snapshots.extend(snaps)
             backups = self._group_backups(all_snapshots)
+            raw_node_status = self._fetch(url, token_id, token_secret, "/api2/json/nodes/localhost/status")
+            node_status = self._parse_node_status(raw_node_status)
             with self._lock:
                 self._cache = {
                     "reachable":    True,
@@ -766,6 +783,7 @@ class PBSPoller:
                     "error":        None,
                     "datastores":   datastores,
                     "backups":      backups,
+                    **node_status,
                 }
             self._check_alerts(backups)
         except Exception as e:

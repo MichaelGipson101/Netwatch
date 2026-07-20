@@ -2864,6 +2864,8 @@ def test_pbs_poll_builds_cache_from_fetch():
             return [{"store": "backup-store", "used": 500, "total": 1000, "avail": 500}]
         if path == "/api2/json/admin/datastore/backup-store/snapshots":
             return [{"backup-type": "vm", "backup-id": "108", "backup-time": int(now.timestamp())}]
+        if path == "/api2/json/nodes/localhost/status":
+            return {"cpu": 0.05, "memory": {"used": 500, "total": 2000}}
         raise AssertionError(f"unexpected path {path}")
 
     with patch.object(poller, "_fetch", side_effect=_fake_fetch):
@@ -2874,6 +2876,23 @@ def test_pbs_poll_builds_cache_from_fetch():
     assert cache["datastores"][0]["name"] == "backup-store"
     assert cache["backups"][0]["vmid"] == 108
     assert cache["backups"][0]["status"] == "ok"
+    assert cache["cpu_percent"] == 5.0
+    assert cache["mem_used_bytes"] == 500
+    assert cache["mem_total_bytes"] == 2000
+
+
+def test_pbs_parse_node_status_converts_fraction_to_percent_and_keeps_bytes():
+    parsed = PBSPoller._parse_node_status({"cpu": 0.123, "memory": {"used": 822751232, "total": 16035315712}})
+    assert parsed == {
+        "cpu_percent": 12.3,
+        "mem_used_bytes": 822751232,
+        "mem_total_bytes": 16035315712,
+    }
+
+
+def test_pbs_parse_node_status_handles_missing_memory():
+    parsed = PBSPoller._parse_node_status({"cpu": 0.0})
+    assert parsed == {"cpu_percent": 0.0, "mem_used_bytes": 0, "mem_total_bytes": 0}
 
 
 def test_pbs_poll_sets_unreachable_on_fetch_error():
