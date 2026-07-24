@@ -4018,3 +4018,39 @@ def test_spawn_restores_active_maintenance_from_history_db(tmp_path):
         assert host.status_str == "MAINTENANCE"
     finally:
         host.stop_event.set()
+
+
+def test_send_ntfy_alert_includes_actions_header_when_provided():
+    from unittest.mock import patch, MagicMock
+    from netwatch.network import send_ntfy_alert
+    captured = {}
+    class _FakeResp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def _fake_urlopen(req, timeout=8):
+        captured["headers"] = dict(req.header_items())
+        return _FakeResp()
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        ok = send_ntfy_alert(
+            {"ntfy_topic": "test"}, "Title", "msg",
+            actions="http, Mute 1h, https://example.test/x, method=POST",
+        )
+    assert ok is True
+    assert captured["headers"].get("Actions") == "http, Mute 1h, https://example.test/x, method=POST"
+
+
+def test_send_ntfy_alert_omits_actions_header_when_not_provided():
+    from unittest.mock import patch
+    from netwatch.network import send_ntfy_alert
+    captured = {}
+    class _FakeResp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def _fake_urlopen(req, timeout=8):
+        captured["headers"] = dict(req.header_items())
+        return _FakeResp()
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        send_ntfy_alert({"ntfy_topic": "test"}, "Title", "msg")
+    assert "Actions" not in captured["headers"]
