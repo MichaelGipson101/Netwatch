@@ -27,7 +27,9 @@ from netwatch.http_handlers import (
     _h_get_ai_usage,
     _h_get_quicklinks, _h_post_quicklinks_create,
     _h_post_quicklinks_update, _h_post_quicklinks_delete, _h_post_quicklinks_move,
+    _h_post_maintenance_start, _h_post_maintenance_clear, _h_post_maintenance_quickstart,
 )
+from netwatch.auth import verify_maintenance_token
 
 
 def test_column_exists_returns_true_for_existing_column():
@@ -4089,3 +4091,122 @@ def test_down_alert_includes_maintenance_action_button(tmp_path):
     assert "/api/maintenance/quick-start" in kwargs["actions"]
     assert "ip=127.0.0.9" in kwargs["actions"]
 
+
+
+# ── _h_post_maintenance_start/_clear/quickstart ───────────────────────────────
+
+
+def _make_test_host_manager(history_db):
+    from netwatch.hosts import HostManager
+    stop_event = _threading.Event()
+    hm = HostManager("dummy.yaml", ping_timeout=1, history_window=10,
+                      global_stop=stop_event, history_db=history_db)
+    host = hm._spawn("TestHost", "127.0.0.10", "G", 9999)
+    hm.hosts = [host]
+    return hm, host
+
+
+def test_h_post_maintenance_start_sets_status(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start(
+            {"ip": "127.0.0.10", "duration_seconds": 3600, "reason": "OS upgrade"}, hm, hdb)
+        assert status == 200
+        assert body["ok"] is True
+        assert host.status_str == "MAINTENANCE"
+        assert host.maintenance_reason == "OS upgrade"
+        assert hdb.get_active_maintenance("127.0.0.10") is not None
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_start_missing_ip(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start({"duration_seconds": 3600}, hm, hdb)
+        assert status == 400
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_start_unknown_host(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start(
+            {"ip": "9.9.9.9", "duration_seconds": 3600}, hm, hdb)
+        assert status == 404
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_start_rejects_excessive_duration(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start(
+            {"ip": "127.0.0.10", "duration_seconds": 999999}, hm, hdb)
+        assert status == 400
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_clear(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start, _h_post_maintenance_clear
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        _h_post_maintenance_start({"ip": "127.0.0.10", "duration_seconds": 3600}, hm, hdb)
+        status, body = _h_post_maintenance_clear({"ip": "127.0.0.10"}, hm, hdb)
+        assert status == 200
+        assert host.status_str != "MAINTENANCE"
+        assert hdb.get_active_maintenance("127.0.0.10") is None
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_quickstart_valid_token(tmp_path):
+    from unittest.mock import MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.auth import make_maintenance_token
+    from netwatch.http_handlers import _h_post_maintenance_quickstart
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    auth_manager = MagicMock()
+    auth_manager.data = {"secret_key": "supersecret"}
+    try:
+        token = make_maintenance_token("supersecret", "127.0.0.10")
+        status, body = _h_post_maintenance_quickstart(
+            {"ip": "127.0.0.10", "token": token}, hm, hdb, auth_manager)
+        assert status == 200
+        assert host.status_str == "MAINTENANCE"
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_quickstart_invalid_token(tmp_path):
+    from unittest.mock import MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_quickstart
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    auth_manager = MagicMock()
+    auth_manager.data = {"secret_key": "supersecret"}
+    try:
+        status, body = _h_post_maintenance_quickstart(
+            {"ip": "127.0.0.10", "token": "garbage"}, hm, hdb, auth_manager)
+        assert status == 403
+        assert host.status_str != "MAINTENANCE"
+    finally:
+        host.stop_event.set()

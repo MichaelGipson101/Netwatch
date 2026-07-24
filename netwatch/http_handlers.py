@@ -19,6 +19,7 @@ from netwatch.network import (
 )
 from netwatch.hosts import load_yaml, _validate_url, validate_hosts_config, save_hosts_config
 from netwatch.pollers import PROXMOX_NODE_RE
+from netwatch.auth import verify_maintenance_token
 
 
 def build_topology_payload(inventory_db, host_manager):
@@ -956,6 +957,69 @@ def _h_post_wake(body: dict, host_manager, inventory_db) -> tuple:
     if ok:
         return 200, {"ok": True, "message": f"Magic packet sent to {mac}"}
     return 500, {"error": err or "Failed to send magic packet"}
+
+
+# Maintenance mode handlers
+
+
+MAINTENANCE_MAX_DURATION_SECONDS = 86400  # 24h cap - guards against a typo'd duration muting a host indefinitely
+MAINTENANCE_QUICKSTART_DURATION_SECONDS = 3600  # fixed 1h, matches the single ntfy action button
+
+
+def _apply_maintenance_start(host, history_db, duration_seconds, reason):
+    expires_at = int(time.time()) + duration_seconds
+    with host.lock:
+        host.maintenance_until = datetime.fromtimestamp(expires_at)
+        host.maintenance_reason = reason
+    history_db.start_maintenance(host.ip, host.name, expires_at, reason=reason)
+    return expires_at
+
+
+def _h_post_maintenance_start(data: dict, host_manager, history_db) -> tuple:
+    ip = (data.get("ip") or "").strip()
+    if not ip:
+        return 400, {"error": "ip is required"}
+    duration_seconds = data.get("duration_seconds")
+    if not isinstance(duration_seconds, int) or duration_seconds <= 0:
+        return 400, {"error": "duration_seconds must be a positive integer"}
+    if duration_seconds > MAINTENANCE_MAX_DURATION_SECONDS:
+        return 400, {"error": f"duration_seconds must not exceed {MAINTENANCE_MAX_DURATION_SECONDS}"}
+    host = next((h for h in host_manager.list_hosts() if h.ip == ip), None)
+    if not host:
+        return 404, {"error": "Host not found"}
+    reason = (data.get("reason") or "").strip()
+    expires_at = _apply_maintenance_start(host, history_db, duration_seconds, reason)
+    return 200, {"ok": True, "expires_at": expires_at}
+
+
+def _h_post_maintenance_clear(data: dict, host_manager, history_db) -> tuple:
+    ip = (data.get("ip") or "").strip()
+    if not ip:
+        return 400, {"error": "ip is required"}
+    host = next((h for h in host_manager.list_hosts() if h.ip == ip), None)
+    if not host:
+        return 404, {"error": "Host not found"}
+    with host.lock:
+        host.maintenance_until = None
+        host.maintenance_reason = ""
+    history_db.clear_maintenance(ip)
+    return 200, {"ok": True}
+
+
+def _h_post_maintenance_quickstart(data: dict, host_manager, history_db, auth_manager) -> tuple:
+    ip = (data.get("ip") or "").strip()
+    token = data.get("token") or ""
+    if not ip or not token:
+        return 400, {"error": "ip and token are required"}
+    secret_key = (auth_manager.data or {}).get("secret_key") if auth_manager else None
+    if not secret_key or not verify_maintenance_token(secret_key, ip, token):
+        return 403, {"error": "invalid or expired token"}
+    host = next((h for h in host_manager.list_hosts() if h.ip == ip), None)
+    if not host:
+        return 404, {"error": "Host not found"}
+    expires_at = _apply_maintenance_start(
+        host, history_db, MAINTENANCE_QUICKSTART_DURATION_SECONDS, "ntfy quick action")
+    return 200, {"ok": True, "expires_at": expires_at}
 
 
 def _h_post_hosts(body: dict, config_path: str, host_manager, settings: dict) -> tuple:
