@@ -53,6 +53,18 @@ class HistoryDB:
     CREATE INDEX IF NOT EXISTS idx_incidents_started ON incidents(started);
     CREATE INDEX IF NOT EXISTS idx_incidents_ended ON incidents(ended);
 
+    CREATE TABLE IF NOT EXISTS maintenance_windows (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_ip     TEXT NOT NULL,
+        host_name   TEXT NOT NULL,
+        started_at  INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        cleared_at  INTEGER,
+        reason      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_maintenance_host ON maintenance_windows(host_ip);
+
     CREATE TABLE IF NOT EXISTS ping_daily (
         day          TEXT NOT NULL,
         host_ip      TEXT NOT NULL,
@@ -292,6 +304,47 @@ class HistoryDB:
                 "UPDATE incidents SET ended = ?, duration_seconds = ? WHERE id = ?",
                 (ts, duration, inc_id),
             )
+
+    def start_maintenance(self, host_ip, host_name, expires_at, reason=""):
+        """Open a maintenance window, closing any existing open one for this host."""
+        ts = int(time.time())
+        with self.lock:
+            self.conn.execute(
+                "UPDATE maintenance_windows SET cleared_at = ? "
+                "WHERE host_ip = ? AND cleared_at IS NULL",
+                (ts, host_ip),
+            )
+            self.conn.execute(
+                "INSERT INTO maintenance_windows (host_ip, host_name, started_at, expires_at, reason) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (host_ip, host_name, ts, int(expires_at), reason or ""),
+            )
+
+    def clear_maintenance(self, host_ip):
+        """Close the open maintenance window for this host, if any."""
+        ts = int(time.time())
+        with self.lock:
+            self.conn.execute(
+                "UPDATE maintenance_windows SET cleared_at = ? "
+                "WHERE host_ip = ? AND cleared_at IS NULL",
+                (ts, host_ip),
+            )
+
+    def get_active_maintenance(self, host_ip):
+        """Return {'started_at', 'expires_at', 'reason'} for this host's
+        currently-active (unexpired, uncleared) window, or None."""
+        now = int(time.time())
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT started_at, expires_at, reason FROM maintenance_windows "
+                "WHERE host_ip = ? AND cleared_at IS NULL AND expires_at > ? "
+                "ORDER BY id DESC LIMIT 1",
+                (host_ip, now),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return {"started_at": row[0], "expires_at": row[1], "reason": row[2] or ""}
 
     def list_incidents(self, limit=100):
         """Return incidents most-recent-first as a list of dicts. Ongoing ones

@@ -5,6 +5,7 @@ import re
 import io
 import json as _json
 import threading as _threading
+import time
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
@@ -3801,3 +3802,219 @@ def test_proxmox_append_history_tracks_and_caps():
     nodes = [node(1.0, 0, 0)]
     ProxmoxPoller.append_history(history, nodes, cap=20)
     assert nodes[0]["mem_history"][-1] == 0.0
+
+
+def test_start_maintenance_creates_row(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("1.2.3.4", "TestHost", expires, reason="OS upgrade")
+    row = hdb.conn.execute(
+        "SELECT host_ip, host_name, expires_at, cleared_at, reason "
+        "FROM maintenance_windows WHERE host_ip = '1.2.3.4'"
+    ).fetchone()
+    assert row == ("1.2.3.4", "TestHost", expires, None, "OS upgrade")
+
+
+def test_get_active_maintenance_returns_open_window(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("1.2.3.4", "TestHost", expires, reason="OS upgrade")
+    result = hdb.get_active_maintenance("1.2.3.4")
+    assert result is not None
+    assert result["expires_at"] == expires
+    assert result["reason"] == "OS upgrade"
+
+
+def test_get_active_maintenance_returns_none_when_expired(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    past = int(time.time()) - 60
+    hdb.start_maintenance("1.2.3.4", "TestHost", past)
+    assert hdb.get_active_maintenance("1.2.3.4") is None
+
+
+def test_get_active_maintenance_returns_none_when_cleared(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("1.2.3.4", "TestHost", expires)
+    hdb.clear_maintenance("1.2.3.4")
+    assert hdb.get_active_maintenance("1.2.3.4") is None
+    row = hdb.conn.execute(
+        "SELECT cleared_at FROM maintenance_windows WHERE host_ip = '1.2.3.4'"
+    ).fetchone()
+    assert row[0] is not None
+
+
+def test_start_maintenance_closes_previous_open_window(tmp_path):
+    """Starting a new window while one is already open replaces it rather
+    than stacking two open rows for the same host."""
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hdb.start_maintenance("1.2.3.4", "TestHost", int(time.time()) + 1800)
+    hdb.start_maintenance("1.2.3.4", "TestHost", int(time.time()) + 7200, reason="extended")
+    open_rows = hdb.conn.execute(
+        "SELECT count(*) FROM maintenance_windows WHERE host_ip = '1.2.3.4' AND cleared_at IS NULL"
+    ).fetchone()[0]
+    assert open_rows == 1
+    result = hdb.get_active_maintenance("1.2.3.4")
+    assert result["reason"] == "extended"
+
+
+def test_maintenance_token_round_trip():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    assert verify_maintenance_token("supersecret", "1.2.3.4", token) is True
+
+
+def test_maintenance_token_rejects_wrong_secret():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    assert verify_maintenance_token("othersecret", "1.2.3.4", token) is False
+
+
+def test_maintenance_token_rejects_wrong_host():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    assert verify_maintenance_token("supersecret", "9.9.9.9", token) is False
+
+
+def test_maintenance_token_rejects_tampered_payload():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    tampered = token[:-4] + "0000"
+    assert verify_maintenance_token("supersecret", "1.2.3.4", tampered) is False
+
+
+def test_maintenance_token_rejects_expired():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    import time as _time
+    from unittest.mock import patch
+    with patch("netwatch.auth.time.time", return_value=1000000.0):
+        token = make_maintenance_token("supersecret", "1.2.3.4")
+    with patch("netwatch.auth.time.time", return_value=1000000.0 + 172801):
+        assert verify_maintenance_token("supersecret", "1.2.3.4", token) is False
+
+
+def test_maintenance_token_rejects_garbage():
+    from netwatch.auth import verify_maintenance_token
+    assert verify_maintenance_token("supersecret", "1.2.3.4", "") is False
+    assert verify_maintenance_token("supersecret", "1.2.3.4", "not-a-token") is False
+    assert verify_maintenance_token("supersecret", "1.2.3.4", "no.dot.here.either") is False
+
+def test_status_str_maintenance_overrides_up():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.4", group="G", interval=60, always_on=True)
+    host.history.append(True)
+    host.last_checked = datetime.now()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    assert host.status_str == "MAINTENANCE"
+
+
+def test_status_str_maintenance_overrides_down():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.5", group="G", interval=60, always_on=True)
+    host.history.append(False)
+    host.last_checked = datetime.now()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    assert host.status_str == "MAINTENANCE"
+
+
+def test_status_str_reverts_after_maintenance_expires():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.6", group="G", interval=60, always_on=True)
+    host.history.append(True)
+    host.last_checked = datetime.now()
+    host.maintenance_until = datetime.now() - timedelta(seconds=1)
+    assert host.status_str == "UP"
+
+
+def test_to_dict_includes_maintenance_fields():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.7", group="G", interval=60, always_on=True)
+    host.history.append(True)
+    host.last_checked = datetime.now()
+    until = datetime.now() + timedelta(hours=1)
+    host.maintenance_until = until
+    host.maintenance_reason = "OS upgrade"
+    d = host.to_dict()
+    assert d["maintenance_until"] == until.isoformat()
+    assert d["maintenance_reason"] == "OS upgrade"
+    assert d["status"] == "MAINTENANCE"
+
+
+def test_to_dict_maintenance_fields_none_when_not_in_maintenance():
+    from netwatch.hosts import HostState
+    host = HostState(name="H", ip="10.0.0.8", group="G", interval=60, always_on=True)
+    d = host.to_dict()
+    assert d["maintenance_until"] is None
+    assert d["maintenance_reason"] == ""
+
+def test_poll_host_skips_history_during_maintenance(tmp_path):
+    from datetime import datetime, timedelta
+    from unittest.mock import patch, MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.hosts import HostState, poll_host
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    host = HostState(name="H", ip="127.0.0.1", group="G", interval=60, always_on=True)
+    host.stop_event = _threading.Event()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    global_stop = _threading.Event()
+    call_count = {"n": 0}
+    def _one_shot_ping(*a, **kw):
+        call_count["n"] += 1
+        host.stop_event.set()
+        return (True, 5.0)
+    with patch("netwatch.hosts.ping_host", side_effect=_one_shot_ping):
+        incident_log = MagicMock()
+        poll_host(host, timeout=1, global_stop=global_stop, incident_log=incident_log,
+                   history_db=hdb, alert_settings={}, alert_port=8080)
+    assert call_count["n"] == 1
+    assert len(host.history) == 0  # not appended - excluded from uptime while in maintenance
+    incident_log.record_down.assert_not_called()
+    incident_log.record_up.assert_not_called()
+
+
+def test_poll_host_no_alert_when_down_during_maintenance(tmp_path):
+    from datetime import datetime, timedelta
+    from unittest.mock import patch, MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.hosts import HostState, poll_host
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    host = HostState(name="H", ip="127.0.0.2", group="G", interval=60, always_on=True)
+    host.stop_event = _threading.Event()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    global_stop = _threading.Event()
+    def _one_shot_ping(*a, **kw):
+        host.stop_event.set()
+        return (False, None)
+    with patch("netwatch.hosts.ping_host", side_effect=_one_shot_ping), \
+         patch("netwatch.hosts._send_alert_async") as mock_send:
+        incident_log = MagicMock()
+        poll_host(host, timeout=1, global_stop=global_stop, incident_log=incident_log,
+                   history_db=hdb, alert_settings={"ntfy_topic": "test"}, alert_port=8080)
+    mock_send.assert_not_called()
+
+
+def test_spawn_restores_active_maintenance_from_history_db(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.hosts import HostManager
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("127.0.0.3", "H", expires, reason="planned")
+    stop_event = _threading.Event()
+    hm = HostManager("dummy.yaml", ping_timeout=1, history_window=10,
+                      global_stop=stop_event, history_db=hdb)
+    host = hm._spawn("H", "127.0.0.3", "G", 9999)  # huge interval - thread won't ping meaningfully before we check
+    try:
+        assert host.maintenance_until is not None
+        assert host.maintenance_reason == "planned"
+        assert host.status_str == "MAINTENANCE"
+    finally:
+        host.stop_event.set()
