@@ -4051,6 +4051,41 @@ def test_send_ntfy_alert_omits_actions_header_when_not_provided():
     def _fake_urlopen(req, timeout=8):
         captured["headers"] = dict(req.header_items())
         return _FakeResp()
+
     with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
         send_ntfy_alert({"ntfy_topic": "test"}, "Title", "msg")
     assert "Actions" not in captured["headers"]
+
+
+def test_down_alert_includes_maintenance_action_button(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from netwatch.storage import HistoryDB
+    import threading as _threading
+    from netwatch.network import NTFY_DOWN_THRESHOLD
+    from netwatch.hosts import poll_host, HostState, IncidentLog
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    host = HostState(name="TestHost", ip="127.0.0.9", group="G", interval=60, always_on=True)
+    host.stop_event = _threading.Event()
+    global_stop = _threading.Event()
+    def _one_shot_ping(*a, **kw):
+        host.stop_event.set()
+        return (False, None)
+    alert_settings = {
+        "ntfy_topic": "test",
+        "secret_key": "supersecret",
+        "dashboard_url": "https://netwatch.test",
+    }
+    incident_log = IncidentLog(history_db=hdb)
+    # Drive consecutive_down to the alert threshold in one call by pre-setting it
+    host.consecutive_down = NTFY_DOWN_THRESHOLD - 1
+    with patch("netwatch.hosts.ping_host", side_effect=_one_shot_ping), \
+         patch("netwatch.hosts._send_alert_async") as mock_send:
+        poll_host(host, timeout=1, global_stop=global_stop, incident_log=incident_log,
+                   history_db=hdb, alert_settings=alert_settings, alert_port=8080)
+    assert mock_send.call_count == 1
+    _, kwargs = mock_send.call_args
+    assert "actions" in kwargs
+    assert "Mute 1h" in kwargs["actions"]
+    assert "/api/maintenance/quick-start" in kwargs["actions"]
+    assert "ip=127.0.0.9" in kwargs["actions"]
+

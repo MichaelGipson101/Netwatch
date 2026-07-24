@@ -15,6 +15,7 @@ from netwatch.network import (
     _detect_mac_for_ip, _normalise_mac, _save_detected_mac, _get_dashboard_url,
     _send_alert_async, _is_local_ip, _ARP_SAVED_THIS_SESSION, NTFY_DOWN_THRESHOLD,
 )
+from netwatch.auth import make_maintenance_token
 
 
 # ============================================================================
@@ -335,12 +336,19 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
                     msg = (f"{host.name} ({host.ip}) failed {cd} consecutive pings.\n"
                            f"Group: {host.group}")
                     host_ip_for_cb = host.ip
+                    actions = None
+                    secret_key = (alert_settings or {}).get("secret_key")
+                    if base and secret_key:
+                        token = make_maintenance_token(secret_key, host.ip)
+                        quickstart_url = f"{base}/api/maintenance/quick-start?ip={host.ip}&token={token}"
+                        actions = f"http, Mute 1h, {quickstart_url}, method=POST"
                     _send_alert_async(
                         alert_settings, title, msg,
                         priority="high",
                         tags="warning,red_circle",
                         click_url=click_url,
-                        on_success=lambda: history_db.mark_incident_alerted(host_ip_for_cb)
+                        on_success=lambda: history_db.mark_incident_alerted(host_ip_for_cb),
+                        actions=actions
                     )
 
         line = (
