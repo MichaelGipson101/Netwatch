@@ -4210,3 +4210,34 @@ def test_h_post_maintenance_quickstart_invalid_token(tmp_path):
         assert host.status_str != "MAINTENANCE"
     finally:
         host.stop_event.set()
+
+
+def test_quickstart_route_works_via_real_http_with_no_session_and_query_string(tmp_path):
+    """Exercises the actual do_POST/make_handler dispatch for
+    /api/maintenance/quick-start, not just the handler function directly -
+    this is the real invocation path a tapped ntfy notification uses:
+    query-string ip/token, no session cookie, no CSRF header."""
+    from netwatch.storage import HistoryDB
+    from netwatch.auth import AuthManager, make_maintenance_token
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    auth_manager = _make_auth(str(tmp_path))
+    token = make_maintenance_token(auth_manager.data["secret_key"], "127.0.0.10")
+
+    handler = make_handler(hm, {}, "/dev/null", auth_manager=auth_manager, history_db=hdb)
+    server = _THTS(("127.0.0.1", 0), handler)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        url = (f"http://127.0.0.1:{server.server_address[1]}"
+               f"/api/maintenance/quick-start?ip=127.0.0.10&token={token}")
+        req = _urlreq.Request(url, method="POST")
+        with _urlreq.urlopen(req, timeout=5) as r:
+            data = _json.loads(r.read())
+        assert r.status == 200
+        assert data["ok"] is True
+        assert host.status_str == "MAINTENANCE"
+    finally:
+        server.server_close()
+        t.join()
+        host.stop_event.set()

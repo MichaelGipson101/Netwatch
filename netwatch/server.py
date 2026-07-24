@@ -583,10 +583,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self._send_json(*_h_post_maintenance_clear(data, host_manager, history_db))
                 return
 
-            if self.path == "/api/maintenance/quick-start":
-                if not self._require_auth(): return
-                data, err = self._read_json_body()
-                if err: return
+            if self.path == "/api/maintenance/quick-start" or self.path.startswith("/api/maintenance/quick-start?"):
+                from urllib.parse import urlparse as _up_maint, parse_qs as _pqs_maint
+                q = _pqs_maint(_up_maint(self.path).query)
+                data = {"ip": q.get("ip", [""])[0], "token": q.get("token", [""])[0]}
                 self._send_json(*_h_post_maintenance_quickstart(data, host_manager, history_db, auth_manager))
                 return
 
