@@ -91,7 +91,7 @@ nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:
 .tab.active{background:var(--hero-bg);color:var(--hero-text);font-weight:600}
 .tab-count{display:inline-block;background:var(--red-bg);color:var(--red-text);border-radius:9px;padding:1px 7px;font-family:'DM Mono',monospace;font-size:10px;font-weight:500;line-height:1.4}
 .tab.active .tab-count{background:var(--text-inverse-bg);color:var(--hero-text)}
-.tab-settings-btn{background:transparent;border:none;color:var(--hint);padding:8px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;margin-left:auto;flex-shrink:0;transition:color .15s}
+.tab-settings-btn{background:transparent;border:none;color:var(--hint);padding:8px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;flex-shrink:0;transition:color .15s}
 .tab-settings-btn:hover{color:var(--text)}
 
 .view{display:none}
