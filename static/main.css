@@ -1476,6 +1476,10 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 }
 .pve-node-badge-ok  { background: var(--green-bg); color: var(--green-text); }
 .pve-node-badge-err { background: var(--red-bg);   color: var(--red-text); }
+.pve-node-card-down {
+  filter: grayscale(.75) brightness(.85);
+  opacity: .85;
+}
 .pve-node-sparks{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .pve-spark-hdr{display:flex;justify-content:space-between;font-size:11px;color:var(--hint);margin-bottom:5px}
 .pve-spark svg{display:block}

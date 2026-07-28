@@ -2481,6 +2481,57 @@ def test_pve_poll_skipped_when_unconfigured():
     assert cache["error"] == "Proxmox not configured"
 
 
+def test_pve_poll_skips_guest_fetch_for_offline_node():
+    # A node that's offline in the cluster view can't answer a proxied
+    # qemu/lxc query - Proxmox hangs trying to reach it rather than failing
+    # fast. If _poll() ever calls _fetch for that node's guests again, this
+    # raises, proving the offline node no longer aborts the whole poll.
+    poller = _make_proxmox_poller()
+    offline_node = {**_RAW_NODE, "node": "deadnode", "status": "offline"}
+
+    def fake_fetch(url, user, token_id, token_secret, path):
+        if path == "/api2/json/nodes":
+            return [_RAW_NODE, offline_node]
+        if path.startswith("/api2/json/nodes/deadnode/"):
+            raise AssertionError(f"should not fetch guests for offline node: {path}")
+        if path == "/api2/json/nodes/pve/qemu":
+            return [_RAW_QEMU]
+        if path == "/api2/json/nodes/pve/lxc":
+            return [_RAW_LXC]
+        raise AssertionError(f"unexpected path: {path}")
+
+    poller._fetch = fake_fetch
+    poller._poll()
+    cache = poller.get_cache()
+
+    assert cache["reachable"] is True
+    assert cache["error"] is None
+    assert cache["last_updated"] is not None
+    names = {n["name"]: n for n in cache["nodes"]}
+    assert names["pve"]["guests"]
+    assert names["deadnode"]["status"] == "offline"
+    assert names["deadnode"]["guests"] == []
+
+
+def test_pve_poll_survives_transient_guest_fetch_error():
+    # An "online" node whose guest fetch still throws (a genuine transient
+    # blip) shouldn't blank out data for the rest of a healthy cluster either.
+    poller = _make_proxmox_poller()
+
+    def fake_fetch(url, user, token_id, token_secret, path):
+        if path == "/api2/json/nodes":
+            return [_RAW_NODE]
+        raise TimeoutError("read timed out")
+
+    poller._fetch = fake_fetch
+    poller._poll()
+    cache = poller.get_cache()
+
+    assert cache["reachable"] is True
+    names = {n["name"]: n for n in cache["nodes"]}
+    assert names["pve"]["guests"] == []
+
+
 # ============================================================================
 # ProxmoxPoller — alert logic
 # ============================================================================

@@ -511,10 +511,22 @@ class ProxmoxPoller:
             nodes = []
             for raw in raw_nodes:
                 name = raw.get("node", "")
-                qemu = self._fetch(url, user, token_id, token_secret,
-                                   f"/api2/json/nodes/{name}/qemu")
-                lxc  = self._fetch(url, user, token_id, token_secret,
-                                   f"/api2/json/nodes/{name}/lxc")
+                # A node that's offline in the cluster view can't answer a
+                # proxied qemu/lxc query at all - Proxmox hangs the request
+                # trying to reach it instead of failing fast, which blows
+                # past our 10s timeout and (if not isolated here) aborts the
+                # whole poll, wiping out the other, healthy nodes' data too.
+                if raw.get("status") != "online":
+                    qemu, lxc = [], []
+                else:
+                    try:
+                        qemu = self._fetch(url, user, token_id, token_secret,
+                                           f"/api2/json/nodes/{name}/qemu")
+                        lxc  = self._fetch(url, user, token_id, token_secret,
+                                           f"/api2/json/nodes/{name}/lxc")
+                    except Exception as e:
+                        logging.warning(f"ProxmoxPoller: node '{name}' guest fetch failed: {e}")
+                        qemu, lxc = [], []
                 nodes.append(self._build_node(raw, qemu, lxc))
             now_str = datetime.now().isoformat(timespec="seconds")
             with self._lock:

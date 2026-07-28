@@ -101,13 +101,14 @@
   function _renderNodeCards (nodes) {
     if (!nodes.length) return '';
     var cards = nodes.map(function (n) {
-      var okCls    = n.status === 'online' ? 'pve-node-badge-ok' : 'pve-node-badge-err';
-      var label    = n.status === 'online' ? 'ONLINE' : 'OFFLINE';
+      var isDown   = n.status !== 'online';
+      var okCls    = isDown ? 'pve-node-badge-err' : 'pve-node-badge-ok';
+      var label    = isDown ? 'OFFLINE' : 'ONLINE';
       var cpuPct   = (n.cpu_percent || 0).toFixed(1);
       var memPct   = n.mem_total_bytes
         ? Math.round(n.mem_used_bytes / n.mem_total_bytes * 100) : 0;
       var uptime   = _fmtUptime(n.uptime_seconds);
-      return '<div class="pve-node-card">'
+      return '<div class="pve-node-card' + (isDown ? ' pve-node-card-down' : '') + '">'
         + '<div class="pve-node-name">' + escapeHtml(n.name) + '</div>'
         + '<div class="pve-node-badge ' + okCls + '">' + label + '</div>'
         + '<div class="pve-node-sparks">'
