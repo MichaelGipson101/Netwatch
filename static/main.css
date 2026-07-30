@@ -498,12 +498,14 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .node.idle{background:var(--subtle);border-color:var(--border);color:var(--muted)}
 .node.wait{background:var(--amber-bg);border-color:var(--amber);color:var(--amber-text)}
 .node.degraded{background:var(--amber-bg);border-color:var(--amber);color:var(--amber-text)}
+.node.maintenance{background:var(--amber-bg);border-color:var(--amber);color:var(--amber-text)}
 .node-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .node.up .node-dot{background:var(--green);box-shadow:0 0 0 2.5px var(--green-bg)}
 .node.down .node-dot{background:var(--red);box-shadow:0 0 0 2.5px var(--red-bg)}
 .node.idle .node-dot{background:var(--hint)}
 .node.wait .node-dot{background:var(--amber);box-shadow:0 0 0 2.5px var(--amber-bg)}
 .node.degraded .node-dot{background:var(--amber);box-shadow:0 0 0 2.5px var(--amber-bg)}
+.node.maintenance .node-dot{background:var(--amber);box-shadow:0 0 0 2.5px var(--amber-bg)}
 .node-name{font-weight:500}
 .node-lat{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)}
 .node.down .node-lat{color:var(--red-text)}
@@ -544,6 +546,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .dot-dn{background:var(--red);box-shadow:0 0 0 3px var(--red-bg)}
 .dot-wt{background:var(--amber);box-shadow:0 0 0 3px var(--amber-bg)}
 .dot-degraded{background:var(--amber);box-shadow:0 0 0 3px var(--amber-bg)}
+.dot-maintenance{background:var(--amber);box-shadow:0 0 0 3px var(--amber-bg)}
 .dot-idle{background:var(--hint);box-shadow:0 0 0 3px var(--subtle)}
 .host-name{font-weight:500;font-size:13px}
 .host-ip-sub{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);margin-top:1px}
@@ -553,6 +556,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .badge-dn{background:var(--red-bg);color:var(--red-text)}
 .badge-wt{background:var(--amber-bg);color:var(--amber-text)}
 .badge-degraded{background:var(--amber-bg);color:var(--amber-text)}
+.badge-maintenance{background:var(--amber-bg);color:var(--amber-text)}
 .badge-idle{background:var(--subtle);color:var(--muted);border:1px solid var(--border)}
 .lat{font-family:'DM Mono',monospace;font-size:12px}
 .uptime-cell{display:flex;align-items:center;gap:8px}
@@ -1154,6 +1158,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 [data-theme="dark"] .dot-up{box-shadow:0 0 0 3px var(--green-bg),0 0 8px rgba(34,197,94,.5)}
 [data-theme="dark"] .dot-dn{box-shadow:0 0 0 3px var(--red-bg),0 0 8px rgba(239,68,68,.5)}
 [data-theme="dark"] .dot-wt{box-shadow:0 0 0 3px var(--amber-bg),0 0 8px rgba(245,158,11,.5)}
+[data-theme="dark"] .dot-maintenance{box-shadow:0 0 0 3px var(--amber-bg),0 0 8px rgba(245,158,11,.5)}
 [data-theme="dark"] .uptime-fill{box-shadow:0 0 5px rgba(34,197,94,.45)}
 [data-theme="dark"] .drawer-name-dot.up{box-shadow:0 0 0 3px var(--green-bg),0 0 10px rgba(34,197,94,.45)}
 [data-theme="dark"] .drawer-name-dot.down{box-shadow:0 0 0 3px var(--red-bg),0 0 10px rgba(239,68,68,.45)}

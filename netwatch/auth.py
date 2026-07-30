@@ -9,6 +9,38 @@ import secrets
 import threading
 
 
+def make_maintenance_token(secret_key, host_ip):
+    """Sign a token binding a maintenance quick-start action to one host,
+    valid for verify_maintenance_token's max_age_seconds window. Mirrors
+    AuthManager.make_session_cookie's token.sig format."""
+    issued = int(time.time())
+    payload = f"{host_ip}|{issued}"
+    sig = hmac.new(secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    token = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    return f"{token}.{sig}"
+
+
+def verify_maintenance_token(secret_key, host_ip, token_value, max_age_seconds=48 * 3600):
+    """Return True if token_value was signed by secret_key for exactly this
+    host_ip and hasn't exceeded max_age_seconds since issue."""
+    if not token_value or "." not in token_value:
+        return False
+    try:
+        token, sig = token_value.rsplit(".", 1)
+        padded = token + "=" * (-len(token) % 4)
+        payload = base64.urlsafe_b64decode(padded.encode()).decode()
+        payload_ip, issued_s = payload.split("|")
+        issued = int(issued_s)
+    except (ValueError, UnicodeDecodeError, base64.binascii.Error):
+        return False
+    if payload_ip != host_ip:
+        return False
+    if time.time() - issued > max_age_seconds:
+        return False
+    expected = hmac.new(secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig)
+
+
 # ============================================================================
 # Authentication
 # ============================================================================

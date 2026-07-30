@@ -89,6 +89,7 @@ def main():
     auth_path = os.path.join(config_dir, "auth.json")
     db_path = os.path.join(config_dir, "netwatch.db")
     auth_manager = AuthManager(auth_path, db_path=db_path)
+    settings["secret_key"] = auth_manager.data["secret_key"]
     if auth_manager.has_users:
         print(f"[netwatch] Auth enabled - {len(auth_manager.list_users())} user(s) configured")
     else:

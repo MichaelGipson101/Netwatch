@@ -5,6 +5,7 @@ import re
 import io
 import json as _json
 import threading as _threading
+import time
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 from http.server import ThreadingHTTPServer as _THTS
@@ -26,7 +27,9 @@ from netwatch.http_handlers import (
     _h_get_ai_usage,
     _h_get_quicklinks, _h_post_quicklinks_create,
     _h_post_quicklinks_update, _h_post_quicklinks_delete, _h_post_quicklinks_move,
+    _h_post_maintenance_start, _h_post_maintenance_clear, _h_post_maintenance_quickstart,
 )
+from netwatch.auth import verify_maintenance_token
 
 
 def test_column_exists_returns_true_for_existing_column():
@@ -3852,3 +3855,440 @@ def test_proxmox_append_history_tracks_and_caps():
     nodes = [node(1.0, 0, 0)]
     ProxmoxPoller.append_history(history, nodes, cap=20)
     assert nodes[0]["mem_history"][-1] == 0.0
+
+
+def test_start_maintenance_creates_row(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("1.2.3.4", "TestHost", expires, reason="OS upgrade")
+    row = hdb.conn.execute(
+        "SELECT host_ip, host_name, expires_at, cleared_at, reason "
+        "FROM maintenance_windows WHERE host_ip = '1.2.3.4'"
+    ).fetchone()
+    assert row == ("1.2.3.4", "TestHost", expires, None, "OS upgrade")
+
+
+def test_get_active_maintenance_returns_open_window(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("1.2.3.4", "TestHost", expires, reason="OS upgrade")
+    result = hdb.get_active_maintenance("1.2.3.4")
+    assert result is not None
+    assert result["expires_at"] == expires
+    assert result["reason"] == "OS upgrade"
+
+
+def test_get_active_maintenance_returns_none_when_expired(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    past = int(time.time()) - 60
+    hdb.start_maintenance("1.2.3.4", "TestHost", past)
+    assert hdb.get_active_maintenance("1.2.3.4") is None
+
+
+def test_get_active_maintenance_returns_none_when_cleared(tmp_path):
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("1.2.3.4", "TestHost", expires)
+    hdb.clear_maintenance("1.2.3.4")
+    assert hdb.get_active_maintenance("1.2.3.4") is None
+    row = hdb.conn.execute(
+        "SELECT cleared_at FROM maintenance_windows WHERE host_ip = '1.2.3.4'"
+    ).fetchone()
+    assert row[0] is not None
+
+
+def test_start_maintenance_closes_previous_open_window(tmp_path):
+    """Starting a new window while one is already open replaces it rather
+    than stacking two open rows for the same host."""
+    from netwatch.storage import HistoryDB
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hdb.start_maintenance("1.2.3.4", "TestHost", int(time.time()) + 1800)
+    hdb.start_maintenance("1.2.3.4", "TestHost", int(time.time()) + 7200, reason="extended")
+    open_rows = hdb.conn.execute(
+        "SELECT count(*) FROM maintenance_windows WHERE host_ip = '1.2.3.4' AND cleared_at IS NULL"
+    ).fetchone()[0]
+    assert open_rows == 1
+    result = hdb.get_active_maintenance("1.2.3.4")
+    assert result["reason"] == "extended"
+
+
+def test_maintenance_token_round_trip():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    assert verify_maintenance_token("supersecret", "1.2.3.4", token) is True
+
+
+def test_maintenance_token_rejects_wrong_secret():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    assert verify_maintenance_token("othersecret", "1.2.3.4", token) is False
+
+
+def test_maintenance_token_rejects_wrong_host():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    assert verify_maintenance_token("supersecret", "9.9.9.9", token) is False
+
+
+def test_maintenance_token_rejects_tampered_payload():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    token = make_maintenance_token("supersecret", "1.2.3.4")
+    tampered = token[:-4] + "0000"
+    assert verify_maintenance_token("supersecret", "1.2.3.4", tampered) is False
+
+
+def test_maintenance_token_rejects_expired():
+    from netwatch.auth import make_maintenance_token, verify_maintenance_token
+    import time as _time
+    from unittest.mock import patch
+    with patch("netwatch.auth.time.time", return_value=1000000.0):
+        token = make_maintenance_token("supersecret", "1.2.3.4")
+    with patch("netwatch.auth.time.time", return_value=1000000.0 + 172801):
+        assert verify_maintenance_token("supersecret", "1.2.3.4", token) is False
+
+
+def test_maintenance_token_rejects_garbage():
+    from netwatch.auth import verify_maintenance_token
+    assert verify_maintenance_token("supersecret", "1.2.3.4", "") is False
+    assert verify_maintenance_token("supersecret", "1.2.3.4", "not-a-token") is False
+    assert verify_maintenance_token("supersecret", "1.2.3.4", "no.dot.here.either") is False
+
+def test_status_str_maintenance_overrides_up():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.4", group="G", interval=60, always_on=True)
+    host.history.append(True)
+    host.last_checked = datetime.now()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    assert host.status_str == "MAINTENANCE"
+
+
+def test_status_str_maintenance_overrides_down():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.5", group="G", interval=60, always_on=True)
+    host.history.append(False)
+    host.last_checked = datetime.now()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    assert host.status_str == "MAINTENANCE"
+
+
+def test_status_str_reverts_after_maintenance_expires():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.6", group="G", interval=60, always_on=True)
+    host.history.append(True)
+    host.last_checked = datetime.now()
+    host.maintenance_until = datetime.now() - timedelta(seconds=1)
+    assert host.status_str == "UP"
+
+
+def test_to_dict_includes_maintenance_fields():
+    from netwatch.hosts import HostState
+    from datetime import datetime, timedelta
+    host = HostState(name="H", ip="10.0.0.7", group="G", interval=60, always_on=True)
+    host.history.append(True)
+    host.last_checked = datetime.now()
+    until = datetime.now() + timedelta(hours=1)
+    host.maintenance_until = until
+    host.maintenance_reason = "OS upgrade"
+    d = host.to_dict()
+    assert d["maintenance_until"] == until.isoformat()
+    assert d["maintenance_reason"] == "OS upgrade"
+    assert d["status"] == "MAINTENANCE"
+
+
+def test_to_dict_maintenance_fields_none_when_not_in_maintenance():
+    from netwatch.hosts import HostState
+    host = HostState(name="H", ip="10.0.0.8", group="G", interval=60, always_on=True)
+    d = host.to_dict()
+    assert d["maintenance_until"] is None
+    assert d["maintenance_reason"] == ""
+
+def test_poll_host_skips_history_during_maintenance(tmp_path):
+    from datetime import datetime, timedelta
+    from unittest.mock import patch, MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.hosts import HostState, poll_host
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    host = HostState(name="H", ip="127.0.0.1", group="G", interval=60, always_on=True)
+    host.stop_event = _threading.Event()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    global_stop = _threading.Event()
+    call_count = {"n": 0}
+    def _one_shot_ping(*a, **kw):
+        call_count["n"] += 1
+        host.stop_event.set()
+        return (True, 5.0)
+    with patch("netwatch.hosts.ping_host", side_effect=_one_shot_ping):
+        incident_log = MagicMock()
+        poll_host(host, timeout=1, global_stop=global_stop, incident_log=incident_log,
+                   history_db=hdb, alert_settings={}, alert_port=8080)
+    assert call_count["n"] == 1
+    assert len(host.history) == 0  # not appended - excluded from uptime while in maintenance
+    incident_log.record_down.assert_not_called()
+    incident_log.record_up.assert_not_called()
+
+
+def test_poll_host_no_alert_when_down_during_maintenance(tmp_path):
+    from datetime import datetime, timedelta
+    from unittest.mock import patch, MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.hosts import HostState, poll_host
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    host = HostState(name="H", ip="127.0.0.2", group="G", interval=60, always_on=True)
+    host.stop_event = _threading.Event()
+    host.maintenance_until = datetime.now() + timedelta(hours=1)
+    global_stop = _threading.Event()
+    def _one_shot_ping(*a, **kw):
+        host.stop_event.set()
+        return (False, None)
+    with patch("netwatch.hosts.ping_host", side_effect=_one_shot_ping), \
+         patch("netwatch.hosts._send_alert_async") as mock_send:
+        incident_log = MagicMock()
+        poll_host(host, timeout=1, global_stop=global_stop, incident_log=incident_log,
+                   history_db=hdb, alert_settings={"ntfy_topic": "test"}, alert_port=8080)
+    mock_send.assert_not_called()
+
+
+def test_spawn_restores_active_maintenance_from_history_db(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.hosts import HostManager
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    expires = int(time.time()) + 3600
+    hdb.start_maintenance("127.0.0.3", "H", expires, reason="planned")
+    stop_event = _threading.Event()
+    hm = HostManager("dummy.yaml", ping_timeout=1, history_window=10,
+                      global_stop=stop_event, history_db=hdb)
+    host = hm._spawn("H", "127.0.0.3", "G", 9999)  # huge interval - thread won't ping meaningfully before we check
+    try:
+        assert host.maintenance_until is not None
+        assert host.maintenance_reason == "planned"
+        assert host.status_str == "MAINTENANCE"
+    finally:
+        host.stop_event.set()
+
+
+def test_send_ntfy_alert_includes_actions_header_when_provided():
+    from unittest.mock import patch, MagicMock
+    from netwatch.network import send_ntfy_alert
+    captured = {}
+    class _FakeResp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def _fake_urlopen(req, timeout=8):
+        captured["headers"] = dict(req.header_items())
+        return _FakeResp()
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        ok = send_ntfy_alert(
+            {"ntfy_topic": "test"}, "Title", "msg",
+            actions="http, Mute 1h, https://example.test/x, method=POST",
+        )
+    assert ok is True
+    assert captured["headers"].get("Actions") == "http, Mute 1h, https://example.test/x, method=POST"
+
+
+def test_send_ntfy_alert_omits_actions_header_when_not_provided():
+    from unittest.mock import patch
+    from netwatch.network import send_ntfy_alert
+    captured = {}
+    class _FakeResp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def _fake_urlopen(req, timeout=8):
+        captured["headers"] = dict(req.header_items())
+        return _FakeResp()
+
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        send_ntfy_alert({"ntfy_topic": "test"}, "Title", "msg")
+    assert "Actions" not in captured["headers"]
+
+
+def test_down_alert_includes_maintenance_action_button(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from netwatch.storage import HistoryDB
+    import threading as _threading
+    from netwatch.network import NTFY_DOWN_THRESHOLD
+    from netwatch.hosts import poll_host, HostState, IncidentLog
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    host = HostState(name="TestHost", ip="127.0.0.9", group="G", interval=60, always_on=True)
+    host.stop_event = _threading.Event()
+    global_stop = _threading.Event()
+    def _one_shot_ping(*a, **kw):
+        host.stop_event.set()
+        return (False, None)
+    alert_settings = {
+        "ntfy_topic": "test",
+        "secret_key": "supersecret",
+        "dashboard_url": "https://netwatch.test",
+    }
+    incident_log = IncidentLog(history_db=hdb)
+    # Drive consecutive_down to the alert threshold in one call by pre-setting it
+    host.consecutive_down = NTFY_DOWN_THRESHOLD - 1
+    with patch("netwatch.hosts.ping_host", side_effect=_one_shot_ping), \
+         patch("netwatch.hosts._send_alert_async") as mock_send:
+        poll_host(host, timeout=1, global_stop=global_stop, incident_log=incident_log,
+                   history_db=hdb, alert_settings=alert_settings, alert_port=8080)
+    assert mock_send.call_count == 1
+    _, kwargs = mock_send.call_args
+    assert "actions" in kwargs
+    assert "Mute 1h" in kwargs["actions"]
+    assert "/api/maintenance/quick-start" in kwargs["actions"]
+    assert "ip=127.0.0.9" in kwargs["actions"]
+
+
+
+# ── _h_post_maintenance_start/_clear/quickstart ───────────────────────────────
+
+
+def _make_test_host_manager(history_db):
+    from netwatch.hosts import HostManager
+    stop_event = _threading.Event()
+    hm = HostManager("dummy.yaml", ping_timeout=1, history_window=10,
+                      global_stop=stop_event, history_db=history_db)
+    host = hm._spawn("TestHost", "127.0.0.10", "G", 9999)
+    hm.hosts = [host]
+    return hm, host
+
+
+def test_h_post_maintenance_start_sets_status(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start(
+            {"ip": "127.0.0.10", "duration_seconds": 3600, "reason": "OS upgrade"}, hm, hdb)
+        assert status == 200
+        assert body["ok"] is True
+        assert host.status_str == "MAINTENANCE"
+        assert host.maintenance_reason == "OS upgrade"
+        assert hdb.get_active_maintenance("127.0.0.10") is not None
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_start_missing_ip(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start({"duration_seconds": 3600}, hm, hdb)
+        assert status == 400
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_start_unknown_host(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start(
+            {"ip": "9.9.9.9", "duration_seconds": 3600}, hm, hdb)
+        assert status == 404
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_start_rejects_excessive_duration(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        status, body = _h_post_maintenance_start(
+            {"ip": "127.0.0.10", "duration_seconds": 999999}, hm, hdb)
+        assert status == 400
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_clear(tmp_path):
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_start, _h_post_maintenance_clear
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    try:
+        _h_post_maintenance_start({"ip": "127.0.0.10", "duration_seconds": 3600}, hm, hdb)
+        status, body = _h_post_maintenance_clear({"ip": "127.0.0.10"}, hm, hdb)
+        assert status == 200
+        assert host.status_str != "MAINTENANCE"
+        assert hdb.get_active_maintenance("127.0.0.10") is None
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_quickstart_valid_token(tmp_path):
+    from unittest.mock import MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.auth import make_maintenance_token
+    from netwatch.http_handlers import _h_post_maintenance_quickstart
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    auth_manager = MagicMock()
+    auth_manager.data = {"secret_key": "supersecret"}
+    try:
+        token = make_maintenance_token("supersecret", "127.0.0.10")
+        status, body = _h_post_maintenance_quickstart(
+            {"ip": "127.0.0.10", "token": token}, hm, hdb, auth_manager)
+        assert status == 200
+        assert host.status_str == "MAINTENANCE"
+    finally:
+        host.stop_event.set()
+
+
+def test_h_post_maintenance_quickstart_invalid_token(tmp_path):
+    from unittest.mock import MagicMock
+    from netwatch.storage import HistoryDB
+    from netwatch.http_handlers import _h_post_maintenance_quickstart
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    auth_manager = MagicMock()
+    auth_manager.data = {"secret_key": "supersecret"}
+    try:
+        status, body = _h_post_maintenance_quickstart(
+            {"ip": "127.0.0.10", "token": "garbage"}, hm, hdb, auth_manager)
+        assert status == 403
+        assert host.status_str != "MAINTENANCE"
+    finally:
+        host.stop_event.set()
+
+
+def test_quickstart_route_works_via_real_http_with_no_session_and_query_string(tmp_path):
+    """Exercises the actual do_POST/make_handler dispatch for
+    /api/maintenance/quick-start, not just the handler function directly -
+    this is the real invocation path a tapped ntfy notification uses:
+    query-string ip/token, no session cookie, no CSRF header."""
+    from netwatch.storage import HistoryDB
+    from netwatch.auth import AuthManager, make_maintenance_token
+    hdb = HistoryDB(str(tmp_path / "t.db"))
+    hm, host = _make_test_host_manager(hdb)
+    auth_manager = _make_auth(str(tmp_path))
+    token = make_maintenance_token(auth_manager.data["secret_key"], "127.0.0.10")
+
+    handler = make_handler(hm, {}, "/dev/null", auth_manager=auth_manager, history_db=hdb)
+    server = _THTS(("127.0.0.1", 0), handler)
+    t = _threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        url = (f"http://127.0.0.1:{server.server_address[1]}"
+               f"/api/maintenance/quick-start?ip=127.0.0.10&token={token}")
+        req = _urlreq.Request(url, method="POST")
+        with _urlreq.urlopen(req, timeout=5) as r:
+            data = _json.loads(r.read())
+        assert r.status == 200
+        assert data["ok"] is True
+        assert host.status_str == "MAINTENANCE"
+    finally:
+        server.server_close()
+        t.join()
+        host.stop_event.set()

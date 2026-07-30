@@ -163,7 +163,7 @@ def _get_dashboard_url(settings, port):
 
 
 def send_ntfy_alert(settings, title, message, priority="default",
-                    tags=None, click_url=None):
+                    tags=None, click_url=None, actions=None):
     """Send a ntfy notification. Returns True on success."""
     topic = (settings or {}).get("ntfy_topic")
     if not topic:
@@ -177,6 +177,7 @@ def send_ntfy_alert(settings, title, message, priority="default",
     headers = {"Title": title, "Priority": priority}
     if tags: headers["Tags"] = tags
     if click_url: headers["Click"] = click_url
+    if actions: headers["Actions"] = actions
 
     data = (message or "").encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
@@ -197,11 +198,11 @@ def send_ntfy_alert(settings, title, message, priority="default",
 
 
 def _send_alert_async(settings, title, message, priority, tags, click_url,
-                      on_success=None):
+                      on_success=None, actions=None):
     """Fire-and-forget wrapper. on_success runs only if delivery succeeds."""
     def _worker():
         ok = send_ntfy_alert(settings, title, message, priority=priority,
-                             tags=tags, click_url=click_url)
+                             tags=tags, click_url=click_url, actions=actions)
         if ok and on_success:
             try: on_success()
             except Exception as e:

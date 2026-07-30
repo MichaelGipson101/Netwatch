@@ -94,10 +94,11 @@ const HIST_RANGES = [['1h', 1], ['6h', 6], ['24h', 24], ['7d', 168]];
 function renderHost(h){
   const isIdle = h.status === 'IDLE';
   const isDegraded = h.status === 'DEGRADED';
-  const dotCls = h.status === 'WAIT' ? 'dot-wt' : isDegraded ? 'dot-degraded' : h.is_up ? 'dot-up' : (isIdle ? 'dot-idle' : 'dot-dn');
-  const badgeCls = h.status === 'WAIT' ? 'badge-wt' : isDegraded ? 'badge-degraded' : h.is_up ? 'badge-up' : (isIdle ? 'badge-idle' : 'badge-dn');
+  const isMaintenance = h.status === 'MAINTENANCE';
+  const dotCls = isMaintenance ? 'dot-maintenance' : h.status === 'WAIT' ? 'dot-wt' : isDegraded ? 'dot-degraded' : h.is_up ? 'dot-up' : (isIdle ? 'dot-idle' : 'dot-dn');
+  const badgeCls = isMaintenance ? 'badge-maintenance' : h.status === 'WAIT' ? 'badge-wt' : isDegraded ? 'badge-degraded' : h.is_up ? 'badge-up' : (isIdle ? 'badge-idle' : 'badge-dn');
   const nameStyle = 'style="display:flex;align-items:center;gap:5px'
-    + (h.is_up || h.status === 'WAIT' || isIdle || isDegraded ? '' : ';color:var(--red)')
+    + (h.is_up || h.status === 'WAIT' || isIdle || isDegraded || isMaintenance ? '' : ';color:var(--red)')
     + '"';
   const uPct = h.uptime_pct;
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(uPct);
@@ -169,7 +170,8 @@ function renderGroups(data){
 function renderTopologyNode(h){
   const isIdle = h.status === 'IDLE';
   const isDegraded = h.status === 'DEGRADED';
-  const cls = h.status === 'WAIT' ? 'wait' : isDegraded ? 'degraded' : h.is_up ? 'up' : (isIdle ? 'idle' : 'down');
+  const isMaintenance = h.status === 'MAINTENANCE';
+  const cls = isMaintenance ? 'maintenance' : h.status === 'WAIT' ? 'wait' : isDegraded ? 'degraded' : h.is_up ? 'up' : (isIdle ? 'idle' : 'down');
   let lat;
   if(isIdle) lat = 'idle';
   else if(h.status === 'WAIT') lat = '...';
@@ -373,6 +375,7 @@ function renderSummary(data){
   const total = data.hosts.length;
   const down = data.hosts.filter(h => !h.is_up && h.status === 'DOWN').length;
   const degraded = data.hosts.filter(h => h.status === 'DEGRADED').length;
+  const maintenance = data.hosts.filter(h => h.status === 'MAINTENANCE').length;
   const lats = data.hosts.filter(h => h.latency_ms !== null).map(h => h.latency_ms);
   const avgLat = lats.length ? (lats.reduce((a,b)=>a+b,0)/lats.length) : null;
   const alwaysOnUpts = data.hosts.filter(h => h.always_on !== false && h.uptime_pct !== null).map(h => h.uptime_pct);
@@ -512,14 +515,43 @@ function closeDrawer(){
   _drawerOpener = null;
 }
 
+function _maintenanceSectionHtml(h){
+  if(!_authState.admin) return '';
+  const startHidden = h.status === 'MAINTENANCE' ? ' style="display:none"' : '';
+  const activeHidden = h.status === 'MAINTENANCE' ? '' : ' style="display:none"';
+  return '<div class="d-section" id="d-maintenance-section"><div class="d-section-hdr"><span>Maintenance</span></div>'
+    + '<div class="d-actions" id="d-maintenance-start-row"' + startHidden + '>'
+    + '<select id="d-maintenance-duration">'
+    + '<option value="1800">30 minutes</option>'
+    + '<option value="3600" selected>1 hour</option>'
+    + '<option value="14400">4 hours</option>'
+    + '</select>'
+    + '<input type="text" id="d-maintenance-reason" placeholder="Reason (optional)" maxlength="200">'
+    + '<button class="d-action-btn" id="d-maintenance-start-btn" data-ip="' + escapeHtml(h.ip) + '"><span>Start Maintenance</span><span class="arrow">→</span></button>'
+    + '</div>'
+    + '<div class="d-actions" id="d-maintenance-active-row"' + activeHidden + '>'
+    + '<span id="d-maintenance-active-label"></span>'
+    + '<button class="d-action-btn" id="d-maintenance-clear-btn" data-ip="' + escapeHtml(h.ip) + '"><span>Clear now</span><span class="arrow">→</span></button>'
+    + '</div>'
+    + '<div class="d-action-status" id="d-maintenance-status"></div>'
+    + '</div>';
+}
+
+function _maintenanceLabel(h){
+  const until = new Date(h.maintenance_until);
+  return h.maintenance_reason
+    ? 'In maintenance (' + escapeHtml(h.maintenance_reason) + ') — ends ' + until.toLocaleTimeString()
+    : 'In maintenance — ends ' + until.toLocaleTimeString();
+}
+
 function renderDrawer(h, data){
   const dotEl = document.getElementById('d-dot');
-  const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
+  const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.status === 'MAINTENANCE' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
   const iconType = h.device_type || 'host';
   dotEl.className = 'drawer-icon-wrap';
   dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:' + iconColor + '" aria-hidden="true"><use href="#topo-icon-' + iconType + '"/></svg>';
   document.getElementById('d-name').textContent = h.name;
-  const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
+  const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.status === 'MAINTENANCE' ? 'badge-maintenance' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
   document.getElementById('d-meta').innerHTML =
     '<span>' + escapeHtml(h.ip) + '</span><span>·</span><span>' + escapeHtml(h.group) + '</span>'
     + '<span class="badge ' + badgeCls + '">' + h.status + '</span>';
@@ -532,7 +564,7 @@ function renderDrawer(h, data){
   if(h.latency_ms !== null) avgLat = h.latency_ms;
   const availLabel = h.uptime_pct !== null ? h.uptime_pct.toFixed(1) + ' <sup>%</sup>' : '-';
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(h.uptime_pct);
-  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' ? 'var(--amber-text)'
+  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' || h.status === 'MAINTENANCE' ? 'var(--amber-text)'
     : h.is_up ? 'var(--green-text)' : (isIdle ? 'var(--hint)' : 'var(--red-text)');
 
   let statsHtml = '<div class="d-statgrid">'
@@ -661,11 +693,19 @@ function renderDrawer(h, data){
   const drawerBody = document.getElementById('drawer-body');
   if(drawerBody.dataset.hostIp !== h.ip){
     drawerBody.dataset.hostIp = h.ip;
-    drawerBody.innerHTML = statsHtml + linksHtml + '<div id="d-inv-section"></div>' + svcHtml + piHtml + sparkHtml + histHtml + specsHtml + notesHtml + incHtml + actionsHtml;
+    drawerBody.innerHTML = statsHtml + linksHtml + '<div id="d-inv-section"></div>' + svcHtml + piHtml + sparkHtml + histHtml + specsHtml + notesHtml + incHtml + actionsHtml + _maintenanceSectionHtml(h);
     fetchHostInventoryLink(h);
     loadDrawerHistory(h.ip);
     const wakeBtn = document.getElementById('d-wake-btn');
     if(wakeBtn) wakeBtn.addEventListener('click', () => sendWake(wakeBtn.dataset.ip));
+    const maintStartBtn = document.getElementById('d-maintenance-start-btn');
+    if(maintStartBtn) maintStartBtn.addEventListener('click', () => startMaintenanceFromDrawer(maintStartBtn.dataset.ip));
+    const maintClearBtn = document.getElementById('d-maintenance-clear-btn');
+    if(maintClearBtn) maintClearBtn.addEventListener('click', () => clearMaintenanceFromDrawer(maintClearBtn.dataset.ip));
+    if(h.status === 'MAINTENANCE'){
+      const lbl = document.getElementById('d-maintenance-active-label');
+      if(lbl) lbl.textContent = _maintenanceLabel(h);
+    }
   } else {
     // Same host - just update the stat values without rebuilding everything
     updateDrawerStats(h, data);
@@ -774,7 +814,7 @@ function updateDrawerStats(h, data){
   const isIdle = h.status === 'IDLE';
   const availLabel = h.uptime_pct !== null ? h.uptime_pct.toFixed(1) + ' <sup>%</sup>' : '-';
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(h.uptime_pct);
-  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' ? 'var(--amber-text)'
+  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' || h.status === 'MAINTENANCE' ? 'var(--amber-text)'
     : h.is_up ? 'var(--green-text)' : (isIdle ? 'var(--hint)' : 'var(--red-text)');
 
   const stats = document.querySelectorAll('#drawer-body .d-statgrid .d-stat-val');
@@ -791,14 +831,14 @@ function updateDrawerStats(h, data){
   // Refresh the header status badge since the host might have changed state
   const meta = document.getElementById('d-meta');
   if(meta){
-    const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
+    const badgeCls = h.status === 'MAINTENANCE' ? 'badge-maintenance' : h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
     meta.innerHTML =
       '<span>' + escapeHtml(h.ip) + '</span><span>·</span><span>' + escapeHtml(h.group) + '</span>'
       + '<span class="badge ' + badgeCls + '">' + h.status + '</span>';
   }
   const dotEl = document.getElementById('d-dot');
   if(dotEl){
-    const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
+    const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.status === 'MAINTENANCE' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
     const iconType = h.device_type || 'host';
     dotEl.className = 'drawer-icon-wrap';
     dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:' + iconColor + '" aria-hidden="true"><use href="#topo-icon-' + iconType + '"/></svg>';
@@ -822,6 +862,34 @@ function updateDrawerStats(h, data){
       }
       if(checked) checked.textContent = svc.checked || '';
     });
+  }
+
+  // The maintenance section is only ever built into the drawer HTML for admins
+  // (see _maintenanceSectionHtml), but this in-place path runs on every poll of
+  // an already-open drawer regardless of auth changes since it was rendered -
+  // e.g. logging out without closing the drawer first. Re-check admin state
+  // here too, or a stale admin-only section (and its still-bound buttons)
+  // would keep showing to a viewer who is no longer an admin.
+  const maintSection = document.getElementById('d-maintenance-section');
+  if(maintSection){
+    if(!_authState.admin){
+      maintSection.style.display = 'none';
+    } else {
+      maintSection.style.display = '';
+      const startRow = document.getElementById('d-maintenance-start-row');
+      const activeRow = document.getElementById('d-maintenance-active-row');
+      if(startRow && activeRow){
+        if(h.status === 'MAINTENANCE'){
+          startRow.style.display = 'none';
+          activeRow.style.display = '';
+          const lbl = document.getElementById('d-maintenance-active-label');
+          if(lbl) lbl.textContent = _maintenanceLabel(h);
+        } else {
+          startRow.style.display = '';
+          activeRow.style.display = 'none';
+        }
+      }
+    }
   }
 }
 
@@ -954,6 +1022,64 @@ async function sendWake(ip){
       status.textContent = 'Magic packet sent at ' + new Date().toLocaleTimeString();
     }
   } catch(e){
+    status.className = 'd-action-status error';
+    status.textContent = 'Network error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function startMaintenanceFromDrawer(ip){
+  const duration = parseInt(document.getElementById('d-maintenance-duration').value, 10);
+  const reason = document.getElementById('d-maintenance-reason').value.trim();
+  const btn = document.getElementById('d-maintenance-start-btn');
+  const status = document.getElementById('d-maintenance-status');
+  btn.disabled = true;
+  status.className = 'd-action-status';
+  status.textContent = 'Starting maintenance...';
+  try {
+    const res = await apiFetch('/api/maintenance/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ip, duration_seconds: duration, reason })
+    });
+    const data = await res.json();
+    if(!res.ok){
+      status.className = 'd-action-status error';
+      status.textContent = data.error || 'Failed to start maintenance';
+    } else {
+      status.className = 'd-action-status success';
+      status.textContent = 'Maintenance started.';
+    }
+  } catch (e) {
+    status.className = 'd-action-status error';
+    status.textContent = 'Network error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function clearMaintenanceFromDrawer(ip){
+  const btn = document.getElementById('d-maintenance-clear-btn');
+  const status = document.getElementById('d-maintenance-status');
+  btn.disabled = true;
+  status.className = 'd-action-status';
+  status.textContent = 'Clearing maintenance...';
+  try {
+    const res = await apiFetch('/api/maintenance/clear', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ip })
+    });
+    const data = await res.json();
+    if(!res.ok){
+      status.className = 'd-action-status error';
+      status.textContent = data.error || 'Failed to clear maintenance';
+    } else {
+      status.className = 'd-action-status success';
+      status.textContent = 'Maintenance cleared.';
+    }
+  } catch (e) {
     status.className = 'd-action-status error';
     status.textContent = 'Network error';
   } finally {

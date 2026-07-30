@@ -307,7 +307,7 @@ function renderTopologyWeb(){
     const ss = (s && s.status) || 'UNKNOWN';
     const ts = (t && t.status) || 'UNKNOWN';
     if(ss === 'DOWN' || ss === 'IDLE' || ts === 'DOWN' || ts === 'IDLE') return 'dead';
-    if(ss === 'DEGRADED' || ts === 'DEGRADED') return 'degraded';
+    if(ss === 'DEGRADED' || ts === 'DEGRADED' || ss === 'MAINTENANCE' || ts === 'MAINTENANCE') return 'degraded';
     return 'alive';
   }
   const edgeSel = edgeG.selectAll('g.topo-edge').data(renderEdges).join('g')
@@ -670,7 +670,7 @@ function updateTopologyWebStatus(statusData){
     const ts = (t && t.status) || 'UNKNOWN';
     let state;
     if(ss === 'DOWN' || ss === 'IDLE' || ts === 'DOWN' || ts === 'IDLE') state = 'dead';
-    else if(ss === 'DEGRADED' || ts === 'DEGRADED') state = 'degraded';
+    else if(ss === 'DEGRADED' || ts === 'DEGRADED' || ss === 'MAINTENANCE' || ts === 'MAINTENANCE') state = 'degraded';
     else state = 'alive';
     const node = d3.select(this);
     node.classed('topo-edge-alive',    state === 'alive');

@@ -29,6 +29,7 @@ from netwatch.http_handlers import (
     _h_post_hosts, _h_post_auth_users, _h_post_auth_password, _h_post_auth_user_delete,
     _h_get_quicklinks, _h_post_quicklinks_create, _h_post_quicklinks_update,
     _h_post_quicklinks_delete, _h_post_quicklinks_move,
+    _h_post_maintenance_start, _h_post_maintenance_clear, _h_post_maintenance_quickstart,
 )
 
 
@@ -566,6 +567,27 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_wake(data, host_manager, inventory_db))
+                return
+
+            if self.path == "/api/maintenance/start":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_maintenance_start(data, host_manager, history_db))
+                return
+
+            if self.path == "/api/maintenance/clear":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_maintenance_clear(data, host_manager, history_db))
+                return
+
+            if self.path == "/api/maintenance/quick-start" or self.path.startswith("/api/maintenance/quick-start?"):
+                from urllib.parse import urlparse as _up_maint, parse_qs as _pqs_maint
+                q = _pqs_maint(_up_maint(self.path).query)
+                data = {"ip": q.get("ip", [""])[0], "token": q.get("token", [""])[0]}
+                self._send_json(*_h_post_maintenance_quickstart(data, host_manager, history_db, auth_manager))
                 return
 
             if self.path == "/api/proxmox/action":

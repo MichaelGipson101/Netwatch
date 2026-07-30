@@ -15,6 +15,7 @@ from netwatch.network import (
     _detect_mac_for_ip, _normalise_mac, _save_detected_mac, _get_dashboard_url,
     _send_alert_async, _is_local_ip, _ARP_SAVED_THIS_SESSION, NTFY_DOWN_THRESHOLD,
 )
+from netwatch.auth import make_maintenance_token
 
 
 # ============================================================================
@@ -34,6 +35,8 @@ class HostState:
     links: dict = field(default_factory=dict)
     services: list = field(default_factory=list)
     strict: bool = False
+    maintenance_until: Optional[datetime] = None
+    maintenance_reason: str = ""
     service_results: dict = field(default_factory=dict)
     history: deque = field(default_factory=lambda: deque(maxlen=100))
     last_latency_ms: Optional[float] = None
@@ -57,6 +60,8 @@ class HostState:
 
     @property
     def status_str(self):
+        if self.maintenance_until and self.maintenance_until > datetime.now():
+            return "MAINTENANCE"
         if not self.last_checked:
             return "WAIT"
         if self.is_up:
@@ -144,6 +149,8 @@ class HostState:
                 "links":        {"primary": primary_url, "extras": extra_links},
                 "services":     services_out,
                 "strict":       self.strict,
+                "maintenance_until": self.maintenance_until.isoformat() if self.maintenance_until else None,
+                "maintenance_reason": self.maintenance_reason,
                 "is_pi":        _is_local_ip(self.ip),
                 "status":       self.status_str,
                 "is_up":        self.is_up,
@@ -220,8 +227,10 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
     while not global_stop.is_set() and not host.stop_event.is_set():
         was_up = host.is_up if host.history else None
         is_up, latency = ping_host(host.ip, timeout)
+        in_maintenance = bool(host.maintenance_until and host.maintenance_until > datetime.now())
         with host.lock:
-            host.history.append(is_up)
+            if not in_maintenance:
+                host.history.append(is_up)
             host.last_latency_ms = latency if is_up else None
             host.last_checked = datetime.now()
             if is_up:
@@ -289,8 +298,8 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
                         "ok": ok, "error": err, "checked": now_str,
                     }
 
-        # Track incidents (only for always_on hosts)
-        if incident_log is not None and host.always_on:
+        # Track incidents (only for always_on hosts, and not during maintenance)
+        if incident_log is not None and host.always_on and not in_maintenance:
             if not is_up:
                 if cd == NTFY_DOWN_THRESHOLD:
                     incident_log.record_down(host, started_at=host.first_down_at)
@@ -314,10 +323,10 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
                                       tags="white_check_mark,green_circle",
                                       click_url=click_url)
 
-        # Down alert: fire when consecutive_down hits threshold
+        # Down alert: fire when consecutive_down hits threshold (not during maintenance)
         if (incident_log is not None and host.always_on and not is_up
                 and alert_settings and alert_settings.get("ntfy_topic")
-                and host.alert and history_db is not None):
+                and host.alert and history_db is not None and not in_maintenance):
             if cd == NTFY_DOWN_THRESHOLD:
                 already = history_db.get_open_incident_alert_status(host.ip)
                 if not already:
@@ -327,12 +336,19 @@ def poll_host(host, timeout, global_stop, incident_log=None, history_db=None, co
                     msg = (f"{host.name} ({host.ip}) failed {cd} consecutive pings.\n"
                            f"Group: {host.group}")
                     host_ip_for_cb = host.ip
+                    actions = None
+                    secret_key = (alert_settings or {}).get("secret_key")
+                    if base and secret_key:
+                        token = make_maintenance_token(secret_key, host.ip)
+                        quickstart_url = f"{base}/api/maintenance/quick-start?ip={host.ip}&token={token}"
+                        actions = f"http, Mute 1h, {quickstart_url}, method=POST"
                     _send_alert_async(
                         alert_settings, title, msg,
                         priority="high",
                         tags="warning,red_circle",
                         click_url=click_url,
-                        on_success=lambda: history_db.mark_incident_alerted(host_ip_for_cb)
+                        on_success=lambda: history_db.mark_incident_alerted(host_ip_for_cb),
+                        actions=actions
                     )
 
         line = (
@@ -395,6 +411,15 @@ class HostManager:
                         host.last_latency_ms = last_lat
             except Exception as e:
                 logging.warning(f"HistoryDB restore failed for {ip}: {e}")
+        # Restore an in-progress maintenance window across a restart
+        if self.history_db:
+            try:
+                active = self.history_db.get_active_maintenance(ip)
+                if active:
+                    host.maintenance_until = datetime.fromtimestamp(active["expires_at"])
+                    host.maintenance_reason = active["reason"]
+            except Exception as e:
+                logging.warning(f"Maintenance rehydration failed for {ip}: {e}")
         host.thread = threading.Thread(
             target=poll_host,
             args=(host, self.ping_timeout, self.global_stop, self.incident_log, self.history_db, self.config_path, self.alert_settings, self.alert_port),
