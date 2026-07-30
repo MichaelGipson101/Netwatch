@@ -94,10 +94,11 @@ const HIST_RANGES = [['1h', 1], ['6h', 6], ['24h', 24], ['7d', 168]];
 function renderHost(h){
   const isIdle = h.status === 'IDLE';
   const isDegraded = h.status === 'DEGRADED';
-  const dotCls = h.status === 'WAIT' ? 'dot-wt' : isDegraded ? 'dot-degraded' : h.is_up ? 'dot-up' : (isIdle ? 'dot-idle' : 'dot-dn');
-  const badgeCls = h.status === 'WAIT' ? 'badge-wt' : isDegraded ? 'badge-degraded' : h.is_up ? 'badge-up' : (isIdle ? 'badge-idle' : 'badge-dn');
+  const isMaintenance = h.status === 'MAINTENANCE';
+  const dotCls = isMaintenance ? 'dot-maintenance' : h.status === 'WAIT' ? 'dot-wt' : isDegraded ? 'dot-degraded' : h.is_up ? 'dot-up' : (isIdle ? 'dot-idle' : 'dot-dn');
+  const badgeCls = isMaintenance ? 'badge-maintenance' : h.status === 'WAIT' ? 'badge-wt' : isDegraded ? 'badge-degraded' : h.is_up ? 'badge-up' : (isIdle ? 'badge-idle' : 'badge-dn');
   const nameStyle = 'style="display:flex;align-items:center;gap:5px'
-    + (h.is_up || h.status === 'WAIT' || isIdle || isDegraded ? '' : ';color:var(--red)')
+    + (h.is_up || h.status === 'WAIT' || isIdle || isDegraded || isMaintenance ? '' : ';color:var(--red)')
     + '"';
   const uPct = h.uptime_pct;
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(uPct);
@@ -169,7 +170,8 @@ function renderGroups(data){
 function renderTopologyNode(h){
   const isIdle = h.status === 'IDLE';
   const isDegraded = h.status === 'DEGRADED';
-  const cls = h.status === 'WAIT' ? 'wait' : isDegraded ? 'degraded' : h.is_up ? 'up' : (isIdle ? 'idle' : 'down');
+  const isMaintenance = h.status === 'MAINTENANCE';
+  const cls = isMaintenance ? 'maintenance' : h.status === 'WAIT' ? 'wait' : isDegraded ? 'degraded' : h.is_up ? 'up' : (isIdle ? 'idle' : 'down');
   let lat;
   if(isIdle) lat = 'idle';
   else if(h.status === 'WAIT') lat = '...';
@@ -373,6 +375,7 @@ function renderSummary(data){
   const total = data.hosts.length;
   const down = data.hosts.filter(h => !h.is_up && h.status === 'DOWN').length;
   const degraded = data.hosts.filter(h => h.status === 'DEGRADED').length;
+  const maintenance = data.hosts.filter(h => h.status === 'MAINTENANCE').length;
   const lats = data.hosts.filter(h => h.latency_ms !== null).map(h => h.latency_ms);
   const avgLat = lats.length ? (lats.reduce((a,b)=>a+b,0)/lats.length) : null;
   const alwaysOnUpts = data.hosts.filter(h => h.always_on !== false && h.uptime_pct !== null).map(h => h.uptime_pct);
@@ -514,12 +517,12 @@ function closeDrawer(){
 
 function renderDrawer(h, data){
   const dotEl = document.getElementById('d-dot');
-  const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
+  const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.status === 'MAINTENANCE' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
   const iconType = h.device_type || 'host';
   dotEl.className = 'drawer-icon-wrap';
   dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:' + iconColor + '" aria-hidden="true"><use href="#topo-icon-' + iconType + '"/></svg>';
   document.getElementById('d-name').textContent = h.name;
-  const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
+  const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.status === 'MAINTENANCE' ? 'badge-maintenance' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
   document.getElementById('d-meta').innerHTML =
     '<span>' + escapeHtml(h.ip) + '</span><span>·</span><span>' + escapeHtml(h.group) + '</span>'
     + '<span class="badge ' + badgeCls + '">' + h.status + '</span>';
@@ -532,7 +535,7 @@ function renderDrawer(h, data){
   if(h.latency_ms !== null) avgLat = h.latency_ms;
   const availLabel = h.uptime_pct !== null ? h.uptime_pct.toFixed(1) + ' <sup>%</sup>' : '-';
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(h.uptime_pct);
-  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' ? 'var(--amber-text)'
+  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' || h.status === 'MAINTENANCE' ? 'var(--amber-text)'
     : h.is_up ? 'var(--green-text)' : (isIdle ? 'var(--hint)' : 'var(--red-text)');
 
   let statsHtml = '<div class="d-statgrid">'
@@ -774,7 +777,7 @@ function updateDrawerStats(h, data){
   const isIdle = h.status === 'IDLE';
   const availLabel = h.uptime_pct !== null ? h.uptime_pct.toFixed(1) + ' <sup>%</sup>' : '-';
   const uColor = isIdle ? 'var(--hint)' : uptimeColor(h.uptime_pct);
-  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' ? 'var(--amber-text)'
+  const statusColor = h.status === 'WAIT' || h.status === 'DEGRADED' || h.status === 'MAINTENANCE' ? 'var(--amber-text)'
     : h.is_up ? 'var(--green-text)' : (isIdle ? 'var(--hint)' : 'var(--red-text)');
 
   const stats = document.querySelectorAll('#drawer-body .d-statgrid .d-stat-val');
@@ -791,14 +794,14 @@ function updateDrawerStats(h, data){
   // Refresh the header status badge since the host might have changed state
   const meta = document.getElementById('d-meta');
   if(meta){
-    const badgeCls = h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
+    const badgeCls = h.status === 'MAINTENANCE' ? 'badge-maintenance' : h.status === 'WAIT' ? 'badge-wt' : h.status === 'DEGRADED' ? 'badge-degraded' : h.is_up ? 'badge-up' : (h.status === 'IDLE' ? 'badge-idle' : 'badge-dn');
     meta.innerHTML =
       '<span>' + escapeHtml(h.ip) + '</span><span>·</span><span>' + escapeHtml(h.group) + '</span>'
       + '<span class="badge ' + badgeCls + '">' + h.status + '</span>';
   }
   const dotEl = document.getElementById('d-dot');
   if(dotEl){
-    const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
+    const iconColor = h.status === 'WAIT' ? 'var(--amber)' : h.status === 'DEGRADED' ? 'var(--amber)' : h.status === 'MAINTENANCE' ? 'var(--amber)' : h.is_up ? 'var(--green)' : (h.status === 'IDLE' ? 'var(--hint)' : 'var(--red)');
     const iconType = h.device_type || 'host';
     dotEl.className = 'drawer-icon-wrap';
     dotEl.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32" style="color:' + iconColor + '" aria-hidden="true"><use href="#topo-icon-' + iconType + '"/></svg>';

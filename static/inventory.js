@@ -285,7 +285,8 @@ function formatInvCell(rec, key){
     if(!rec.linked_host) return '<span style="color:var(--hint);font-size:11px;font-style:italic">no link</span>';
     const lh = rec.linked_host;
     let cls, label;
-    if(lh.status === 'DEGRADED'){ cls = 'degraded'; label = 'Degraded'; }
+    if(lh.status === 'MAINTENANCE'){ cls = 'degraded'; label = 'Maintenance'; }
+    else if(lh.status === 'DEGRADED'){ cls = 'degraded'; label = 'Degraded'; }
     else if(lh.status === 'WAIT'){ cls = 'degraded'; label = 'Wait'; }
     else if(lh.is_up){ cls = 'up'; label = 'Up'; }
     else if(lh.status === 'IDLE'){ cls = 'idle'; label = 'Idle'; }
@@ -357,9 +358,9 @@ function renderInventoryTablesByType(){
     });
   }
   if(_inventoryFilter.status === 'up'){
-    rows = rows.filter(i => i.linked_host && i.linked_host.is_up && i.linked_host.status !== 'DEGRADED' && i.linked_host.status !== 'WAIT');
+    rows = rows.filter(i => i.linked_host && i.linked_host.is_up && i.linked_host.status !== 'DEGRADED' && i.linked_host.status !== 'WAIT' && i.linked_host.status !== 'MAINTENANCE');
   } else if(_inventoryFilter.status === 'down'){
-    rows = rows.filter(i => i.linked_host && (!i.linked_host.is_up || i.linked_host.status === 'DEGRADED' || i.linked_host.status === 'WAIT'));
+    rows = rows.filter(i => i.linked_host && (!i.linked_host.is_up || i.linked_host.status === 'DEGRADED' || i.linked_host.status === 'WAIT' || i.linked_host.status === 'MAINTENANCE'));
   } else if(_inventoryFilter.status === 'unlinked'){
     rows = rows.filter(i => !i.linked_host);
   }
@@ -893,7 +894,7 @@ function renderInventoryDrawer(rec){
   let linkHtml = '';
   if(rec.linked_host){
     const lh = rec.linked_host;
-    const cls = (lh.status === 'DEGRADED' || lh.status === 'WAIT') ? 'degraded' : lh.is_up ? 'up' : (lh.status === 'IDLE' ? 'idle' : 'down');
+    const cls = (lh.status === 'DEGRADED' || lh.status === 'WAIT' || lh.status === 'MAINTENANCE') ? 'degraded' : lh.is_up ? 'up' : (lh.status === 'IDLE' ? 'idle' : 'down');
     // The card itself navigates to the host drawer; the inline buttons
     // below offer common actions (Wake) without requiring tab switch.
     // We use stopPropagation on the buttons so clicking them doesn't

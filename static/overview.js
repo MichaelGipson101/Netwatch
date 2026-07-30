@@ -172,7 +172,7 @@
     var s = nodeMap[_edgeEndpointId(e.source)], t = nodeMap[_edgeEndpointId(e.target)];
     var ss = (s && s.status) || 'UNKNOWN', ts = (t && t.status) || 'UNKNOWN';
     if (ss === 'DOWN' || ss === 'IDLE' || ts === 'DOWN' || ts === 'IDLE') return 'dead';
-    if (ss === 'DEGRADED' || ts === 'DEGRADED') return 'degraded';
+    if (ss === 'DEGRADED' || ts === 'DEGRADED' || ss === 'MAINTENANCE' || ts === 'MAINTENANCE') return 'degraded';
     return 'alive';
   }
 
