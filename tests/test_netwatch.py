@@ -4390,3 +4390,79 @@ def test_to_float_returns_none_for_missing_key():
 
 def test_to_float_returns_none_for_unparseable_value():
     assert UPSPoller._to_float({"battery.charge": "not-a-number"}, "battery.charge") is None
+
+
+# ============================================================================
+# UPSPoller — Socket I/O and poll loop (Task 2)
+# ============================================================================
+
+from unittest.mock import MagicMock, patch
+
+
+def _make_ups_poller():
+    am = MagicMock()
+    am.data = {
+        "nut_server": "192.168.4.237",
+        "nut_port": 3493,
+        "nut_ups_name": "apc",
+        "nut_username": "monuser",
+        "nut_password": "test-password",
+    }
+    return UPSPoller(am, alert_settings={}, alert_port=8080)
+
+
+def test_ups_get_config_returns_tuple():
+    poller = _make_ups_poller()
+    assert poller._get_config() == (
+        "192.168.4.237", 3493, "apc", "monuser", "test-password"
+    )
+
+
+def test_ups_get_cache_returns_deepcopy():
+    poller = _make_ups_poller()
+    c1 = poller.get_cache()
+    c1["reachable"] = True
+    c2 = poller.get_cache()
+    assert c2["reachable"] is False
+
+
+def test_ups_poll_skipped_when_unconfigured():
+    am = MagicMock()
+    am.data = {}
+    poller = UPSPoller(am)
+    poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is False
+    assert cache["error"] == "NUT (UPS) not configured"
+
+
+def test_ups_poll_populates_cache_on_success():
+    poller = _make_ups_poller()
+    fake_vars = {
+        "battery.charge": "99",
+        "battery.runtime": "1323",
+        "battery.voltage": "27.1",
+        "input.voltage": "116.0",
+        "ups.load": "28",
+        "ups.status": "OL CHRG",
+    }
+    with patch.object(UPSPoller, "_fetch_vars", return_value=fake_vars):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is True
+    assert cache["error"] is None
+    assert cache["status"] == "OL CHRG"
+    assert cache["charge_percent"] == 99.0
+    assert cache["runtime_seconds"] == 1323
+    assert cache["load_percent"] == 28.0
+    assert cache["input_voltage"] == 116.0
+    assert cache["battery_voltage"] == 27.1
+    assert cache["last_updated"] is not None
+
+
+def test_ups_poll_sets_unreachable_on_exception():
+    poller = _make_ups_poller()
+    with patch.object(UPSPoller, "_fetch_vars", side_effect=OSError("connection refused")):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["reachable"] is False

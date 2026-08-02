@@ -1008,3 +1008,78 @@ class UPSPoller:
             return float(v)
         except ValueError:
             return None
+
+    def _fetch_vars(self):
+        import socket
+        server, port, ups_name, username, password = self._get_config()
+
+        def _recv_line(sock):
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = sock.recv(1)
+                if not chunk:
+                    raise OSError("connection closed while reading a line")
+                buf += chunk
+            return buf.decode()
+
+        sock = socket.create_connection((server, port), timeout=5)
+        try:
+            sock.sendall(f"USERNAME {username}\n".encode())
+            if not _recv_line(sock).startswith("OK"):
+                raise OSError("NUT USERNAME command rejected")
+            sock.sendall(f"PASSWORD {password}\n".encode())
+            if not _recv_line(sock).startswith("OK"):
+                raise OSError("NUT PASSWORD command rejected")
+            sock.sendall(f"LIST VAR {ups_name}\n".encode())
+            lines = []
+            end_marker = f"END LIST VAR {ups_name}"
+            while True:
+                line = _recv_line(sock).rstrip("\n")
+                lines.append(line)
+                if line.startswith(end_marker):
+                    break
+            sock.sendall(b"LOGOUT\n")
+            return self._parse_list_response(lines, ups_name)
+        finally:
+            sock.close()
+
+    def _poll(self):
+        server, port, ups_name, username, password = self._get_config()
+        if not all([server, ups_name, username, password]):
+            with self._lock:
+                self._cache["error"] = "NUT (UPS) not configured"
+            return
+        try:
+            raw = self._fetch_vars()
+            status = raw.get("ups.status", "")
+            with self._lock:
+                self._cache = {
+                    "reachable":       True,
+                    "last_updated":    datetime.now(tz=timezone.utc).isoformat(),
+                    "error":           None,
+                    "status":          status,
+                    "charge_percent":  self._to_float(raw, "battery.charge"),
+                    "load_percent":    self._to_float(raw, "ups.load"),
+                    "runtime_seconds": int(self._to_float(raw, "battery.runtime") or 0) or None,
+                    "input_voltage":   self._to_float(raw, "input.voltage"),
+                    "battery_voltage": self._to_float(raw, "battery.voltage"),
+                }
+            self._check_alerts(status)
+        except Exception as e:
+            logging.warning(f"UPSPoller: poll failed: {e}")
+            with self._lock:
+                self._cache["reachable"] = False
+
+    def _check_alerts(self, status):
+        # Implemented in Task 3 - no-op placeholder removed once that task lands.
+        pass
+
+    def start(self, stop_event):
+        def _loop():
+            while not stop_event.is_set():
+                try:
+                    self._poll()
+                except Exception as e:
+                    logging.warning(f"UPSPoller: unexpected error in loop: {e}")
+                stop_event.wait(self.POLL_INTERVAL_SECONDS)
+        threading.Thread(target=_loop, daemon=True, name="ups-poller").start()
