@@ -953,10 +953,34 @@ class UPSPoller:
         )
 
     @staticmethod
+    def _unescape_nut_value(escaped_str):
+        r"""Unescape NUT protocol escape sequences: \\ -> \, \" -> "."""
+        result = []
+        i = 0
+        while i < len(escaped_str):
+            if escaped_str[i] == '\\' and i + 1 < len(escaped_str):
+                next_char = escaped_str[i + 1]
+                if next_char == '\\':
+                    result.append('\\')
+                    i += 2
+                elif next_char == '"':
+                    result.append('"')
+                    i += 2
+                else:
+                    # Unknown escape, keep as-is
+                    result.append(escaped_str[i])
+                    i += 1
+            else:
+                result.append(escaped_str[i])
+                i += 1
+        return ''.join(result)
+
+    @staticmethod
     def _parse_list_response(lines, ups_name):
-        """Turn raw `LIST VAR <ups_name>` protocol lines into a flat
+        r"""Turn raw `LIST VAR <ups_name>` protocol lines into a flat
         {variable_name: raw_string_value} dict. Each data line has the shape
-        `VAR <ups_name> <key> "<value>"` - BEGIN/END framing lines are skipped."""
+        `VAR <ups_name> <key> "<value>"` - BEGIN/END framing lines are skipped.
+        Values are unescaped according to NUT protocol rules (\\ -> \, \" -> ")."""
         prefix = f'VAR {ups_name} '
         result = {}
         for line in lines:
@@ -965,7 +989,8 @@ class UPSPoller:
             rest = line[len(prefix):]
             key, _, quoted = rest.partition(' ')
             if quoted.startswith('"') and quoted.endswith('"') and len(quoted) >= 2:
-                result[key] = quoted[1:-1]
+                escaped_value = quoted[1:-1]
+                result[key] = UPSPoller._unescape_nut_value(escaped_value)
         return result
 
     @staticmethod

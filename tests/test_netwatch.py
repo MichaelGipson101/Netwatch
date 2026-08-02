@@ -4339,6 +4339,25 @@ def test_parse_list_response_handles_value_with_trailing_spaces():
     assert result["device.serial"] == "0B2613L15451  "
 
 
+def test_parse_list_response_unescapes_quoted_values():
+    # NUT protocol escapes quotes as \" and backslashes as \\
+    # Values must be unescaped when extracted from the quoted string.
+    result = UPSPoller._parse_list_response(
+        ['BEGIN LIST VAR apc', 'VAR apc some.field "value with \\"escaped\\" quotes"', 'END LIST VAR apc'],
+        "apc",
+    )
+    assert result["some.field"] == 'value with "escaped" quotes'
+
+
+def test_parse_list_response_unescapes_backslashes():
+    # Backslashes themselves are escaped in the NUT protocol.
+    result = UPSPoller._parse_list_response(
+        ['BEGIN LIST VAR apc', 'VAR apc path.field "C:\\\\Users\\\\admin"', 'END LIST VAR apc'],
+        "apc",
+    )
+    assert result["path.field"] == "C:\\Users\\admin"
+
+
 def test_parse_list_response_empty_when_no_var_lines():
     result = UPSPoller._parse_list_response(
         ["BEGIN LIST VAR apc", "END LIST VAR apc"], "apc"
