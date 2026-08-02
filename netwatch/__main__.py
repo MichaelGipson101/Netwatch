@@ -15,7 +15,7 @@ from netwatch import VERSION
 from netwatch.auth import AuthManager
 from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup
 from netwatch.hosts import HostManager, IncidentLog, load_yaml
-from netwatch.pollers import NASPoller, ProxmoxPoller, PBSPoller, HAPoller
+from netwatch.pollers import NASPoller, ProxmoxPoller, PBSPoller, HAPoller, UPSPoller
 from netwatch.server import start_web_server
 from netwatch.tui import draw_tui
 
@@ -152,11 +152,17 @@ def main():
         pbs_poller.start(stop_event)
         print(f"[netwatch] PBS poller -> polling every {PBSPoller.POLL_INTERVAL_SECONDS}s")
 
+    ups_poller = UPSPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    _nut_server, _, _nut_ups_name, _, _ = ups_poller._get_config()
+    if _nut_server and _nut_ups_name:
+        ups_poller.start(stop_event)
+        print(f"[netwatch] UPS poller -> polling NUT every {UPSPoller.POLL_INTERVAL_SECONDS}s")
+
     if not args.no_web:
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db},
             daemon=True
         )
         wt.start()

@@ -20,7 +20,7 @@ from netwatch.http_handlers import (
     _h_get_settings, _h_post_settings, _h_post_nas_ignore_alert,
     _h_post_nas_unignore_alert, _h_post_nas_acknowledge_alert, _h_post_system_restart,
     _h_get_hosts, _h_get_pi_health, _h_get_nas, _h_get_proxmox, _h_get_pbs,
-    _h_get_power, _h_post_proxmox_action, _h_get_auth_status, _h_get_auth_users,
+    _h_get_power, _h_get_ups, _h_post_proxmox_action, _h_get_auth_status, _h_get_auth_users,
     _h_get_inventory, _h_get_inventory_record, _h_get_topology, _h_get_connections,
     _h_get_connections_for_device, _h_get_discover, _h_post_brief, _h_get_briefs,
     _h_get_history, _h_post_inventory_create, _h_post_inventory_update,
@@ -64,7 +64,7 @@ _STATIC_FILES = {
 }
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None, quicklinks_db=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None):
     static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
     class Handler(BaseHTTPRequestHandler):
@@ -247,6 +247,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 from urllib.parse import urlparse as _up_ha, parse_qs as _pqs_ha
                 force = _pqs_ha(_up_ha(self.path).query).get("force", ["0"])[0] == "1"
                 self._send_json(*_h_get_power(ha_poller, history_db, force=force))
+                return
+            if self.path == "/api/ups" or self.path.startswith("/api/ups?"):
+                if not self._require_auth(): return
+                self._send_json(*_h_get_ups(ups_poller))
                 return
             if self.path == "/api/auth/status":
                 self._send_json(*_h_get_auth_status(auth_manager, self._current_user, self._session_cookie_value()))
@@ -658,8 +662,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, static_dir=None, quicklinks_db=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, static_dir=static_dir, quicklinks_db=quicklinks_db))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():

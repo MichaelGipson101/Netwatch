@@ -4530,3 +4530,28 @@ def test_ups_check_alerts_fires_replace_battery():
     assert poller._alert_state["ups-replace-battery"] is True
     # Normal mains power, so on-battery/low-battery must not also fire.
     assert poller._alert_state.get("ups-on-battery", False) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/ups handler (Task 4)
+
+from netwatch.http_handlers import _h_get_ups
+
+
+def test_h_get_ups_returns_unconfigured_when_poller_is_none():
+    code, body = _h_get_ups(None)
+    assert code == 200
+    assert body == {"configured": False}
+
+
+def test_h_get_ups_returns_live_cache_when_configured():
+    poller = _make_ups_poller()
+    with patch.object(UPSPoller, "_fetch_vars", return_value={
+        "battery.charge": "99", "ups.status": "OL CHRG",
+    }):
+        poller._poll()
+    code, body = _h_get_ups(poller)
+    assert code == 200
+    assert body["configured"] is True
+    assert body["live"]["status"] == "OL CHRG"
+    assert body["live"]["charge_percent"] == 99.0

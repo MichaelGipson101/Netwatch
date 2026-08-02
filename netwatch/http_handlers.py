@@ -118,6 +118,11 @@ SETTINGS_EDITABLE_KEYS = {
     "pbs_api_token_secret": str,
     "pbs_verify_ssl":       bool,
     "pbs_ca_cert":          str,
+    "nut_server":           str,
+    "nut_port":             int,
+    "nut_ups_name":         str,
+    "nut_username":         str,
+    "nut_password":         str,
 }
 
 _SETTINGS_INT_RANGES = {
@@ -139,6 +144,7 @@ _AUTH_STORED_KEYS = {
     "ha_url", "ha_token", "ha_entity_power", "ha_entity_voltage",
     "ha_entity_current", "ha_entity_energy",
     "pbs_url", "pbs_api_token_id", "pbs_api_token_secret",
+    "nut_server", "nut_port", "nut_ups_name", "nut_username", "nut_password",
 }
 
 
@@ -321,7 +327,7 @@ def _h_post_ai_chat(handler, data, auth_manager) -> None:
 # An empty string still means "clear this key".
 SECRET_SETTINGS_KEYS = {
     "truenas_api_key", "proxmox_password", "proxmox_token_secret",
-    "openrouter_api_key", "ha_token", "pbs_api_token_secret",
+    "openrouter_api_key", "ha_token", "pbs_api_token_secret", "nut_password",
 }
 SECRET_PLACEHOLDER = "••••••••"
 
@@ -538,6 +544,12 @@ def _h_get_power(ha_poller, history_db, force=False) -> tuple:
     cache = ha_poller.get_cache()
     history = history_db.get_power_readings(days=7) if history_db else []
     return 200, {"configured": True, "live": cache, "history": history}
+
+
+def _h_get_ups(ups_poller) -> tuple:
+    if ups_poller is None:
+        return 200, {"configured": False}
+    return 200, {"configured": True, "live": ups_poller.get_cache()}
 
 
 def _h_post_proxmox_action(data, proxmox_poller, auth_manager) -> tuple:
