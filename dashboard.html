@@ -649,6 +649,24 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="ups-modal-overlay">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-hdr">
+      <div class="modal-title">UPS Status</div>
+      <button type="button" class="modal-close-btn" onclick="closeUpsModal()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field"><strong id="ups-modal-status">-</strong></div>
+      <div class="form-field">Charge: <span id="ups-modal-charge">-</span></div>
+      <div class="form-field">Load: <span id="ups-modal-load">-</span></div>
+      <div class="form-field">Runtime remaining: <span id="ups-modal-runtime">-</span></div>
+      <div class="form-field">Input voltage: <span id="ups-modal-input-voltage">-</span></div>
+      <div class="form-field">Battery voltage: <span id="ups-modal-battery-voltage">-</span></div>
+      <div class="form-field">Last updated: <span id="ups-modal-updated">-</span></div>
+    </div>
+  </div>
+</div>
+
 <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Host details">
   <div class="drawer-hdr">
     <div>

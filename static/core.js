@@ -1098,6 +1098,7 @@ document.addEventListener('keydown', e => {
   else if(open('import-overlay')) closeImportModal();
   else if(open('inv-edit-overlay')) closeInventoryEditor();
   else if(open('add-host-overlay')) closeAddHostModal();
+  else if(open('ups-modal-overlay')) closeUpsModal();
   else if(open('modal-overlay')) closeEditor();
   else if(openDrawerIp) closeDrawer();
   else if(aiUsage && !aiUsage.classList.contains('hidden')) aiUsage.classList.add('hidden');
@@ -1693,4 +1694,43 @@ async function refreshUpsIcon() {
     else if (live.status && live.status.includes('OB')) cls = 'ups-nav-icon-fill-warn';
     fill.setAttribute('class', cls);
   } catch (e) { /* transient fetch failure - next tick retries, matches refreshPowerCard's silence */ }
+}
+
+const _UPS_STATUS_LABELS = {
+  OL: 'On mains power', OB: 'Running on battery', LB: 'Low battery',
+  CHRG: 'Charging', DISCHRG: 'Discharging', RB: 'Replace battery',
+};
+
+function _upsStatusLabel(status) {
+  if (!status) return 'Unknown';
+  const flags = status.split(' ');
+  const labels = flags.map(f => _UPS_STATUS_LABELS[f] || f);
+  return labels.join(', ');
+}
+
+function openUpsModal() {
+  const data = window.nwLastUps || {};
+  const live = data.live || {};
+  document.getElementById('ups-modal-status').textContent = _upsStatusLabel(live.status);
+  document.getElementById('ups-modal-charge').textContent =
+    (live.charge_percent != null) ? live.charge_percent.toFixed(0) + '%' : '-';
+  document.getElementById('ups-modal-load').textContent =
+    (live.load_percent != null) ? live.load_percent.toFixed(0) + '%' : '-';
+  document.getElementById('ups-modal-runtime').textContent =
+    (live.runtime_seconds != null) ? Math.round(live.runtime_seconds / 60) + 'm' : '-';
+  document.getElementById('ups-modal-input-voltage').textContent =
+    (live.input_voltage != null) ? live.input_voltage.toFixed(1) + ' V' : '-';
+  document.getElementById('ups-modal-battery-voltage').textContent =
+    (live.battery_voltage != null) ? live.battery_voltage.toFixed(1) + ' V' : '-';
+  if (live.last_updated) {
+    const ago = Math.round((Date.now() - new Date(live.last_updated).getTime()) / 60000);
+    document.getElementById('ups-modal-updated').textContent = ago < 2 ? 'just now' : ago + 'm ago';
+  } else {
+    document.getElementById('ups-modal-updated').textContent = '-';
+  }
+  document.getElementById('ups-modal-overlay').classList.add('open');
+}
+
+function closeUpsModal() {
+  document.getElementById('ups-modal-overlay').classList.remove('open');
 }
