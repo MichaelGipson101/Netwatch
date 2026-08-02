@@ -75,16 +75,22 @@ Major subsystems, by module:
 - `netwatch/network.py` — `send_ntfy_alert` / ntfy plumbing, `send_wol_packet` / MAC detection
   helpers (Wake-on-LAN with broadcast-address auto-detection), nmap-based discovery
   (`start_discovery_scan` / `get_discovery_state`), and Pi host-health reads (`read_pi_health`).
-- `netwatch/pollers.py` — `NASPoller` / `ProxmoxPoller` / `PBSPoller` / `HAPoller`: background
-  pollers (TrueNAS every 900s, Proxmox every 60s) that hit those APIs directly and drive ntfy
-  alerting via `netwatch.network._send_alert_async` on state change. `NASPoller` also fetches
-  TrueNAS's own `/api/v2.0/alert/list`, filters to WARNING+ via `_filter_alerts()` (excluding any
-  klass in the user-configurable `truenas_ignored_alert_klasses` setting), and fires/clears ntfy
-  alerts keyed by TrueNAS's own alert `id` — see `_check_alerts`. Scrub-schedule math
-  (`_next_cron_run`) accounts for both the pool's `threshold` (TrueNAS's minimum days between
+- `netwatch/pollers.py` — `NASPoller` / `ProxmoxPoller` / `PBSPoller` / `HAPoller` / `UPSPoller`:
+  background pollers (TrueNAS every 900s, Proxmox every 60s) that hit those APIs directly and
+  drive ntfy alerting via `netwatch.network._send_alert_async` on state change. `NASPoller` also
+  fetches TrueNAS's own `/api/v2.0/alert/list`, filters to WARNING+ via `_filter_alerts()`
+  (excluding any klass in the user-configurable `truenas_ignored_alert_klasses` setting), and
+  fires/clears ntfy alerts keyed by TrueNAS's own alert `id` — see `_check_alerts`. Scrub-schedule
+  math (`_next_cron_run`) accounts for both the pool's `threshold` (TrueNAS's minimum days between
   actual runs, separate from the cron's check frequency) and the NAS's configured timezone
   (`/api/v2.0/system/info`'s `timezone` field, via `zoneinfo`) — don't assume the cron's
-  hour/minute fields are UTC.
+  hour/minute fields are UTC. `UPSPoller` polls a NUT (`upsd`) server every 15s over a raw TCP
+  line protocol (`USERNAME`/`PASSWORD`/`LIST VAR`/`LOGOUT`, not HTTP like the other pollers) and
+  fires/clears three independent ntfy conditions off the parsed `ups.status` flags:
+  `ups-on-battery` (`OB`, high/`warning`), `ups-low-battery` (`LB`, high/`rotating_light`), and
+  `ups-replace-battery` (`RB`, default/`battery`) — on-battery and low-battery can both be active
+  at once during a deep outage, so they're independent conditions rather than one escalating
+  alert.
 - `netwatch/http_handlers.py` — `build_topology_payload` / `build_api_payload` (assemble the
   JSON the frontend polls; topology payload merges live host status onto inventory records +
   connection edges) plus every `_h_get_*`/`_h_post_*` handler function, each taking whatever

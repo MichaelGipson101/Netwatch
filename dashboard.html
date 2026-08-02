@@ -656,7 +656,9 @@
       <button type="button" class="modal-close-btn" onclick="closeUpsModal()" aria-label="Close">×</button>
     </div>
     <div class="modal-body">
+      <div id="ups-modal-unreachable" class="form-hint" style="display:none;margin-bottom:8px"></div>
       <div style="margin-bottom:8px"><strong id="ups-modal-status">-</strong></div>
+      <div class="form-hint" id="ups-modal-status-raw" style="margin-bottom:8px"></div>
       <div style="margin-bottom:8px">Charge: <span id="ups-modal-charge">-</span></div>
       <div style="margin-bottom:8px">Load: <span id="ups-modal-load">-</span></div>
       <div style="margin-bottom:8px">Runtime remaining: <span id="ups-modal-runtime">-</span></div>

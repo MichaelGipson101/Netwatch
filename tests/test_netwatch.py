@@ -3,6 +3,7 @@ import os
 import sys
 import re
 import io
+import pytest
 import json as _json
 import threading as _threading
 import time
@@ -2371,6 +2372,53 @@ def test_h_post_settings_saves_proxmox_secret_to_auth_manager():
     assert am.data.get("proxmox_token_secret") == "new-uuid"
 
 
+def test_h_post_settings_rejects_nut_port_out_of_range():
+    # Finding 7: nut_port wasn't in _SETTINGS_INT_RANGES, so port 0 or
+    # 999999 saved without error - unlike every other int-typed setting.
+    import tempfile, os
+    am = MagicMock()
+    am.data = {}
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    am._save = MagicMock()
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "hosts.yaml")
+        status, body = _h_post_settings({"nut_port": 999999}, cfg, {}, auth_manager=am)
+    assert status == 400
+    assert "nut_port" in body["error"]
+
+
+def test_h_post_settings_rejects_nut_port_zero():
+    import tempfile, os
+    am = MagicMock()
+    am.data = {}
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    am._save = MagicMock()
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "hosts.yaml")
+        status, body = _h_post_settings({"nut_port": 0}, cfg, {}, auth_manager=am)
+    assert status == 400
+    assert "nut_port" in body["error"]
+
+
+def test_h_post_settings_accepts_nut_port_in_range():
+    import tempfile, os
+    am = MagicMock()
+    am.data = {}
+    am.lock = MagicMock()
+    am.lock.__enter__ = MagicMock(return_value=None)
+    am.lock.__exit__ = MagicMock(return_value=False)
+    am._save = MagicMock()
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "hosts.yaml")
+        status, body = _h_post_settings({"nut_port": 3493}, cfg, {}, auth_manager=am)
+    assert status == 200
+    assert am.data.get("nut_port") == 3493
+
+
 # ============================================================================
 # proxmox_vmid in VM inventory properties
 # ============================================================================
@@ -4411,6 +4459,84 @@ def _make_ups_poller():
     return UPSPoller(am, alert_settings={}, alert_port=8080)
 
 
+class _FakeNutSocket:
+    """Minimal stand-in for a socket.socket, feeding _fetch_vars's
+    byte-at-a-time _recv_line() a scripted sequence of server lines.
+    Once the scripted lines are exhausted, recv() returns b"" (connection
+    closed), matching real socket semantics for a dropped connection."""
+
+    def __init__(self, lines):
+        self._buf = ("".join(lines)).encode()
+        self._sent = []
+
+    def sendall(self, data):
+        self._sent.append(data)
+
+    def recv(self, n):
+        if not self._buf:
+            return b""
+        chunk, self._buf = self._buf[:n], self._buf[n:]
+        return chunk
+
+    def close(self):
+        pass
+
+
+def _patch_nut_socket(monkeypatch, lines):
+    fake = _FakeNutSocket(lines)
+    monkeypatch.setattr(
+        "socket.create_connection", lambda *a, **kw: fake
+    )
+    return fake
+
+
+def test_fetch_vars_raises_with_real_error_text_on_username_err(monkeypatch):
+    # Finding 6: upsd rejecting USERNAME (e.g. bad protocol state) used to
+    # be swallowed into a generic "NUT USERNAME command rejected" message -
+    # the real ERR text from upsd is more useful for diagnosing the actual
+    # problem (wrong username vs. something else).
+    poller = _make_ups_poller()
+    _patch_nut_socket(monkeypatch, ["ERR ACCESS-DENIED\n"])
+    with pytest.raises(OSError, match="ERR ACCESS-DENIED"):
+        poller._fetch_vars()
+
+
+def test_fetch_vars_raises_with_real_error_text_on_password_err(monkeypatch):
+    poller = _make_ups_poller()
+    _patch_nut_socket(monkeypatch, ["OK\n", "ERR INVALID-PASSWORD\n"])
+    with pytest.raises(OSError, match="ERR INVALID-PASSWORD"):
+        poller._fetch_vars()
+
+
+def test_fetch_vars_raises_immediately_on_unknown_ups_err_in_list_var(monkeypatch):
+    # Wrong UPS name: upsd replies "ERR UNKNOWN-UPS" instead of BEGIN LIST
+    # VAR. Before the fix, the read loop just kept calling _recv_line()
+    # waiting for a "END LIST VAR ..." line that will never arrive, burning
+    # the full 5s socket timeout (or here, immediately raising the fake
+    # socket's own "connection closed" OSError) instead of surfacing the
+    # real ERR text right away.
+    poller = _make_ups_poller()
+    _patch_nut_socket(monkeypatch, ["OK\n", "OK\n", "ERR UNKNOWN-UPS\n"])
+    with pytest.raises(OSError, match="ERR UNKNOWN-UPS"):
+        poller._fetch_vars()
+
+
+def test_fetch_vars_raises_on_truncated_response_missing_end_marker(monkeypatch):
+    # Per the spec's Testing section: a truncated response (connection
+    # drops mid-LIST-VAR, before the "END LIST VAR ..." framing line ever
+    # arrives) must raise rather than hang - the fake socket returning
+    # b"" once its scripted lines run out reproduces a dropped connection.
+    poller = _make_ups_poller()
+    _patch_nut_socket(monkeypatch, [
+        "OK\n", "OK\n",
+        "BEGIN LIST VAR apc\n",
+        'VAR apc battery.charge "99"\n',
+        # no END LIST VAR line - connection drops here
+    ])
+    with pytest.raises(OSError, match="connection closed"):
+        poller._fetch_vars()
+
+
 def test_ups_get_config_returns_tuple():
     poller = _make_ups_poller()
     assert poller._get_config() == (
@@ -4485,12 +4611,31 @@ def test_ups_poll_sets_unreachable_on_exception():
     assert cache["reachable"] is False
 
 
+def test_ups_poll_sets_error_message_on_exception():
+    # Before the fix, the except branch in _poll() only set reachable=False
+    # and left `error` as whatever it was before (usually None) - so the
+    # frontend/modal had nothing to show for *why* the UPS was unreachable.
+    poller = _make_ups_poller()
+    with patch.object(UPSPoller, "_fetch_vars", side_effect=OSError("connection refused")):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["error"] == "connection refused"
+
+
 def test_ups_check_alerts_fires_on_battery():
     poller = _make_ups_poller()
     with patch("netwatch.pollers._send_alert_async") as mock_send:
         poller._check_alerts("OB DISCHRG")
     assert mock_send.call_count == 1
     assert poller._alert_state["ups-on-battery"] is True
+    # Finding 10: pin down the actual priority/tags/message, not just the
+    # call count - per the design spec's alerting table, on-battery must be
+    # high priority with the "warning" tag.
+    _, kwargs = mock_send.call_args
+    args = mock_send.call_args.args
+    assert args[2] == "UPS is running on battery power"
+    assert kwargs["priority"] == "high"
+    assert kwargs["tags"] == "warning"
 
 
 def test_ups_check_alerts_clears_on_battery_when_back_online():
@@ -4520,6 +4665,17 @@ def test_ups_check_alerts_fires_low_battery_independently_of_on_battery():
     assert mock_send.call_count == 2
     assert poller._alert_state["ups-on-battery"] is True
     assert poller._alert_state["ups-low-battery"] is True
+    # Finding 10: low-battery must be high priority/"rotating_light", and
+    # must be distinguishable by message from the on-battery alert fired in
+    # the same call (order isn't guaranteed by dict iteration in general,
+    # but _check_alerts checks OB before LB, so call 0 is on-battery).
+    calls_by_message = {c.args[2]: c for c in mock_send.call_args_list}
+    lb_call = calls_by_message["UPS battery is critically low - shutdown imminent"]
+    assert lb_call.kwargs["priority"] == "high"
+    assert lb_call.kwargs["tags"] == "rotating_light"
+    ob_call = calls_by_message["UPS is running on battery power"]
+    assert ob_call.kwargs["priority"] == "high"
+    assert ob_call.kwargs["tags"] == "warning"
 
 
 def test_ups_check_alerts_fires_replace_battery():
@@ -4530,6 +4686,13 @@ def test_ups_check_alerts_fires_replace_battery():
     assert poller._alert_state["ups-replace-battery"] is True
     # Normal mains power, so on-battery/low-battery must not also fire.
     assert poller._alert_state.get("ups-on-battery", False) is False
+    # Finding 10: replace-battery is the odd one out per the spec's
+    # alerting table - default priority (not high), "battery" tag.
+    args = mock_send.call_args.args
+    kwargs = mock_send.call_args.kwargs
+    assert args[2] == "UPS battery needs replacement"
+    assert kwargs["priority"] == "default"
+    assert kwargs["tags"] == "battery"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4538,8 +4701,78 @@ def test_ups_check_alerts_fires_replace_battery():
 from netwatch.http_handlers import _h_get_ups
 
 
+def test_ups_poller_start_is_unconditional_in_main():
+    # Finding 3: __main__.py used to gate ups_poller.start() behind
+    # `if _nut_server and _nut_ups_name`, while _poll() itself requires
+    # server+ups_name+username+password all set - a gate mismatch that let
+    # a user who configured server+UPS name but forgot credentials get a
+    # thread that silently no-ops forever. The fix starts the poller
+    # thread unconditionally (unlike pbs_poller, which still legitimately
+    # gates on its own URL) since _poll() already self-gates every cycle -
+    # this also means configuring NUT via the Settings UI while the app is
+    # running takes effect on the next tick instead of needing a restart.
+    import ast
+    main_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "netwatch", "__main__.py"
+    )
+    with open(main_path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=main_path)
+    main_fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def _is_call(stmt, target_attr, method_name):
+        return (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Attribute)
+            and stmt.value.func.attr == method_name
+            and isinstance(stmt.value.func.value, ast.Name)
+            and stmt.value.func.value.id == target_attr
+        )
+
+    def _find_call_and_whether_nested_in_if(node, target_attr, method_name, in_if=False):
+        for child in ast.iter_child_nodes(node):
+            if _is_call(child, target_attr, method_name):
+                return in_if
+            nested_in_if = in_if or isinstance(child, ast.If)
+            result = _find_call_and_whether_nested_in_if(child, target_attr, method_name, nested_in_if)
+            if result is not None:
+                return result
+        return None
+
+    ups_nested_in_if = _find_call_and_whether_nested_in_if(main_fn, "ups_poller", "start")
+    pbs_nested_in_if = _find_call_and_whether_nested_in_if(main_fn, "pbs_poller", "start")
+
+    assert ups_nested_in_if is False, "ups_poller.start(...) must not be gated behind an `if` in main()"
+    assert pbs_nested_in_if is True, "sanity check: pbs_poller.start(...) is still (correctly) gated"
+
+
 def test_h_get_ups_returns_unconfigured_when_poller_is_none():
     code, body = _h_get_ups(None)
+    assert code == 200
+    assert body == {"configured": False}
+
+
+def test_h_get_ups_returns_unconfigured_when_poller_exists_but_unconfigured():
+    # __main__.py instantiates UPSPoller unconditionally now (see the
+    # unconditional-start fix), so `ups_poller is None` never happens at
+    # runtime - _h_get_ups must also consult _get_config() the way
+    # _h_get_pbs does, or every install gets a permanent "configured: true"
+    # empty green battery icon regardless of whether NUT is set up.
+    am = MagicMock()
+    am.data = {}
+    poller = UPSPoller(am)
+    code, body = _h_get_ups(poller)
+    assert code == 200
+    assert body == {"configured": False}
+
+
+def test_h_get_ups_returns_unconfigured_when_only_server_set():
+    # Partial config (server but no ups_name, or vice versa) must still
+    # gate as unconfigured.
+    am = MagicMock()
+    am.data = {"nut_server": "192.168.4.237"}
+    poller = UPSPoller(am)
+    code, body = _h_get_ups(poller)
     assert code == 200
     assert body == {"configured": False}
 
@@ -4555,3 +4788,84 @@ def test_h_get_ups_returns_live_cache_when_configured():
     assert body["configured"] is True
     assert body["live"]["status"] == "OL CHRG"
     assert body["live"]["charge_percent"] == 99.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# static/core.js — _upsFillClass() nav-icon color logic (findings 2 & 5 of the
+# final whole-branch review). There's no JS test runner/DOM shim anywhere in
+# this repo, so rather than reimplementing the logic in Python (which
+# wouldn't actually exercise the shipped source and could silently drift from
+# it), this extracts the real _upsFillClass function body straight out of
+# static/core.js and runs it under `node`, which is present on this dev box.
+# Skips gracefully if `node` isn't available (e.g. a minimal prod host).
+
+import shutil as _shutil
+import subprocess as _subprocess
+
+_CORE_JS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "core.js")
+
+
+def _extract_js_function(path, fn_name):
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    marker = f"function {fn_name}"
+    start = src.index(marker)
+    depth = 0
+    end = None
+    for i in range(start, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    assert end is not None, f"could not find end of {fn_name} in {path}"
+    return src[start:end]
+
+
+def _run_ups_fill_class(live_json):
+    fn_src = _extract_js_function(_CORE_JS_PATH, "_upsFillClass")
+    script = (
+        fn_src
+        + f"\nconsole.log(_upsFillClass({live_json}));"
+    )
+    result = _subprocess.run(
+        ["node", "-e", script], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+@pytest.mark.skipif(_shutil.which("node") is None, reason="node not available")
+class TestUpsFillClassJs:
+    def test_unreachable_takes_priority_over_stale_ok_status(self):
+        # Before the fix: nothing checked `reachable`, so a dead upsd
+        # connection with stale "OL CHRG" cached data rendered green.
+        cls = _run_ups_fill_class('{reachable: false, status: "OL CHRG"}')
+        assert cls == "ups-nav-icon-fill-unknown"
+
+    def test_unreachable_takes_priority_over_stale_low_battery_status(self):
+        cls = _run_ups_fill_class('{reachable: false, status: "OB LB"}')
+        assert cls == "ups-nav-icon-fill-unknown"
+
+    def test_reachable_on_battery_is_warn(self):
+        cls = _run_ups_fill_class('{reachable: true, status: "OB DISCHRG"}')
+        assert cls == "ups-nav-icon-fill-warn"
+
+    def test_reachable_low_battery_is_crit(self):
+        cls = _run_ups_fill_class('{reachable: true, status: "OB LB DISCHRG"}')
+        assert cls == "ups-nav-icon-fill-crit"
+
+    def test_reachable_normal_is_ok(self):
+        cls = _run_ups_fill_class('{reachable: true, status: "OL CHRG"}')
+        assert cls == "ups-nav-icon-fill-ok"
+
+    def test_token_membership_not_substring_match(self):
+        # Finding 5: a naive .includes('OB') substring check on the whole
+        # status string would be fooled by a flag that merely *contains*
+        # "OB" as a substring rather than being the "OB" token itself.
+        # This uses a synthetic flag name (not a real NUT flag) purely to
+        # prove split(' ').includes(...) token semantics are in effect.
+        cls = _run_ups_fill_class('{reachable: true, status: "OL FOOBAR"}')
+        assert cls == "ups-nav-icon-fill-ok"

@@ -153,10 +153,13 @@ def main():
         print(f"[netwatch] PBS poller -> polling every {PBSPoller.POLL_INTERVAL_SECONDS}s")
 
     ups_poller = UPSPoller(auth_manager, alert_settings=settings, alert_port=args.port)
-    _nut_server, _, _nut_ups_name, _, _ = ups_poller._get_config()
-    if _nut_server and _nut_ups_name:
-        ups_poller.start(stop_event)
-        print(f"[netwatch] UPS poller -> polling NUT every {UPSPoller.POLL_INTERVAL_SECONDS}s")
+    # Started unconditionally (unlike the other pollers above): _poll() already
+    # self-gates on missing config every cycle, so keeping only that one gate
+    # (rather than also gating .start() on server+ups_name) means configuring
+    # NUT via the Settings UI while the app is running takes effect on the
+    # next 15s tick instead of requiring a full restart.
+    ups_poller.start(stop_event)
+    print(f"[netwatch] UPS poller -> polling NUT every {UPSPoller.POLL_INTERVAL_SECONDS}s")
 
     if not args.no_web:
         wt = threading.Thread(

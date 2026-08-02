@@ -131,6 +131,7 @@ _SETTINGS_INT_RANGES = {
     "history_window":   (10, 10000),
     "refresh_rate":     (1,  60),
     "history_days":     (1,  365),
+    "nut_port":         (1,  65535),
 }
 
 _SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url", "ha_url", "pbs_url"}
@@ -548,6 +549,9 @@ def _h_get_power(ha_poller, history_db, force=False) -> tuple:
 
 def _h_get_ups(ups_poller) -> tuple:
     if ups_poller is None:
+        return 200, {"configured": False}
+    server, _, ups_name, _, _ = ups_poller._get_config()
+    if not server or not ups_name:
         return 200, {"configured": False}
     return 200, {"configured": True, "live": ups_poller.get_cache()}
 

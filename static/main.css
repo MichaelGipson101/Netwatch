@@ -1713,6 +1713,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .ups-nav-icon-fill-ok  { fill: var(--green); }
 .ups-nav-icon-fill-warn { fill: var(--amber); }
 .ups-nav-icon-fill-crit { fill: var(--red); }
+.ups-nav-icon-fill-unknown { fill: var(--muted); }
 .power-card-updated { font-size: 11px; color: var(--muted); }
 .power-card-body {
   display: flex;

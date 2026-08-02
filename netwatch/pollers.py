@@ -1025,16 +1025,24 @@ class UPSPoller:
         sock = socket.create_connection((server, port), timeout=5)
         try:
             sock.sendall(f"USERNAME {username}\n".encode())
-            if not _recv_line(sock).startswith("OK"):
+            reply = _recv_line(sock)
+            if reply.startswith("ERR "):
+                raise OSError(reply.rstrip("\n"))
+            if not reply.startswith("OK"):
                 raise OSError("NUT USERNAME command rejected")
             sock.sendall(f"PASSWORD {password}\n".encode())
-            if not _recv_line(sock).startswith("OK"):
+            reply = _recv_line(sock)
+            if reply.startswith("ERR "):
+                raise OSError(reply.rstrip("\n"))
+            if not reply.startswith("OK"):
                 raise OSError("NUT PASSWORD command rejected")
             sock.sendall(f"LIST VAR {ups_name}\n".encode())
             lines = []
             end_marker = f"END LIST VAR {ups_name}"
             while True:
                 line = _recv_line(sock).rstrip("\n")
+                if line.startswith("ERR "):
+                    raise OSError(line)
                 lines.append(line)
                 if line.startswith(end_marker):
                     break
@@ -1044,7 +1052,7 @@ class UPSPoller:
             sock.close()
 
     def _poll(self):
-        server, port, ups_name, username, password = self._get_config()
+        server, _, ups_name, username, password = self._get_config()
         if not all([server, ups_name, username, password]):
             with self._lock:
                 self._cache["error"] = "NUT (UPS) not configured"
@@ -1070,6 +1078,7 @@ class UPSPoller:
             logging.warning(f"UPSPoller: poll failed: {e}")
             with self._lock:
                 self._cache["reachable"] = False
+                self._cache["error"] = str(e)
 
     def _fire_alert(self, condition_id, message):
         if not self._alert_state.get(condition_id, False):
