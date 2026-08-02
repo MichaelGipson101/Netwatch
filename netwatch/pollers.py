@@ -914,3 +914,72 @@ class HAPoller:
                     logging.warning(f"HAPoller: unexpected error in loop: {e}")
                 stop_event.wait(self.POLL_INTERVAL_SECONDS)
         threading.Thread(target=_loop, daemon=True, name="ha-poller").start()
+
+
+class UPSPoller:
+    POLL_INTERVAL_SECONDS = 15  # tight cadence - battery state can change fast during an outage
+
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+        self._auth_manager = auth_manager
+        self._alert_settings = alert_settings or {}
+        self._alert_port = alert_port
+        self._cache = {
+            "reachable":       False,
+            "last_updated":    None,
+            "error":           None,
+            "status":          None,
+            "charge_percent":  None,
+            "load_percent":    None,
+            "runtime_seconds": None,
+            "input_voltage":   None,
+            "battery_voltage": None,
+        }
+        self._lock = threading.Lock()
+        self._alert_state = {}  # condition_id -> bool (True = currently alerting)
+
+    def get_cache(self):
+        with self._lock:
+            import copy
+            return copy.deepcopy(self._cache)
+
+    def _get_config(self):
+        data = self._auth_manager.data if self._auth_manager else {}
+        return (
+            data.get("nut_server", ""),
+            data.get("nut_port") or 3493,
+            data.get("nut_ups_name", ""),
+            data.get("nut_username", ""),
+            data.get("nut_password", ""),
+        )
+
+    @staticmethod
+    def _parse_list_response(lines, ups_name):
+        """Turn raw `LIST VAR <ups_name>` protocol lines into a flat
+        {variable_name: raw_string_value} dict. Each data line has the shape
+        `VAR <ups_name> <key> "<value>"` - BEGIN/END framing lines are skipped."""
+        prefix = f'VAR {ups_name} '
+        result = {}
+        for line in lines:
+            if not line.startswith(prefix):
+                continue
+            rest = line[len(prefix):]
+            key, _, quoted = rest.partition(' ')
+            if quoted.startswith('"') and quoted.endswith('"') and len(quoted) >= 2:
+                result[key] = quoted[1:-1]
+        return result
+
+    @staticmethod
+    def _parse_status_flags(status):
+        """Split a raw `ups.status` string (e.g. "OL CHRG") into a set of
+        flags (e.g. {"OL", "CHRG"}). Multiple flags can be active at once."""
+        return set((status or "").split())
+
+    @staticmethod
+    def _to_float(raw, key):
+        v = raw.get(key)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except ValueError:
+            return None

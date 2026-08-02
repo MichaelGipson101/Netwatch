@@ -4292,3 +4292,82 @@ def test_quickstart_route_works_via_real_http_with_no_session_and_query_string(t
         server.server_close()
         t.join()
         host.stop_event.set()
+
+
+# ============================================================================
+# UPSPoller — NUT protocol response parsing
+# ============================================================================
+from netwatch.pollers import UPSPoller
+
+# Byte-accurate capture from the real upsd on 192.168.4.237:3493, 2026-08-02
+# (LOGIN/LIST VAR handshake omitted here — this is just the LIST VAR body).
+_REAL_NUT_LIST_VAR_LINES = [
+    'BEGIN LIST VAR apc',
+    'VAR apc battery.charge "99"',
+    'VAR apc battery.charge.low "10"',
+    'VAR apc battery.charge.warning "50"',
+    'VAR apc battery.runtime "1323"',
+    'VAR apc battery.runtime.low "120"',
+    'VAR apc battery.voltage "27.1"',
+    'VAR apc device.serial "0B2613L15451  "',
+    'VAR apc input.voltage "116.0"',
+    'VAR apc ups.load "28"',
+    'VAR apc ups.status "OL CHRG"',
+    'END LIST VAR apc',
+]
+
+
+def test_parse_list_response_extracts_flat_dict():
+    result = UPSPoller._parse_list_response(_REAL_NUT_LIST_VAR_LINES, "apc")
+    assert result["battery.charge"] == "99"
+    assert result["battery.runtime"] == "1323"
+    assert result["ups.status"] == "OL CHRG"
+    assert result["input.voltage"] == "116.0"
+
+
+def test_parse_list_response_skips_begin_and_end_lines():
+    result = UPSPoller._parse_list_response(_REAL_NUT_LIST_VAR_LINES, "apc")
+    assert "BEGIN" not in result
+    assert "END" not in result
+    assert len(result) == 10  # 10 VAR lines, BEGIN/END excluded
+
+
+def test_parse_list_response_handles_value_with_trailing_spaces():
+    # device.serial's real value has trailing spaces inside the quotes -
+    # must be preserved verbatim, not stripped.
+    result = UPSPoller._parse_list_response(_REAL_NUT_LIST_VAR_LINES, "apc")
+    assert result["device.serial"] == "0B2613L15451  "
+
+
+def test_parse_list_response_empty_when_no_var_lines():
+    result = UPSPoller._parse_list_response(
+        ["BEGIN LIST VAR apc", "END LIST VAR apc"], "apc"
+    )
+    assert result == {}
+
+
+def test_parse_status_flags_splits_on_whitespace():
+    assert UPSPoller._parse_status_flags("OL CHRG") == {"OL", "CHRG"}
+
+
+def test_parse_status_flags_single_flag():
+    assert UPSPoller._parse_status_flags("OB") == {"OB"}
+
+
+def test_parse_status_flags_on_battery_and_low_battery_together():
+    # Both flags can be present simultaneously during a deep outage.
+    flags = UPSPoller._parse_status_flags("OB LB DISCHRG")
+    assert "OB" in flags
+    assert "LB" in flags
+
+
+def test_to_float_converts_present_key():
+    assert UPSPoller._to_float({"battery.charge": "99"}, "battery.charge") == 99.0
+
+
+def test_to_float_returns_none_for_missing_key():
+    assert UPSPoller._to_float({}, "battery.charge") is None
+
+
+def test_to_float_returns_none_for_unparseable_value():
+    assert UPSPoller._to_float({"battery.charge": "not-a-number"}, "battery.charge") is None
