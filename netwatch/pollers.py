@@ -1052,6 +1052,7 @@ class UPSPoller:
         try:
             raw = self._fetch_vars()
             status = raw.get("ups.status", "")
+            runtime = self._to_float(raw, "battery.runtime")
             with self._lock:
                 self._cache = {
                     "reachable":       True,
@@ -1060,7 +1061,7 @@ class UPSPoller:
                     "status":          status,
                     "charge_percent":  self._to_float(raw, "battery.charge"),
                     "load_percent":    self._to_float(raw, "ups.load"),
-                    "runtime_seconds": int(self._to_float(raw, "battery.runtime") or 0) or None,
+                    "runtime_seconds": None if runtime is None else int(runtime),
                     "input_voltage":   self._to_float(raw, "input.voltage"),
                     "battery_voltage": self._to_float(raw, "battery.voltage"),
                 }

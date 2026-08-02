@@ -4460,6 +4460,23 @@ def test_ups_poll_populates_cache_on_success():
     assert cache["last_updated"] is not None
 
 
+def test_ups_poll_preserves_genuine_zero_runtime():
+    # battery.runtime == "0" is a real, operationally critical reading
+    # (imminent shutdown) - it must not collapse to None the way a naive
+    # `x or 0`/`or None` idiom would, since 0.0 is falsy in Python.
+    poller = _make_ups_poller()
+    fake_vars = {
+        "battery.charge": "5",
+        "battery.runtime": "0",
+        "ups.status": "OB LB",
+    }
+    with patch.object(UPSPoller, "_fetch_vars", return_value=fake_vars):
+        poller._poll()
+    cache = poller.get_cache()
+    assert cache["runtime_seconds"] == 0
+    assert cache["runtime_seconds"] is not None
+
+
 def test_ups_poll_sets_unreachable_on_exception():
     poller = _make_ups_poller()
     with patch.object(UPSPoller, "_fetch_vars", side_effect=OSError("connection refused")):
