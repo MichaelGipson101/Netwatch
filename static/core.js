@@ -468,6 +468,7 @@ async function refresh(){
     }
     // Note: pi-health auto-refresh happens inside renderDrawer when h.is_pi
     refreshPowerCard();
+    refreshUpsIcon();
     if(!lastOk){
       document.getElementById('err-banner').style.display = 'none';
       const pipEl = document.getElementById('pip');
@@ -1669,4 +1670,27 @@ async function refreshPowerCard() {
     if (typeof d3 === 'undefined') await ensureD3();
     renderPowerSparkline(data.history || []);
   } catch (_) { /* non-critical */ }
+}
+
+async function refreshUpsIcon() {
+  try {
+    const res = await fetch('/api/ups');
+    if (!res.ok) return;
+    const data = await res.json();
+    window.nwLastUps = data;
+    const icon = document.getElementById('ups-nav-icon');
+    if (!icon) return;
+    if (!data.configured) { icon.style.display = 'none'; return; }
+    icon.style.display = '';
+    const live = data.live || {};
+    const fill = document.getElementById('ups-nav-icon-fill');
+    if (!fill) return;
+    const pct = (live.charge_percent != null) ? live.charge_percent : 0;
+    const maxWidth = 16; // matches the outline rect's interior width in the SVG above
+    fill.setAttribute('width', Math.max(0, Math.min(maxWidth, maxWidth * pct / 100)));
+    let cls = 'ups-nav-icon-fill-ok';
+    if (live.status && live.status.includes('LB')) cls = 'ups-nav-icon-fill-crit';
+    else if (live.status && live.status.includes('OB')) cls = 'ups-nav-icon-fill-warn';
+    fill.setAttribute('class', cls);
+  } catch (e) { /* transient fetch failure - next tick retries, matches refreshPowerCard's silence */ }
 }
