@@ -33,6 +33,7 @@ function _fillSettingsForm(s) {
     'ha_url', 'ha_token', 'ha_entity_power', 'ha_entity_voltage',
     'ha_entity_current', 'ha_entity_energy',
     'pbs_url', 'pbs_api_token_id', 'pbs_api_token_secret', 'pbs_ca_cert',
+    'nut_server', 'nut_port', 'nut_ups_name', 'nut_username', 'nut_password',
   ];
   for (const k of keys) {
     const el = _settingsField(k);
@@ -41,7 +42,7 @@ function _fillSettingsForm(s) {
   // Secret fields come back as a redaction sentinel — hint that leaving the
   // sentinel untouched keeps the stored value, while clearing the field erases it.
   const secretKeys = ['truenas_api_key', 'proxmox_password', 'proxmox_token_secret',
-                      'openrouter_api_key', 'ha_token', 'pbs_api_token_secret'];
+                      'openrouter_api_key', 'ha_token', 'pbs_api_token_secret', 'nut_password'];
   for (const k of secretKeys) {
     const el = _settingsField(k);
     if (el && el.value === '••••••••') {
@@ -55,7 +56,7 @@ function _fillSettingsForm(s) {
 }
 
 function _collectSettingsForm() {
-  const intKeys = ['default_interval', 'ping_timeout', 'history_window', 'refresh_rate', 'history_days'];
+  const intKeys = ['default_interval', 'ping_timeout', 'history_window', 'refresh_rate', 'history_days', 'nut_port'];
   const strKeys = [
     'ntfy_topic', 'ntfy_server',
     'truenas_url', 'truenas_api_key',
@@ -65,6 +66,7 @@ function _collectSettingsForm() {
     'ha_url', 'ha_token', 'ha_entity_power', 'ha_entity_voltage',
     'ha_entity_current', 'ha_entity_energy',
     'pbs_url', 'pbs_api_token_id', 'pbs_api_token_secret', 'pbs_ca_cert',
+    'nut_server', 'nut_ups_name', 'nut_username', 'nut_password',
   ];
   const out = {};
   for (const k of intKeys) {
