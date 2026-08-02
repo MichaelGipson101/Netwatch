@@ -4483,3 +4483,50 @@ def test_ups_poll_sets_unreachable_on_exception():
         poller._poll()
     cache = poller.get_cache()
     assert cache["reachable"] is False
+
+
+def test_ups_check_alerts_fires_on_battery():
+    poller = _make_ups_poller()
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
+        poller._check_alerts("OB DISCHRG")
+    assert mock_send.call_count == 1
+    assert poller._alert_state["ups-on-battery"] is True
+
+
+def test_ups_check_alerts_clears_on_battery_when_back_online():
+    poller = _make_ups_poller()
+    with patch("netwatch.pollers._send_alert_async"):
+        poller._check_alerts("OB DISCHRG")
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
+        poller._check_alerts("OL CHRG")
+    assert mock_send.call_count == 0
+    assert poller._alert_state["ups-on-battery"] is False
+
+
+def test_ups_check_alerts_does_not_refire_while_still_on_battery():
+    poller = _make_ups_poller()
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
+        poller._check_alerts("OB DISCHRG")
+        poller._check_alerts("OB DISCHRG")
+    assert mock_send.call_count == 1
+
+
+def test_ups_check_alerts_fires_low_battery_independently_of_on_battery():
+    # Both on-battery and low-battery can be active at once during a deep
+    # outage - they're independent conditions, not one escalating condition.
+    poller = _make_ups_poller()
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
+        poller._check_alerts("OB LB DISCHRG")
+    assert mock_send.call_count == 2
+    assert poller._alert_state["ups-on-battery"] is True
+    assert poller._alert_state["ups-low-battery"] is True
+
+
+def test_ups_check_alerts_fires_replace_battery():
+    poller = _make_ups_poller()
+    with patch("netwatch.pollers._send_alert_async") as mock_send:
+        poller._check_alerts("OL RB")
+    assert mock_send.call_count == 1
+    assert poller._alert_state["ups-replace-battery"] is True
+    # Normal mains power, so on-battery/low-battery must not also fire.
+    assert poller._alert_state.get("ups-on-battery", False) is False

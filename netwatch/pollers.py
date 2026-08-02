@@ -1071,9 +1071,41 @@ class UPSPoller:
             with self._lock:
                 self._cache["reachable"] = False
 
+    def _fire_alert(self, condition_id, message):
+        if not self._alert_state.get(condition_id, False):
+            self._alert_state[condition_id] = True
+            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+            priority = "default" if condition_id == "ups-replace-battery" else "high"
+            tags = {
+                "ups-on-battery":      "warning",
+                "ups-low-battery":     "rotating_light",
+                "ups-replace-battery": "battery",
+            }[condition_id]
+            _send_alert_async(
+                self._alert_settings, "Netwatch · UPS Alert", message,
+                priority=priority, tags=tags, click_url=click_url,
+            )
+
+    def _clear_alert(self, condition_id):
+        self._alert_state[condition_id] = False
+
     def _check_alerts(self, status):
-        # Implemented in Task 3 - no-op placeholder removed once that task lands.
-        pass
+        flags = self._parse_status_flags(status)
+
+        if "OB" in flags:
+            self._fire_alert("ups-on-battery", "UPS is running on battery power")
+        else:
+            self._clear_alert("ups-on-battery")
+
+        if "LB" in flags:
+            self._fire_alert("ups-low-battery", "UPS battery is critically low - shutdown imminent")
+        else:
+            self._clear_alert("ups-low-battery")
+
+        if "RB" in flags:
+            self._fire_alert("ups-replace-battery", "UPS battery needs replacement")
+        else:
+            self._clear_alert("ups-replace-battery")
 
     def start(self, stop_event):
         def _loop():
