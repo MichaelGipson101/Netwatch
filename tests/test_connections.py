@@ -768,3 +768,186 @@ def test_suggestions_get_routes(tmp_path):
         server.server_close()
         t.join()
     hdb.close()
+
+
+# ── Final fix wave (whole-branch review) ────────────────────────────────────
+
+from netwatch.storage import MANAGED_PROPERTY_KEYS
+
+
+def test_update_preserves_managed_properties_not_present_in_incoming_dict():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        # Drawer-shaped update: rebuilds `properties` from the per-type field
+        # list only, dropping the server-managed network_role.
+        ok, err = idb.update(ids["usw"], {
+            "ip": "10.0.0.2", "properties": {"port_count": 16, "managed": True}})
+        assert ok and err is None
+        stored = idb.get(ids["usw"])["properties"]
+        assert stored["network_role"] == "switch"
+        assert stored["managed"] is True
+        assert stored["port_count"] == 16
+        # Orientation still keys off network_role: the switch is the AP's
+        # parent, not the other way around.
+        preview, _ = idb.preview_connection(ids["usw"], ids["basement"])
+        assert preview["child_id"] == ids["basement"]
+        hdb.close()
+
+
+def test_update_explicit_managed_property_overwrites():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ok, err = idb.update(ids["usw"], {
+            "properties": {"port_count": 16, "network_role": "gateway"}})
+        assert ok and err is None
+        assert idb.get(ids["usw"])["properties"]["network_role"] == "gateway"
+        hdb.close()
+
+
+# ── delete / replace_all resolve pending migration drift ────────────────────
+
+def test_delete_device_resolves_drift_for_its_edges_and_relints_surviving_parents():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        bad_key = migration_drift_key(e["bad_port"])
+        wifi_key = migration_drift_key(e["pi4_wifi"])
+        pending = {r["subject_key"] for r in idb.suggestions.list()}
+        assert bad_key in pending
+        ok, err = idb.delete(ids["pi4"])
+        assert ok and err is None
+        pending_after = {r["subject_key"] for r in idb.suggestions.list()}
+        assert bad_key not in pending_after
+        assert wifi_key not in pending_after
+        hdb.close()
+
+
+def test_replace_all_resolves_all_pending_migration_drift():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        assert idb.suggestions.count_pending() == 6
+        ok, fail = idb.replace_all([{"system": "Fresh Box", "device_type": "host"}])
+        assert ok == 1 and fail == []
+        remaining = [r for r in idb.suggestions.list()
+                     if r["subject_key"].startswith("drift:migration:conn:")]
+        assert remaining == []
+        hdb.close()
+
+
+# ── update_connection: notes-only edits don't re-validate stored ports ──────
+
+def test_update_connection_notes_only_edit_skips_port_revalidation():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ok, err, warnings = idb.update_connection(e["bad_port"], {"notes": "moved to basement"})
+        assert ok and err is None and warnings == []
+        assert idb.get_connection(e["bad_port"])["notes"] == "moved to basement"
+        hdb.close()
+
+
+def test_update_connection_notes_only_edit_on_wifi_edge_is_ok():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ok, err, warnings = idb.update_connection(e["xps_wifi"], {"notes": "living room"})
+        assert ok and err is None and warnings == []
+        hdb.close()
+
+
+def test_update_connection_clearing_wifi_parent_port_is_allowed_and_resolves_drift():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        key = migration_drift_key(e["xps_wifi"])
+        assert key in {r["subject_key"] for r in idb.suggestions.list()}
+        ok, err, warnings = idb.update_connection(e["xps_wifi"], {"parent_port": ""})
+        assert ok and err is None
+        c = idb.get_connection(e["xps_wifi"])
+        assert c["parent_port"] is None
+        assert key not in {r["subject_key"] for r in idb.suggestions.list()}
+        hdb.close()
+
+
+def test_update_connection_setting_parent_port_on_wifi_edge_rejected():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ok, err, warnings = idb.update_connection(e["xps_wifi"], {"parent_port": "3"})
+        assert not ok
+        assert err == "wifi connections don't use a parent port"
+        hdb.close()
+
+
+# ── hosts.yaml backup rotation must not touch other backups/ tarballs ──────
+
+from netwatch.hosts import save_hosts_config
+
+
+def test_save_hosts_config_rotation_ignores_non_hosts_backups(tmp_path):
+    config_path = str(tmp_path / "hosts.yaml")
+    with open(config_path, "w") as f:
+        f.write("hosts: []\n")
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    for i in range(12):
+        (backup_dir / f"hosts-2026010{i:02d}-000000.yaml").write_text("hosts: []\n")
+    tarball = backup_dir / "pre-connections-v2-20260101-000000.tar.gz"
+    tarball.write_bytes(b"fake tarball")
+    save_hosts_config(config_path, [])
+    assert tarball.exists()
+    remaining_hosts_backups = sorted(p.name for p in backup_dir.glob("hosts-*.yaml"))
+    # 12 pre-existing + 1 just written by save_hosts_config = 13; rotation
+    # keeps the newest 10 and never touches the tarball.
+    assert len(remaining_hosts_backups) == 10
+    assert tarball.exists()
+
+
+# ── swap only applies to ambiguous pairs (item 6) ───────────────────────────
+
+def test_quick_add_swap_ignored_when_orientation_is_not_ambiguous():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        new_id, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["nas"], "b_id": ids["owui"], "swap": True})
+        assert err is None
+        assert idb.get_connection(new_id)["child_id"] == ids["owui"]
+        hdb.close()
+
+
+def test_update_connection_swap_rejected_when_not_ambiguous():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ok, err, warnings = idb.update_connection(e["prodesk_usw"], {"swap": True})
+        assert not ok
+        assert err == "orientation is decided by device types; swap only applies to ambiguous pairs"
+        hdb.close()
+
+
+def test_update_connection_swap_still_applies_when_ambiguous():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ok, err, warnings = idb.update_connection(e["host_host"], {"swap": True})
+        assert ok and err is None
+        c = idb.get_connection(e["host_host"])
+        assert c["child_id"] == ids["nas"] and c["parent_id"] == ids["desktop"]
+        hdb.close()
+
+
+# ── non-string notes/ports don't crash (item 7) ─────────────────────────────
+
+def test_quick_add_connection_numeric_notes_are_stringified():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        new_id, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["usw"], "b_id": ids["desktop"], "parent_port": "1", "notes": 42})
+        assert err is None
+        assert idb.get_connection(new_id)["notes"] == "42"
+        hdb.close()
+
+
+def test_legacy_create_connection_numeric_port_does_not_raise():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        new_id, err = idb.create_connection({
+            "from_device_id": ids["usw"], "to_device_id": ids["desktop"],
+            "from_port": "4", "to_port": 4, "connection_type": "ethernet"})
+        assert err is None
+        c = idb.get_connection(new_id)
+        assert c["child_port"] == "4"
+        hdb.close()

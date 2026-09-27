@@ -579,6 +579,12 @@ def _prune_loop(history_db, stop_event, inventory_db=None):
 # serial, notes, etc.) live as top-level columns and are shared across types.
 INVENTORY_TYPES = ("host", "vm", "network", "ups", "disk", "peripheral", "tablet", "phone", "printer")
 
+# properties keys that are server-managed (seeded by migration, discovery, etc.)
+# rather than edited via the per-type field list in the inventory drawer. An
+# update that doesn't explicitly mention one of these keeps whatever value is
+# already stored, so a plain field-list save can't silently wipe it.
+MANAGED_PROPERTY_KEYS = ("network_role", "mac_aliases", "proxmox_node", "guest_type")
+
 INVENTORY_TYPE_PROPERTIES = {
     "host": [],  # all fields are top-level (cpu, ram, os, etc.)
     "vm": [
@@ -836,7 +842,39 @@ class InventoryDB:
             except sqlite3.IntegrityError:
                 return None, f"a record with MAC {clean.get('mac')} already exists"
 
+    def _merge_managed_properties(self, inv_id, incoming_properties):
+        """A property update carries over MANAGED_PROPERTY_KEYS from the
+        stored record when the incoming properties dict doesn't mention
+        them, so a drawer save built from the per-type field list can't
+        silently wipe a server-managed key like network_role. An explicit
+        key in the incoming dict always wins. Returns the (possibly
+        augmented) dict, or None when incoming_properties isn't a dict/
+        JSON-object string (a clear should still clear everything)."""
+        incoming = None
+        if isinstance(incoming_properties, dict):
+            incoming = dict(incoming_properties)
+        elif isinstance(incoming_properties, str) and incoming_properties.strip():
+            try:
+                parsed = json.loads(incoming_properties)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                incoming = parsed
+        if incoming is None:
+            return None
+        current = self.get(inv_id)
+        stored_props = (current or {}).get("properties") or {}
+        for key in MANAGED_PROPERTY_KEYS:
+            if key in stored_props and key not in incoming:
+                incoming[key] = stored_props[key]
+        return incoming
+
     def update(self, inv_id, data):
+        if "properties" in data:
+            merged = self._merge_managed_properties(inv_id, data.get("properties"))
+            if merged is not None:
+                data = dict(data)
+                data["properties"] = merged
         clean = self._clean_input(data)
         if "system" in clean and not clean["system"]:
             return False, "system name cannot be empty"
@@ -1102,7 +1140,10 @@ class InventoryDB:
             return None, [], err
         child, parent = self.get(preview["child_id"]), self.get(preview["parent_id"])
         ports = preview["ports"]
-        if data.get("swap"):
+        # The swap control only exists in the UI when orientation was
+        # ambiguous - ignore it otherwise rather than let it force an
+        # orientation the device types have already decided.
+        if data.get("swap") and preview["ambiguous"]:
             child, parent = parent, child
             ports, _ = self.ports_for_device(parent["id"])
         ctype = ctype or default_connection_type(child, parent)
@@ -1115,9 +1156,11 @@ class InventoryDB:
                 and self._port_in_use(parent["id"], parent_port)):
             warnings.append("port_in_use")
         now = int(now or time.time())
+        raw_notes = data.get("notes")
+        notes = (str(raw_notes).strip() if raw_notes is not None else "") or None
         new_id = self._insert_connection(
             child["id"], parent["id"], normalize_port(data.get("child_port")),
-            parent_port, ctype, (data.get("notes") or "").strip() or None, now)
+            parent_port, ctype, notes, now)
         return new_id, warnings, None
 
     def create_connection(self, data):
@@ -1135,14 +1178,17 @@ class InventoryDB:
         if a is None or b is None:
             return None, "one or both devices do not exist"
         ctype = self._normalize_conn_type(data.get("connection_type"))
-        from_port = (data.get("from_port") or "").strip() or None
-        to_port   = (data.get("to_port") or "").strip() or None
+        raw_from_port = data.get("from_port")
+        from_port = (str(raw_from_port).strip() if raw_from_port is not None else "") or None
+        raw_to_port = data.get("to_port")
+        to_port = (str(raw_to_port).strip() if raw_to_port is not None else "") or None
         child, parent, _ambiguous = orient_edge(a, b, ctype)
         if child is a:
             child_port, parent_port = from_port, to_port
         else:
             child_port, parent_port = to_port, from_port
-        notes = (data.get("notes") or "").strip() or None
+        raw_notes = data.get("notes")
+        notes = (str(raw_notes).strip() if raw_notes is not None else "") or None
         new_id = self._insert_connection(
             child["id"], parent["id"], child_port, normalize_port(parent_port),
             ctype, notes, int(time.time()))
@@ -1158,14 +1204,25 @@ class InventoryDB:
         child_port, parent_port = existing["from_port"], existing["to_port"]
         ctype, notes = existing["connection_type"], existing["notes"]
         changed = False
+        port_touched = False
         if data.get("swap"):
+            # The swap control only exists in the UI when orientation was
+            # ambiguous - the pair's own device types decide otherwise.
+            child_rec, parent_rec = self.get(child_id), self.get(parent_id)
+            if child_rec is None or parent_rec is None:
+                return False, "one or both devices do not exist", []
+            if not orient_edge(child_rec, parent_rec, ctype)[2]:
+                return False, ("orientation is decided by device types; "
+                               "swap only applies to ambiguous pairs"), []
             child_id, parent_id = parent_id, child_id
             child_port, parent_port = parent_port, child_port
             changed = True
+            port_touched = True
         for key in ("parent_port", "to_port"):
             if key in data:
                 parent_port = normalize_port(data.get(key))
                 changed = True
+                port_touched = True
                 break
         for key in ("child_port", "from_port"):
             if key in data:
@@ -1176,18 +1233,24 @@ class InventoryDB:
             ctype = self._normalize_conn_type(data.get("connection_type"))
             changed = True
         if "notes" in data:
-            notes = (data.get("notes") or "").strip() or None
+            raw_notes = data.get("notes")
+            notes = (str(raw_notes).strip() if raw_notes is not None else "") or None
             changed = True
         if not changed:
             return False, "no fields to update", []
-        ports, parent = self.ports_for_device(parent_id)
-        perr = validate_parent_port(parent, parent_port, ports)
-        if perr:
-            return False, perr, []
         warnings = []
-        if (parent_port is not None and ctype != "wifi"
-                and self._port_in_use(parent_id, normalize_port(parent_port), conn_id)):
-            warnings.append("port_in_use")
+        if port_touched:
+            if ctype == "wifi":
+                if parent_port is not None:
+                    return False, "wifi connections don't use a parent port", []
+            else:
+                ports, parent = self.ports_for_device(parent_id)
+                perr = validate_parent_port(parent, parent_port, ports)
+                if perr:
+                    return False, perr, []
+            if (parent_port is not None and ctype != "wifi"
+                    and self._port_in_use(parent_id, normalize_port(parent_port), conn_id)):
+                warnings.append("port_in_use")
         now = int(now or time.time())
         with self.lock:
             self.conn.execute(
@@ -1236,10 +1299,19 @@ class InventoryDB:
                 self.suggestions.resolve(migration_drift_key(row["id"]), now)
 
     def delete(self, inv_id):
+        # Collect before deleting: ON DELETE CASCADE removes the edges along
+        # with the device, so this is our only chance to see which
+        # connection ids and parents were touched.
+        edges = self.list_connections_for_device(inv_id)
         with self.lock:
             cur = self.conn.execute("DELETE FROM inventory WHERE id = ?", (inv_id,))
             if cur.rowcount == 0:
                 return False, "record not found"
+        now = int(time.time())
+        for e in edges:
+            self.suggestions.resolve(migration_drift_key(e["id"]), now)
+        for parent_id in {e["parent_id"] for e in edges if e["parent_id"] != inv_id}:
+            self.relint_parent(parent_id, now)
         return True, None
 
     def replace_all(self, records):
@@ -1286,6 +1358,14 @@ class InventoryDB:
                          ts, ts),
                     )
                     ok += 1
+                # The whole inventory (and therefore every edge, via ON
+                # DELETE CASCADE) was just replaced: any pending migration
+                # drift suggestion no longer refers to a connection that
+                # exists, so it can never be resolved by delete/relint.
+                self.conn.execute(
+                    "UPDATE connection_suggestions SET status = 'resolved', decided_at = ? "
+                    "WHERE status = 'pending' AND subject_key LIKE 'drift:migration:conn:%'",
+                    (ts,))
                 self.conn.execute("COMMIT")
             except Exception:
                 try: self.conn.execute("ROLLBACK")

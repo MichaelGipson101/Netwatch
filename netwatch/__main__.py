@@ -100,9 +100,13 @@ def main():
     history_db = HistoryDB(db_path, retention_days=retention_days)
     print(f"[netwatch] History DB -> {db_path} (retention {retention_days} days)")
     inventory_db = InventoryDB(history_db)
-    ok, msg = inventory_db.migrate_connections_v2(
-        backup_fn=lambda: write_pre_migration_backup(config_path, auth_path, "connections-v2"))
+    backup_path = []
+    _, msg = inventory_db.migrate_connections_v2(
+        backup_fn=lambda: backup_path.append(
+            write_pre_migration_backup(config_path, auth_path, "connections-v2")))
     print(f"[netwatch] Connections v2 -> {msg}")
+    if backup_path:
+        print(f"[netwatch] Connections v2 backup -> {backup_path[0]}")
     inv_count = len(inventory_db.list_all())
     print(f"[netwatch] Inventory  -> {inv_count} record(s)")
     quicklinks_db = QuickLinksDB(history_db)

@@ -701,7 +701,14 @@ def save_hosts_config(path, new_hosts):
         os.makedirs(backup_dir, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         shutil.copy2(path, os.path.join(backup_dir, f"hosts-{stamp}.yaml"))
-        backups = sorted(os.listdir(backup_dir))
+        # Only rotate the hosts.yaml backups this function itself writes
+        # (hosts-<timestamp>.yaml) - other files in backups/, such as a
+        # pre-migration tarball, have their own lifecycle and must not be
+        # evicted by (or count toward) this window.
+        backups = sorted(
+            f for f in os.listdir(backup_dir)
+            if f.startswith("hosts-") and f.endswith(".yaml")
+        )
         for old in backups[:-10]:
             try:
                 os.remove(os.path.join(backup_dir, old))
