@@ -784,3 +784,39 @@ def test_short_port_names():
     out = run_js([(CX_JS, "function cxShortPortName")],
                  "['Port 7', 'Port 16', 'SFP+ 1', 'eth0', '3'].map(cxShortPortName)")
     assert out == ["7", "16", "SFP+1", "eth0", "3"]
+
+
+# ── Task 9: drawer ──────────────────────────────────────────────────────────
+
+@needs_node
+def test_drawer_list_shows_the_other_end_port_and_source():
+    conns = ("[{id: 1, direction: 'out', parent_id: 5, parent_name: 'USW', parent_type: 'network',"
+             " child_id: 9, child_name: 'Me', parent_port: 'Port 7', connection_type: 'ethernet', source: 'unifi'},"
+             " {id: 2, direction: 'in', parent_id: 9, parent_name: 'Me', child_id: 6, child_name: 'VM <1>',"
+             " child_type: 'vm', parent_port: null, connection_type: 'virtual', source: 'manual'}]")
+    prelude = "function deviceIcon(t, s){ return '[' + t + ']'; }"
+    html = run_js([(UTILS_JS, "function escapeHtml"), (CX_JS, "const CX_SOURCE_LABELS"),
+                   (INV_JS, "function drawerConnectionsHtml")],
+                  f"[drawerConnectionsHtml({conns}), drawerConnectionsHtml([])]", prelude=prelude)
+    assert "openInventoryDrawer(5)" in html[0] and "openInventoryDrawer(6)" in html[0]
+    assert "Port 7" in html[0] and "UniFi" in html[0] and "Manual" in html[0]
+    assert "VM &lt;1&gt;" in html[0] and "deleteConnection(1)" in html[0]
+    assert "No connections recorded yet" in html[1]
+
+
+def test_old_drawer_form_is_gone_and_fan_out_is_used():
+    src = open(INV_JS, encoding="utf-8").read()
+    for gone in ("_connFormState", "function renderConnectionsBody", "function startAddConnection",
+                 "function cancelConnection", "function onConnTargetChange", "function submitConnection"):
+        assert gone not in src, gone
+    assert "renderQuickAdd(" in js_part(INV_JS, "async function loadInventoryConnections")
+    assert "connectionsChanged()" in js_part(INV_JS, "async function deleteConnection")
+    assert "connectionsChanged()" in js_part(INV_JS, "async function submitInventory")
+    assert "connectionsChanged()" in js_part(INV_JS, "async function deleteInventory")
+    css = open(os.path.join(STATIC, "main.css"), encoding="utf-8").read()
+    for gone in (".conn-form", ".conn-add", ".conn-group", ".conn-icon"):
+        assert gone not in css, gone
+    for name in os.listdir(STATIC):
+        if name.endswith(".js"):
+            text = open(os.path.join(STATIC, name), encoding="utf-8").read()
+            assert "startAddConnection" not in text and "submitConnection(" not in text, name

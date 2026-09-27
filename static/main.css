@@ -862,23 +862,21 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .inv-link-action-status.error{color:var(--red)}
 .conn-loading{padding:12px;color:var(--muted);font-size:12px;font-style:italic}
 .conn-empty{padding:12px;color:var(--muted);font-size:12px;font-style:italic;background:var(--subtle);border:1px solid var(--border-light);border-radius:8px}
-.conn-group{margin-bottom:10px}
-.conn-group-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:6px;padding:0 2px}
 .conn-row{display:grid;grid-template-columns:24px 1fr 28px;align-items:center;gap:8px;background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;padding:8px 10px;margin-bottom:4px;font-size:13px}
-.conn-icon{text-align:center;color:var(--hint);font-family:'DM Mono',monospace;font-size:14px}
 .conn-target{cursor:pointer;color:var(--text)}
 .conn-target:hover{color:var(--blue)}
 .conn-port{color:var(--muted);font-size:11px;font-family:'DM Mono',monospace}
 .conn-del{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0;width:24px;height:24px;border-radius:4px;transition:all .15s}
 .conn-del:hover{background:var(--red-bg);color:var(--red)}
-.conn-add{margin-top:10px}
-.conn-add-btn{width:100%;font-size:12px}
-.conn-form{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
-.conn-form-row{display:flex;flex-direction:column;gap:10px}
-.conn-form label{display:flex;flex-direction:column;gap:4px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);min-width:0}
-.conn-form input,.conn-form select{padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;font-family:inherit;text-transform:none;letter-spacing:0;width:100%;box-sizing:border-box}
-.conn-form input:focus,.conn-form select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg)}
-.conn-form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+
+/* Drawer: this device's connections + quick add */
+.d-conn-body{display:flex;flex-direction:column;gap:10px}
+.d-conn-list{display:flex;flex-direction:column}
+.d-conn-row{grid-template-columns:18px minmax(0,1fr) auto 24px}
+.d-conn-row .conn-target{min-width:0;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.d-conn-dir{color:var(--hint);font-size:13px;text-align:center}
+.d-conn-quick{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;padding:12px}
+.d-conn-manage{align-self:flex-start;font-size:12px}
 
 /* Import modal */
 .import-modal-body{font-size:13px;color:var(--text);line-height:1.5}

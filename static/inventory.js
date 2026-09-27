@@ -860,6 +860,7 @@ async function submitInventory(ev){
     closeInventoryEditor();
     closeDrawer();
     await fetchInventory();
+    connectionsChanged();   // names/types shown in the workspace may have changed
   } catch(e){ err.textContent = 'Network error'; }
 }
 async function deleteInventory(){
@@ -871,6 +872,7 @@ async function deleteInventory(){
       closeInventoryEditor();
       closeDrawer();
       await fetchInventory();
+      connectionsChanged();   // the device's edges went with it
     }
   } catch(e){}
 }
@@ -985,211 +987,53 @@ function renderInventoryDrawer(rec){
   loadInventoryConnections(rec.id);
 }
 
-// State for the inline add-connection form (per-drawer)
-let _connFormState = { open: false, deviceId: null };
-
+// Drawer Connections section (Netwatch 4.0 plan 3): this device's edges,
+// the shared quick add prefilled with this device, and a way into the
+// Connections workspace. Mutations end in connectionsChanged().
 async function loadInventoryConnections(deviceId){
   const body = document.getElementById('d-connections-body');
   if(!body) return;
   try {
-    const [connRes, invRes] = await Promise.all([
-      fetch('/api/inventory/' + deviceId + '/connections'),
-      fetch('/api/inventory'),
-    ]);
-    if(!connRes.ok || !invRes.ok){
-      body.innerHTML = '<div class="conn-empty">Could not load connections.</div>';
-      return;
+    const res = await fetch('/api/inventory/' + deviceId + '/connections');
+    if(!res.ok){ body.innerHTML = '<div class="conn-empty">Could not load connections.</div>'; return; }
+    const conns = (await res.json()).items || [];
+    if(openDrawerIp !== 'inv:' + deviceId) return;   // the drawer moved on meanwhile
+    body.className = 'd-conn-body';
+    body.innerHTML = drawerConnectionsHtml(conns)
+      + '<div class="d-conn-quick" id="d-conn-quick"></div>'
+      + '<button type="button" class="btn btn-ghost d-conn-manage" onclick="closeDrawer();setTab(\'connections\')">Manage all connections →</button>';
+    if(typeof renderQuickAdd === 'function'){
+      renderQuickAdd(document.getElementById('d-conn-quick'), {
+        a_id: deviceId, lockA: true, compact: true, onAdded: () => connectionsChanged()});
     }
-    const conns = (await connRes.json()).items || [];
-    const allInv = (await invRes.json()).items || [];
-    body.innerHTML = renderConnectionsBody(deviceId, conns, allInv);
   } catch(e){
-    body.innerHTML = '<div class="conn-empty">Error: ' + escapeHtml(e.message) + '</div>';
+    body.innerHTML = '<div class="conn-empty">Could not load connections.</div>';
   }
 }
 
-function renderConnectionsBody(deviceId, conns, allInv){
-  const out = conns.filter(c => c.direction === 'out');
-  const inb = conns.filter(c => c.direction === 'in');
-
-  const typeIcon = {
-    ethernet: '──',  // box drawing horizontal
-    fiber:    '≈',        // wave (suggestive of light/optical)
-    wifi:     '⦰',        // empty set / signal indicator
-    virtual:  '◈',        // diamond (suggests "container/inside")
-    power:    '⚡',        // lightning bolt
-    usb:      '⇌',        // double arrow
-    console:  '→',        // arrow
-    other:    '·',
-  };
-
-  let html = '';
-
-  if(out.length){
-    html += '<div class="conn-group"><div class="conn-group-label">Plugged into</div>';
-    out.forEach(c => {
-      const icon = typeIcon[c.connection_type] || typeIcon.other;
-      const portInfo = [];
-      if(c.from_port) portInfo.push('via ' + escapeHtml(c.from_port));
-      if(c.to_port)   portInfo.push('port ' + escapeHtml(c.to_port));
-      const portStr = portInfo.length ? ' <span class="conn-port">(' + portInfo.join(', ') + ')</span>' : '';
-      html += '<div class="conn-row" onclick="event.stopPropagation()">'
-        + '<span class="conn-icon" title="' + escapeHtml(c.connection_type) + '">' + icon + '</span>'
-        + '<span class="conn-target" onclick="openInventoryDrawer(' + c.to_device_id + ')">'
-        + escapeHtml(c.to_name) + portStr + '</span>'
-        + '<button class="conn-del" title="Remove connection" onclick="deleteConnection(' + c.id + ', ' + deviceId + ')">×</button>'
-        + '</div>';
-    });
-    html += '</div>';
-  }
-
-  if(inb.length){
-    html += '<div class="conn-group"><div class="conn-group-label">Things plugged into me</div>';
-    inb.forEach(c => {
-      const icon = typeIcon[c.connection_type] || typeIcon.other;
-      const portInfo = [];
-      if(c.to_port)   portInfo.push('port ' + escapeHtml(c.to_port));
-      if(c.from_port) portInfo.push('via ' + escapeHtml(c.from_port));
-      const portStr = portInfo.length ? ' <span class="conn-port">(' + portInfo.join(', ') + ')</span>' : '';
-      html += '<div class="conn-row" onclick="event.stopPropagation()">'
-        + '<span class="conn-icon" title="' + escapeHtml(c.connection_type) + '">' + icon + '</span>'
-        + '<span class="conn-target" onclick="openInventoryDrawer(' + c.from_device_id + ')">'
-        + escapeHtml(c.from_name) + portStr + '</span>'
-        + '<button class="conn-del" title="Remove connection" onclick="deleteConnection(' + c.id + ', ' + deviceId + ')">×</button>'
-        + '</div>';
-    });
-    html += '</div>';
-  }
-
-  if(!out.length && !inb.length){
-    html += '<div class="conn-empty">No connections recorded yet.</div>';
-  }
-
-  // Inline add form
-  html += '<div class="conn-add">';
-  if(_connFormState.open && _connFormState.deviceId === deviceId){
-    // Build the device dropdown excluding self
-    const others = allInv.filter(i => i.id !== deviceId);
-    others.sort((a, b) => (a.system || '').localeCompare(b.system || ''));
-    const deviceOpts = '<option value="">-- pick a device --</option>'
-      + others.map(i => {
-          const dt = i.device_type || 'host';
-          const label = i.system + ' (' + dt + ')';
-          return '<option value="' + i.id + '">' + escapeHtml(label) + '</option>';
-        }).join('');
-
-    html += '<div class="conn-form">'
-      + '<div class="conn-form-row">'
-        + '<label>Connect to<select class="conn-f-target" onchange="onConnTargetChange(this.value)">' + deviceOpts + '</select></label>'
-        + '<label>Type<select class="conn-f-type"><option value="ethernet">Ethernet</option><option value="fiber">Fiber</option><option value="wifi">WiFi</option><option value="virtual">Virtual (VM → host)</option><option value="power">Power</option><option value="usb">USB</option><option value="console">Console</option><option value="other">Other</option></select></label>'
-      + '</div>'
-      + '<div class="conn-form-row">'
-        + '<label>From port (this device, optional)<input type="text" class="conn-f-from-port" placeholder="e.g. eth0, WAN"></label>'
-        + '<label>To port (target device)<span class="conn-f-to-port-wrap"><input type="text" class="conn-f-to-port" placeholder="e.g. 4"></span></label>'
-      + '</div>'
-      + '<div class="conn-form-actions">'
-        + '<button class="btn" onclick="submitConnection(' + deviceId + ')">Add connection</button>'
-        + '<button class="btn btn-ghost" onclick="cancelConnection()">Cancel</button>'
-      + '</div>'
-    + '</div>';
-  } else {
-    html += '<button class="btn btn-ghost conn-add-btn" onclick="startAddConnection(' + deviceId + ')">+ Add connection</button>';
-  }
-  html += '</div>';
-
-  return html;
+function drawerConnectionsHtml(conns){
+  if(!conns.length) return '<div class="conn-empty">No connections recorded yet.</div>';
+  const labels = typeof CX_SOURCE_LABELS !== 'undefined' ? CX_SOURCE_LABELS : {};
+  return '<div class="d-conn-list">' + conns.map(c => {
+    const up = c.direction === 'out';
+    const otherId = up ? c.parent_id : c.child_id;
+    const otherName = up ? c.parent_name : c.child_name;
+    const otherType = up ? c.parent_type : c.child_type;
+    const src = c.source || 'manual';
+    return '<div class="conn-row d-conn-row">'
+      + '<span class="d-conn-dir" title="' + (up ? 'Upstream: this device plugs into it' : 'Downstream: it plugs into this device') + '">'
+        + (up ? '↑' : '↓') + '</span>'
+      + '<span class="conn-target" onclick="openInventoryDrawer(' + otherId + ')">'
+        + deviceIcon(otherType || 'host', 16) + ' ' + escapeHtml(otherName)
+        + (c.parent_port ? ' <span class="conn-port">· ' + escapeHtml(c.parent_port) + '</span>' : '')
+        + ' <span class="conn-port">· ' + escapeHtml(c.connection_type || '') + '</span></span>'
+      + '<span class="cx-src cx-src-' + escapeHtml(src) + '">' + escapeHtml(labels[src] || src) + '</span>'
+      + '<button class="conn-del" title="Remove connection" aria-label="Remove connection" onclick="deleteConnection(' + c.id + ')">×</button>'
+      + '</div>';
+  }).join('') + '</div>';
 }
 
-function startAddConnection(deviceId){
-  _connFormState = { open: true, deviceId: deviceId };
-  loadInventoryConnections(deviceId);
-}
-
-function cancelConnection(){
-  _connFormState = { open: false, deviceId: null };
-  if(openDrawerIp && openDrawerIp.startsWith('inv:')){
-    const id = parseInt(openDrawerIp.split(':')[1], 10);
-    loadInventoryConnections(id);
-  }
-}
-
-async function onConnTargetChange(targetId){
-  // If the target is a network device with a port_count, swap the to_port
-  // input for a numbered dropdown showing which ports are taken.
-  const wrap = document.querySelector('.conn-f-to-port-wrap');
-  if(!wrap) return;
-  if(!targetId){
-    wrap.innerHTML = '<input type="text" class="conn-f-to-port" placeholder="e.g. 4">';
-    return;
-  }
-  try {
-    const [recRes, connRes] = await Promise.all([
-      fetch('/api/inventory/' + targetId),
-      fetch('/api/inventory/' + targetId + '/connections'),
-    ]);
-    if(!recRes.ok){ return; }
-    const rec = await recRes.json();
-    const conns = connRes.ok ? (await connRes.json()).items : [];
-    const props = rec.properties || {};
-    const portCount = parseInt(props.port_count, 10);
-    if(!portCount || portCount < 1 || portCount > 96){
-      // Not a port-aware device: keep the free-text input
-      wrap.innerHTML = '<input type="text" class="conn-f-to-port" placeholder="port (optional)">';
-      return;
-    }
-    // Build map of port -> device using it
-    const used = {};
-    conns.filter(c => c.direction === 'in' && c.to_port).forEach(c => {
-      used[c.to_port] = c.from_name;
-    });
-    let opts = '<option value="">-- select port --</option>';
-    for(let i = 1; i <= portCount; i++){
-      const u = used[String(i)];
-      opts += '<option value="' + i + '"' + (u ? ' disabled' : '') + '>Port ' + i
-            + (u ? ' (in use by ' + escapeHtml(u) + ')' : '')
-            + '</option>';
-    }
-    wrap.innerHTML = '<select class="conn-f-to-port">' + opts + '</select>';
-  } catch(e){
-    /* fall back to text input - already there */
-  }
-}
-
-async function submitConnection(deviceId){
-  const targetEl = document.querySelector('.conn-f-target');
-  const typeEl   = document.querySelector('.conn-f-type');
-  const fpEl     = document.querySelector('.conn-f-from-port');
-  const tpEl     = document.querySelector('.conn-f-to-port');
-  if(!targetEl || !targetEl.value){
-    toast('Please pick a device to connect to.', 'info');
-    return;
-  }
-  const data = {
-    to_device_id:    parseInt(targetEl.value, 10),
-    connection_type: typeEl ? typeEl.value : 'ethernet',
-    from_port:       fpEl ? fpEl.value.trim() : '',
-    to_port:         tpEl ? (tpEl.value || '').trim() : '',
-  };
-  try {
-    const res = await apiFetch('/api/inventory/' + deviceId + '/connections', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(data),
-    });
-    if(!res.ok){
-      let msg = 'Failed (HTTP ' + res.status + ')';
-      try { const j = await res.json(); if(j.error) msg = j.error; } catch(e){}
-      toast('Could not add connection: ' + msg, 'error');
-      return;
-    }
-    _connFormState = { open: false, deviceId: null };
-    loadInventoryConnections(deviceId);
-  } catch(e){
-    toast('Network error: ' + e.message, 'error');
-  }
-}
-
-async function deleteConnection(connId, deviceId){
+async function deleteConnection(connId){
   if(!confirm('Remove this connection?')) return;
   try {
     const res = await apiFetch('/api/connections/' + connId + '/delete', {method: 'POST'});
@@ -1199,7 +1043,8 @@ async function deleteConnection(connId, deviceId){
       toast('Could not delete: ' + msg, 'error');
       return;
     }
-    loadInventoryConnections(deviceId);
+    toast('Connection removed', 'success');
+    connectionsChanged();
   } catch(e){
     toast('Network error: ' + e.message, 'error');
   }
