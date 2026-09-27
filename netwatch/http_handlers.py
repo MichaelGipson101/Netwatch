@@ -124,6 +124,11 @@ SETTINGS_EDITABLE_KEYS = {
     "nut_ups_name":         str,
     "nut_username":         str,
     "nut_password":         str,
+    "unifi_url":            str,
+    "unifi_api_key":        str,
+    "unifi_site":           str,
+    "unifi_verify_ssl":     bool,
+    "unifi_ca_cert":        str,
 }
 
 _SETTINGS_INT_RANGES = {
@@ -135,7 +140,7 @@ _SETTINGS_INT_RANGES = {
     "nut_port":         (1,  65535),
 }
 
-_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url", "ha_url", "pbs_url"}
+_SETTINGS_URL_KEYS = {"ntfy_server", "truenas_url", "proxmox_url", "ha_url", "pbs_url", "unifi_url"}
 _SETTINGS_REQUIRED_INT_KEYS = {"default_interval", "ping_timeout", "history_window",
                                 "refresh_rate", "history_days"}
 # These keys live in auth.json (alongside user credentials), not hosts.yaml
@@ -147,6 +152,7 @@ _AUTH_STORED_KEYS = {
     "ha_entity_current", "ha_entity_energy",
     "pbs_url", "pbs_api_token_id", "pbs_api_token_secret",
     "nut_server", "nut_port", "nut_ups_name", "nut_username", "nut_password",
+    "unifi_url", "unifi_api_key", "unifi_site",
 }
 
 
@@ -332,6 +338,7 @@ def _h_post_ai_chat(handler, data, auth_manager) -> None:
 SECRET_SETTINGS_KEYS = {
     "truenas_api_key", "proxmox_password", "proxmox_token_secret",
     "openrouter_api_key", "ha_token", "pbs_api_token_secret", "nut_password",
+    "unifi_api_key",
 }
 SECRET_PLACEHOLDER = "••••••••"
 

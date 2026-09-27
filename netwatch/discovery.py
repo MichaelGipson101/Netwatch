@@ -12,7 +12,14 @@ Layers, outermost last:
 Discovery never edits manual edges or inventory records - it files
 suggestions (spec §2). Accepting them is InventoryDB.accept_suggestion.
 """
+import json
+import logging
+import ssl
+import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from netwatch.connections import (
     NETWORK_LINK_TYPES, canonical_port, fingerprint, normalize_port, orient_edge,
@@ -414,3 +421,198 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                and s["subject_key"] not in held_keys]
     return {"upserts": list(upserts.values()), "resolve": resolve,
             "touch": [{"id": k, "parent_port": v} for k, v in touch.items()]}
+
+
+class UnifiError(Exception):
+    """The controller answered, but with meta.rc != "ok"."""
+
+
+def safe_error(exc):
+    """Describe a fetch failure without echoing exception text, which can
+    carry request details (spec §2.2: type and HTTP status only)."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        detail = "unreachable" if isinstance(reason, str) else type(reason).__name__
+        return f"URLError: {detail}"
+    if isinstance(exc, UnifiError):
+        return "controller returned an error"
+    return type(exc).__name__
+
+
+def unifi_ssl_context(settings):
+    """TLS context for the controller, read from the shared settings dict at
+    call time so a Settings change applies on the next scan."""
+    if not bool(settings.get("unifi_verify_ssl", True)):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    ca_cert = (settings.get("unifi_ca_cert") or "").strip()
+    ctx = ssl.create_default_context(cafile=ca_cert or None)
+    if ca_cert and hasattr(ssl, "VERIFY_X509_STRICT"):
+        # Same relaxation as the Proxmox/PBS pollers: self-managed CAs often
+        # lack the Key Usage extension OpenSSL 3's strict mode insists on.
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return ctx
+
+
+def _get_json(url, api_key, ctx):
+    req = urllib.request.Request(
+        url, headers={"X-API-Key": api_key, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+        payload = json.load(resp)
+    if (payload.get("meta") or {}).get("rc", "ok") != "ok":
+        raise UnifiError()
+    return payload
+
+
+def fetch_unifi_classic(url, api_key, site, ctx):
+    """(stat/device, stat/sta) from UniFi Network's classic API. The API key
+    goes in the X-API-Key header only."""
+    base = f"{url.rstrip('/')}/proxy/network/api/s/{urllib.parse.quote(site, safe='')}"
+    return (_get_json(base + "/stat/device", api_key, ctx),
+            _get_json(base + "/stat/sta", api_key, ctx))
+
+
+class DiscoveryRunner:
+    """Background discovery: scan every SCAN_INTERVAL_SECONDS (first scan
+    ~FIRST_SCAN_DELAY_SECONDS after start) or on demand. Always running;
+    idles while no source is configured so newly saved credentials work
+    without a restart."""
+
+    SCAN_INTERVAL_SECONDS = 900
+    FIRST_SCAN_DELAY_SECONDS = 90
+
+    def __init__(self, auth_manager, settings, inventory_db, fetch_unifi=None):
+        self._auth = auth_manager
+        self._settings = settings  # shared by reference - never copy
+        self._db = inventory_db
+        self._fetch_unifi = fetch_unifi or fetch_unifi_classic
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._scanning = False
+        self._health = {}
+        self._last_scan = None
+        self._switches = []
+        # Start of each source's current unbroken healthy streak (in memory:
+        # after a restart, stale-edge suggestions wait a full 7 days).
+        self._healthy_since = {}
+
+    def _unifi_config(self):
+        data = self._auth.data if self._auth else {}
+        return {
+            "url": str(data.get("unifi_url") or "").strip(),
+            "api_key": str(data.get("unifi_api_key") or "").strip(),
+            "site": str(data.get("unifi_site") or "").strip() or "default",
+        }
+
+    def unifi_configured(self):
+        cfg = self._unifi_config()
+        return bool(cfg["url"] and cfg["api_key"])
+
+    def any_source_configured(self):
+        return self.unifi_configured()
+
+    def _set_health(self, source, ok, error, at, counts):
+        with self._lock:
+            prev = self._health.get(source)
+            self._health[source] = {"ok": ok, "error": error, "at": at, "counts": counts}
+        if not ok and (prev is None or prev["ok"] or prev["error"] != error):
+            logging.warning(f"Discovery: {source} scan failed: {error}")
+        elif ok and prev is not None and not prev["ok"]:
+            logging.info(f"Discovery: {source} scan recovered")
+
+    def scan_once(self, now=None):
+        """Run one scan. Returns False if a scan was already running."""
+        now = int(now or time.time())
+        with self._lock:
+            if self._scanning:
+                return False
+            self._scanning = True
+        try:
+            observations, healthy = [], set()
+            if self.unifi_configured():
+                cfg = self._unifi_config()
+                try:
+                    devices, clients = self._fetch_unifi(
+                        cfg["url"], cfg["api_key"], cfg["site"],
+                        unifi_ssl_context(self._settings))
+                    snap = parse_unifi(devices, clients)
+                    observations += unifi_observations(snap, guest_macs=None)
+                    healthy.add("unifi")
+                    with self._lock:
+                        self._switches = snap["switches"]
+                        self._healthy_since.setdefault("unifi", now)
+                    self._set_health("unifi", True, None, now,
+                                     {"switches": len(snap["switches"]),
+                                      "clients": len(snap["clients"])})
+                except Exception as e:
+                    with self._lock:
+                        self._healthy_since.pop("unifi", None)
+                    self._set_health("unifi", False, safe_error(e), now, None)
+            if healthy:
+                try:
+                    changes = reconcile(
+                        observations, records=self._db.list_all(),
+                        edges=self._db.list_all_connections(),
+                        pending=self._db.suggestions.list("pending"),
+                        healthy_sources=healthy, now=now,
+                        live_ports_for=self.live_ports_for,
+                        healthy_since=dict(self._healthy_since))
+                    self._db.apply_discovery_changes(changes, now)
+                except Exception as e:
+                    logging.warning(f"Discovery: applying scan failed: {type(e).__name__}: {e}")
+            with self._lock:
+                self._last_scan = now
+            return True
+        finally:
+            with self._lock:
+                self._scanning = False
+
+    def request_scan(self):
+        """Ask the background loop for a scan now. False when nothing is
+        configured; a request during a running scan coalesces into it."""
+        if not self.any_source_configured():
+            return False
+        with self._lock:
+            scanning = self._scanning
+        if not scanning:
+            self._wake.set()
+        return True
+
+    def status(self):
+        with self._lock:
+            unifi = dict(self._health.get(
+                "unifi", {"ok": None, "error": None, "at": None, "counts": None}))
+            last, scanning = self._last_scan, self._scanning
+        unifi["configured"] = self.unifi_configured()
+        return {"sources": {"unifi": unifi}, "last_scan": last, "scanning": scanning}
+
+    def live_ports_for(self, rec):
+        """Live port table for an inventory record that is a scanned switch."""
+        macs = {_norm_mac(rec.get("mac"))} | {
+            _norm_mac(m) for m in ((rec.get("properties") or {}).get("mac_aliases") or [])}
+        macs.discard("")
+        with self._lock:
+            for sw in self._switches:
+                if sw["mac"] in macs:
+                    return [dict(p) for p in sw["ports"]]
+        return None
+
+    def _loop(self, stop_event):
+        delay = self.FIRST_SCAN_DELAY_SECONDS
+        while not stop_event.is_set():
+            self._wake.wait(timeout=delay)
+            if stop_event.is_set():
+                break
+            self._wake.clear()
+            self.scan_once()
+            delay = self.SCAN_INTERVAL_SECONDS
+
+    def start(self, stop_event):
+        t = threading.Thread(target=self._loop, args=(stop_event,), daemon=True,
+                             name="discovery")
+        t.start()
+        return t

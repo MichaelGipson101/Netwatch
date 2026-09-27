@@ -928,3 +928,187 @@ def test_fix_m2_device_accept_rejects_mac_already_aliased_elsewhere():
         assert ok, err
         assert accept(idb, f"device:unifi:{WORKBENCH_MAC}") == (False, "suggestion_changed", {})
         hdb.close()
+
+
+# ── Task 5: DiscoveryRunner, UniFi fetch/TLS, settings keys ─────────────────
+
+import logging
+import ssl
+import urllib.error
+
+from netwatch.auth import AuthManager
+from netwatch.discovery import (
+    DiscoveryRunner, UnifiError, safe_error, unifi_ssl_context,
+)
+from netwatch.http_handlers import _h_get_settings, _h_post_settings, SECRET_PLACEHOLDER
+
+SECRET = "sekrit-api-key-value-0123456789ab"
+
+
+def fake_auth(**data):
+    return types.SimpleNamespace(data=dict(data))
+
+
+def runner_for(idb, fetch, settings=None, **auth):
+    auth = auth or {"unifi_url": "https://unifi.local:11443", "unifi_api_key": SECRET}
+    return DiscoveryRunner(fake_auth(**auth), settings if settings is not None else {}, idb,
+                           fetch_unifi=fetch)
+
+
+def ok_fetch(calls=None):
+    def fetch(url, api_key, site, ctx):
+        if calls is not None:
+            calls.append((url, api_key, site, isinstance(ctx, ssl.SSLContext)))
+        return unifi_device_payload(), unifi_clients_payload()
+    return fetch
+
+
+def test_safe_error_never_echoes_text():
+    http = urllib.error.HTTPError("https://x/?k=" + SECRET, 401, "Unauthorized " + SECRET, {}, None)
+    assert safe_error(http) == "HTTP 401"
+    assert safe_error(urllib.error.URLError(ssl.SSLCertVerificationError("bad " + SECRET))) == \
+        "URLError: SSLCertVerificationError"
+    assert safe_error(urllib.error.URLError("refused " + SECRET)) == "URLError: unreachable"
+    assert safe_error(UnifiError("x")) == "controller returned an error"
+    assert safe_error(TimeoutError(SECRET)) == "TimeoutError"
+
+
+def test_unifi_ssl_context_reads_shared_settings_live():
+    settings = {}
+    assert unifi_ssl_context(settings).verify_mode == ssl.CERT_REQUIRED
+    settings["unifi_verify_ssl"] = False  # same dict object, changed later
+    ctx = unifi_ssl_context(settings)
+    assert ctx.verify_mode == ssl.CERT_NONE and ctx.check_hostname is False
+
+
+def test_scan_once_files_suggestions_and_records_health():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        calls = []
+        r = runner_for(idb, ok_fetch(calls))
+        assert r.scan_once(now=NOW) is True
+        assert calls == [("https://unifi.local:11443", SECRET, "default", True)]
+        assert f"edge:unifi:{VF2_MAC}" in pending(idb)
+        st = r.status()
+        assert st["last_scan"] == NOW and st["scanning"] is False
+        assert st["sources"]["unifi"] == {"configured": True, "ok": True, "error": None,
+                                          "at": NOW, "counts": {"switches": 1, "clients": 10}}
+        hdb.close()
+
+
+def test_live_ports_come_from_the_last_scan():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        r = runner_for(idb, ok_fetch())
+        usw = idb.get(ids["usw"])
+        assert r.live_ports_for(usw) is None
+        r.scan_once(now=NOW)
+        ports = r.live_ports_for(usw)
+        assert [p["name"] for p in ports][-2:] == ["SFP+ 1", "SFP+ 2"]
+        ports[0]["name"] = "mutated"
+        assert r.live_ports_for(usw)[0]["name"] == "Port 1"
+        eero = idb.get(ids["eero"])
+        assert r.live_ports_for(eero) is None
+        hdb.close()
+
+
+def test_failed_scan_keeps_suggestions_logs_once_and_hides_key(caplog):
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        good = runner_for(idb, ok_fetch())
+        good.scan_once(now=NOW)
+        before = set(pending(idb))
+
+        def boom(url, api_key, site, ctx):
+            raise urllib.error.HTTPError(url, 401, "Unauthorized " + api_key, {}, None)
+        r = runner_for(idb, boom)
+        with caplog.at_level(logging.WARNING):
+            r.scan_once(now=NOW + 900)
+            r.scan_once(now=NOW + 1800)
+        assert set(pending(idb)) == before
+        assert r.status()["sources"]["unifi"]["error"] == "HTTP 401"
+        warnings = [rec.getMessage() for rec in caplog.records if "unifi" in rec.getMessage().lower()]
+        assert len(warnings) == 1 and SECRET not in caplog.text
+        hdb.close()
+
+
+def test_runner_tracks_healthy_streak_for_staleness():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        r = runner_for(idb, ok_fetch())
+        r.scan_once(now=NOW)  # streak starts now: nothing can be stale yet
+        assert "drift:stale:conn:%d" % e["oldnas"] not in pending(idb)
+        r.scan_once(now=NOW + 8 * DAY)  # streak now 8 days old
+        assert "drift:stale:conn:%d" % e["oldnas"] in pending(idb)
+
+        def boom(*a):
+            raise urllib.error.URLError("down")
+        r._fetch_unifi = boom
+        r.scan_once(now=NOW + 9 * DAY)  # outage breaks the streak
+        r._fetch_unifi = ok_fetch()
+        r.scan_once(now=NOW + 20 * DAY)
+        assert r._healthy_since["unifi"] == NOW + 20 * DAY
+        hdb.close()
+
+
+def test_unconfigured_runner_is_idle():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        calls = []
+        r = DiscoveryRunner(fake_auth(), {}, idb, fetch_unifi=ok_fetch(calls))
+        assert r.unifi_configured() is False and r.any_source_configured() is False
+        assert r.request_scan() is False
+        r.scan_once(now=NOW)
+        assert calls == []
+        assert r.status()["sources"]["unifi"]["configured"] is False
+        hdb.close()
+
+
+def test_runner_picks_up_credentials_saved_after_start():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        auth = fake_auth()
+        r = DiscoveryRunner(auth, {}, idb, fetch_unifi=ok_fetch())
+        assert r.unifi_configured() is False
+        auth.data.update(unifi_url="https://unifi.local:11443", unifi_api_key=SECRET)
+        assert r.unifi_configured() is True and r.request_scan() is True
+        hdb.close()
+
+
+def test_background_loop_scans_when_woken():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scanned = threading.Event()
+
+        def fetch(*a):
+            scanned.set()
+            return unifi_device_payload(), unifi_clients_payload()
+        r = runner_for(idb, fetch)
+        r.FIRST_SCAN_DELAY_SECONDS = 3600
+        stop = threading.Event()
+        t = r.start(stop)
+        r.request_scan()
+        assert scanned.wait(5)
+        stop.set()
+        r.request_scan()  # wake the loop so it sees stop
+        t.join(5)
+        assert not t.is_alive()
+        hdb.close()
+
+
+def test_unifi_settings_round_trip_through_auth_json(tmp_path):
+    am = AuthManager(str(tmp_path / "auth.json"))
+    cfg = tmp_path / "hosts.yaml"
+    cfg.write_text("settings: {}\nhosts: []\n")
+    settings = {}
+    code, body = _h_post_settings({"unifi_url": "https://192.168.6.194:11443",
+                                   "unifi_api_key": SECRET, "unifi_site": "default",
+                                   "unifi_verify_ssl": False}, str(cfg), settings, am)
+    assert code == 200
+    assert am.data["unifi_api_key"] == SECRET and am.data["unifi_url"].endswith(":11443")
+    assert "unifi_api_key" not in settings and settings["unifi_verify_ssl"] is False
+    assert SECRET not in cfg.read_text()
+    code, body = _h_get_settings(settings, am)
+    assert body["unifi_api_key"] == SECRET_PLACEHOLDER and body["unifi_site"] == "default"
+    code, _ = _h_post_settings({"unifi_url": "not a url"}, str(cfg), settings, am)
+    assert code == 400

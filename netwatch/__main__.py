@@ -16,6 +16,7 @@ from netwatch.auth import AuthManager
 from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup, write_pre_migration_backup
 from netwatch.hosts import HostManager, IncidentLog, load_yaml
 from netwatch.pollers import NASPoller, ProxmoxPoller, PBSPoller, HAPoller, UPSPoller
+from netwatch.discovery import DiscoveryRunner
 from netwatch.server import start_web_server
 from netwatch.tui import draw_tui
 
@@ -167,6 +168,12 @@ def main():
     # next 15s tick instead of requiring a full restart.
     ups_poller.start(stop_event)
     print(f"[netwatch] UPS poller -> polling NUT every {UPSPoller.POLL_INTERVAL_SECONDS}s")
+
+    discovery_runner = DiscoveryRunner(auth_manager, settings, inventory_db)
+    inventory_db.live_port_provider = discovery_runner.live_ports_for
+    discovery_runner.start(stop_event)
+    print(f"[netwatch] Discovery  -> every {DiscoveryRunner.SCAN_INTERVAL_SECONDS}s"
+          + ("" if discovery_runner.any_source_configured() else " (idle: no source configured)"))
 
     if not args.no_web:
         wt = threading.Thread(
