@@ -545,3 +545,88 @@ def test_name_only_guest_match_gets_its_edge_but_no_props_fill():
     assert edge_key in keys(ch)
     assert keys(ch)[edge_key]["payload"]["child_id"] == 80
     assert not [p for p in ch["props"] if p["id"] == 80]
+
+
+# ── Task 5: reconciler - guests ──────────────────────────────────────────────
+
+def guest_records():
+    return lab_records(pve_known=True) + [
+        rec(71, "Home Assistant OS", "vm", HA_MAC, category="Virtual Machine"),
+        rec(72, "Sun Solaris", "vm", category="Virtual Machine", proxmox_vmid=116),
+        rec(73, "Retired VM", "vm", category="Virtual Machine", proxmox_vmid=999,
+            proxmox_node="pve"),
+    ]
+
+
+def test_known_guests_get_virtual_edges_and_missing_properties():
+    edges = [edge(50, 72, 56, ctype="virtual")]          # Solaris drawn on the wrong node
+    ch = run(pve_obs() + lab_unifi_obs(), guest_records(), edges=edges)
+    k = keys(ch)
+    e = k["edge:proxmox:pve:108"]["payload"]
+    assert (e["child_id"], e["parent_id"], e["connection_type"], e["external_key"]) == (
+        71, 11, "virtual", "proxmox:guest:pve:108")
+    assert e["message"] == "Home Assistant OS runs on HP EliteDesk 800 G3 Mini"
+    d = k["drift:proxmox:pve:116"]["payload"]
+    assert (d["connection_id"], d["current"]["parent_id"], d["proposed"]["parent_id"]) == (
+        50, 56, 11)
+    fills = {p["id"]: p["set"] for p in ch["props"]}
+    assert fills[71] == {"guest_type": "qemu", "proxmox_node": "pve", "proxmox_vmid": 108}
+    assert fills[72] == {"guest_type": "qemu", "proxmox_node": "pve"}
+
+
+def test_unknown_guest_becomes_a_prefilled_vm_device_suggestion():
+    s = keys(run(pve_obs() + lab_unifi_obs(), guest_records()))["device:proxmox:prodesk1:301"]
+    p = s["payload"]
+    assert p["device"] == {
+        "system": "Minecraft", "mac": MC_MAC, "ip": None, "device_type": "vm",
+        "category": "Virtual Machine",
+        "properties": {"hypervisor": "Proxmox", "guest_type": "lxc", "proxmox_node": "prodesk1",
+                       "proxmox_vmid": 301, "vcpu_count": 2, "ram_alloc_gb": 4.0,
+                       "autostart": True}}
+    assert p["edge"] == {"parent_id": 56, "parent_name": "HP Prodesk 405 G6 Mini",
+                         "parent_port": None, "child_port": None,
+                         "connection_type": "virtual", "source": "proxmox",
+                         "external_key": "proxmox:guest:prodesk1:301"}
+    assert p["message"] == "Minecraft (LXC 301 on prodesk1) isn't in inventory"
+
+
+def test_sourced_guest_edge_is_touched_and_a_vanished_guest_goes_stale():
+    edges = [edge(60, 71, 11, ctype="virtual", source="proxmox", last_seen=NOW - DAY,
+                  external_key="proxmox:guest:pve:108"),
+             edge(61, 73, 11, ctype="virtual", source="proxmox", last_seen=NOW - 8 * DAY,
+                  external_key="proxmox:guest:pve:999")]
+    ch = run(pve_obs() + lab_unifi_obs(), guest_records(), edges=edges)
+    assert {"id": 60, "parent_port": None} in ch["touch"]
+    assert "edge:proxmox:pve:108" not in keys(ch)
+    assert keys(ch)["drift:stale:conn:61"]["payload"]["action"] == "remove"
+
+
+def test_migrated_guest_matches_by_mac_and_proposes_the_new_node():
+    records = guest_records() + [rec(74, "forgejo", "vm", FORGEJO_MAC, proxmox_node="pve",
+                                     proxmox_vmid=303)]
+    edges = [edge(62, 74, 11, ctype="virtual", source="proxmox", last_seen=NOW - DAY,
+                  external_key="proxmox:guest:pve:303")]
+    cache = pve_cache()
+    cache[1]["guests"].append({"vmid": 303, "name": "forgejo", "type": "lxc",
+                               "status": "running"})
+    configs = dict(CONFIGS)
+    configs[("prodesk1", 303)] = {"net0": f"name=eth0,hwaddr={FORGEJO_MAC.upper()},type=veth"}
+    ch = run(pve_obs(configs=configs, cache=cache), records, edges=edges,
+             healthy=("proxmox",))
+    d = keys(ch)["drift:proxmox:prodesk1:303"]["payload"]
+    assert (d["connection_id"], d["proposed"]["parent_id"], d["action"]) == (62, 56, "replace")
+    fills = {p["id"]: p["set"] for p in ch["props"]}
+    assert fills[74] == {"guest_type": "lxc"}     # recorded proxmox_node is never overwritten
+
+
+def test_unreadable_guest_config_holds_that_guest_only():
+    configs = {k: v for k, v in CONFIGS.items() if k != ("pve", 108)}
+    edges = [edge(60, 71, 11, ctype="virtual", source="proxmox", last_seen=NOW - 9 * DAY,
+                  external_key="proxmox:guest:pve:108")]
+    pending = pend(("edge:proxmox:pve:108", "proxmox"),
+                   ("device:proxmox:prodesk1:777", "proxmox"))
+    ch = run(pve_obs(configs=configs) + lab_unifi_obs(guests_complete=False),
+             guest_records(), edges=edges, pending=pending)
+    assert ch["resolve"] == ["device:proxmox:prodesk1:777"]
+    assert "drift:stale:conn:60" not in keys(ch)
+    assert "device:proxmox:prodesk1:301" in keys(ch)     # other guests still work
