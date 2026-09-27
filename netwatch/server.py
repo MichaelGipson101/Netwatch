@@ -30,6 +30,8 @@ from netwatch.http_handlers import (
     _h_get_quicklinks, _h_post_quicklinks_create, _h_post_quicklinks_update,
     _h_post_quicklinks_delete, _h_post_quicklinks_move,
     _h_post_maintenance_start, _h_post_maintenance_clear, _h_post_maintenance_quickstart,
+    _h_get_connection_preview, _h_post_connection_quick_add, _h_get_ports,
+    _h_get_suggestions, _h_post_suggestion_dismiss,
 )
 
 
@@ -295,6 +297,18 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_connections(inventory_db))
                 return
+            if self.path.startswith("/api/connections/preview"):
+                if not self._require_auth(): return
+                self._send_json(*_h_get_connection_preview(self.path, inventory_db))
+                return
+            if self.path.startswith("/api/ports/"):
+                if not self._require_auth(): return
+                self._send_json(*_h_get_ports(self.path, inventory_db))
+                return
+            if self.path == "/api/suggestions":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_suggestions(inventory_db))
+                return
             if (self.path.startswith("/api/inventory/") and self.path.endswith("/connections")):
                 if not self._require_auth(): return
                 self._send_json(*_h_get_connections_for_device(self.path, inventory_db))
@@ -414,6 +428,20 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_connection_create(self.path, data, inventory_db))
+                return
+
+            if self.path == "/api/connections":
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_connection_quick_add(data, inventory_db))
+                return
+
+            if self.path.startswith("/api/suggestions/") and self.path.endswith("/dismiss"):
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_suggestion_dismiss(self.path, data, inventory_db))
                 return
 
             if (self.path.startswith("/api/connections/") and self.path.endswith("/delete")):

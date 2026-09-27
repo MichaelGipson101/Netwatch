@@ -610,3 +610,161 @@ def test_live_port_provider_overrides_port_count_and_failures_fall_back():
         ports, _ = idb.ports_for_device(ids["usw"])
         assert len(ports) == 16
         hdb.close()
+
+
+# ── Task 6: HTTP endpoints — preview, quick add, ports, suggestions, status ──
+
+from netwatch.http_handlers import (
+    _h_get_connection_preview, _h_post_connection_quick_add, _h_get_ports,
+    _h_get_suggestions, _h_post_suggestion_dismiss, _h_post_connection_update,
+    build_api_payload,
+)
+
+
+def test_new_handlers_gate_on_migration_and_missing_db():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)  # not migrated
+        assert _h_get_suggestions(idb) == (503, {"error": "migration_pending"})
+        assert _h_post_connection_quick_add({}, idb)[0] == 503
+        assert _h_get_connection_preview("/api/connections/preview?a=1&b=2", idb)[0] == 503
+        assert _h_get_ports("/api/ports/1", idb)[0] == 503
+        assert _h_post_suggestion_dismiss("/api/suggestions/1/dismiss", {}, idb)[0] == 503
+        assert _h_get_suggestions(None)[0] == 500
+        hdb.close()
+
+
+def test_preview_handler_parses_query():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        code, body = _h_get_connection_preview(
+            f"/api/connections/preview?a={ids['usw']}&b={ids['xps']}&type=wifi", idb)
+        assert code == 200 and body["child_id"] == ids["xps"]
+        assert _h_get_connection_preview("/api/connections/preview?a=1", idb)[0] == 400
+        assert _h_get_connection_preview("/api/connections/preview?a=x&b=2", idb)[0] == 400
+        assert _h_get_connection_preview(f"/api/connections/preview?a={ids['usw']}&b=99999", idb)[0] == 404
+        hdb.close()
+
+
+def test_quick_add_handler():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        code, body = _h_post_connection_quick_add(
+            {"a_id": ids["usw"], "b_id": ids["xps"], "parent_port": "8"}, idb)
+        assert code == 200 and body["ok"] and body["warnings"] == ["port_in_use"]
+        code, body = _h_post_connection_quick_add({"a_id": ids["usw"], "b_id": ids["xps"], "parent_port": "zz"}, idb)
+        assert code == 400 and "not a port on" in body["error"]
+        hdb.close()
+
+
+def test_ports_handler():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        code, body = _h_get_ports(f"/api/ports/{ids['usw']}", idb)
+        assert code == 200 and len(body["ports"]) == 16 and body["device_name"].startswith("Ubiquiti")
+        assert _h_get_ports(f"/api/ports/{ids['desktop']}", idb)[1]["ports"] is None
+        assert _h_get_ports("/api/ports/99999", idb)[0] == 404
+        assert _h_get_ports("/api/ports/abc", idb)[0] == 400
+        hdb.close()
+
+
+def test_update_handler_404_and_warnings():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        assert _h_post_connection_update("/api/connections/99999", {"notes": "x"}, idb)[0] == 404
+        code, body = _h_post_connection_update(f"/api/connections/{e['pi4_wifi']}", {"notes": "x"}, idb)
+        assert code == 200 and body == {"ok": True, "warnings": []}
+        hdb.close()
+
+
+def test_suggestions_list_and_dismiss_with_fingerprint():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        code, body = _h_get_suggestions(idb)
+        assert code == 200 and body["total"] == 6 and body["counts"] == {"drift": 6}
+        item = body["items"][0]
+        path = f"/api/suggestions/{item['id']}/dismiss"
+        assert _h_post_suggestion_dismiss(path, {"fingerprint": "stale"}, idb) == (409, {"error": "suggestion_changed"})
+        assert _h_post_suggestion_dismiss(path, {"fingerprint": item["fingerprint"]}, idb) == (200, {"ok": True})
+        assert _h_post_suggestion_dismiss(path, {"fingerprint": item["fingerprint"]}, idb)[0] == 409  # no longer pending
+        assert _h_post_suggestion_dismiss("/api/suggestions/99999/dismiss", {"fingerprint": "x"}, idb)[0] == 404
+        assert _h_post_suggestion_dismiss("/api/suggestions/abc/dismiss", {}, idb)[0] == 400
+        assert _h_get_suggestions(idb)[1]["total"] == 5
+        hdb.close()
+
+
+def test_status_payload_counts_pending_suggestions():
+    class _HM:
+        def list_hosts(self):
+            return []
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        assert build_api_payload(_HM(), {}, None, idb)["suggestions_pending"] == 6
+        assert build_api_payload(_HM(), {})["suggestions_pending"] == 0
+        hdb.close()
+
+
+import threading
+import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+from netwatch.auth import AuthManager
+from netwatch.server import make_handler
+
+
+def _serve_once(idb, auth):
+    handler = make_handler(None, {}, "/dev/null", auth_manager=auth, inventory_db=idb)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=server.handle_request)
+    t.start()
+    return server, server.server_address[1], t
+
+
+def test_quick_add_post_requires_csrf_and_routes_with_it(tmp_path):
+    hdb, idb, ids, e = _lab_ready(str(tmp_path))
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("bob", "password123")  # non-admin is enough
+    cookie = auth.make_session_cookie("bob")
+    body = json.dumps({"a_id": ids["usw"], "b_id": ids["xps"]}).encode()
+
+    server, port, t = _serve_once(idb, auth)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/connections", data=body,
+                                     method="POST", headers={"Cookie": f"nw_session={cookie}"})
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(req)
+        assert exc.value.code == 403
+    finally:
+        server.server_close()
+        t.join()
+
+    server, port, t = _serve_once(idb, auth)
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/connections", data=body, method="POST",
+            headers={"Cookie": f"nw_session={cookie}",
+                     "X-CSRF-Token": auth.csrf_token_for_cookie(cookie),
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            assert json.loads(r.read())["ok"] is True
+    finally:
+        server.server_close()
+        t.join()
+    hdb.close()
+
+
+def test_suggestions_get_routes(tmp_path):
+    hdb, idb, ids, e = _lab_ready(str(tmp_path))
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("bob", "password123")
+    cookie = auth.make_session_cookie("bob")
+    server, port, t = _serve_once(idb, auth)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/suggestions",
+                                     headers={"Cookie": f"nw_session={cookie}"})
+        with urllib.request.urlopen(req) as r:
+            assert json.loads(r.read())["total"] == 6
+    finally:
+        server.server_close()
+        t.join()
+    hdb.close()

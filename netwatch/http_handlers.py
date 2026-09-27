@@ -11,6 +11,7 @@ import time
 import logging
 import yaml
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
 
 from netwatch.storage import InventoryDB
 from netwatch.network import (
@@ -168,6 +169,8 @@ def build_api_payload(host_manager, settings, incident_log=None, inventory_db=No
             for h in hosts
         ],
         "events": events,
+        "suggestions_pending": (inventory_db.suggestions.count_pending()
+                                if getattr(inventory_db, "suggestions", None) else 0),
     }
 
 
@@ -921,6 +924,84 @@ def _h_post_connection_delete(path: str, inventory_db) -> tuple:
     ok, err = inventory_db.delete_connection(conn_id)
     if not ok:
         return 404, {"error": err}
+    return 200, {"ok": True}
+
+
+def _conn_v2_gate(inventory_db):
+    """None when the connections-v2 endpoints may run, else an error tuple."""
+    if not inventory_db:
+        return 500, {"error": "inventory not available"}
+    if not inventory_db.connections_v2_ready():
+        return 503, {"error": "migration_pending"}
+    return None
+
+
+def _h_get_connection_preview(path: str, inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    q = parse_qs(urlparse(path).query)
+    try:
+        a_id, b_id = int(q["a"][0]), int(q["b"][0])
+    except (KeyError, IndexError, ValueError):
+        return 400, {"error": "a and b (device ids) are required"}
+    ctype = (q.get("type") or [None])[0]
+    preview, err = inventory_db.preview_connection(
+        a_id, b_id, inventory_db._normalize_conn_type(ctype) if ctype else None)
+    if err:
+        return (404 if "do not exist" in err else 400), {"error": err}
+    return 200, preview
+
+
+def _h_post_connection_quick_add(body: dict, inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    new_id, warnings, err = inventory_db.quick_add_connection(body or {})
+    if err:
+        return (404 if "do not exist" in err else 400), {"error": err}
+    return 200, {"ok": True, "id": new_id, "warnings": warnings}
+
+
+def _h_get_ports(path: str, inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    try:
+        device_id = int(path.rstrip("/").split("/")[-1])
+    except ValueError:
+        return 400, {"error": "invalid id"}
+    ports, record = inventory_db.ports_for_device(device_id)
+    if record is None:
+        return 404, {"error": "device not found"}
+    return 200, {"device_id": device_id, "device_name": record["system"], "ports": ports}
+
+
+def _h_get_suggestions(inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    items = inventory_db.suggestions.list("pending")
+    counts = {}
+    for it in items:
+        counts[it["kind"]] = counts.get(it["kind"], 0) + 1
+    return 200, {"items": items, "counts": counts, "total": len(items)}
+
+
+def _h_post_suggestion_dismiss(path: str, body: dict, inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    try:
+        sid = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    row = inventory_db.suggestions.get(sid)
+    if row is None:
+        return 404, {"error": "suggestion not found"}
+    if row["status"] != "pending" or (body or {}).get("fingerprint") != row["fingerprint"]:
+        return 409, {"error": "suggestion_changed"}
+    inventory_db.suggestions.set_status(sid, "dismissed")
     return 200, {"ok": True}
 
 
