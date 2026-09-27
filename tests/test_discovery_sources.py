@@ -70,6 +70,68 @@ def test_fresh_nodes_is_none_when_polling_fails():
     assert p.fresh_nodes() is None
 
 
+def test_concurrent_polls_do_not_overlap():
+    """Verify _poll_lock serializes concurrent polls from loop, discovery, and HTTP force-refresh."""
+    import threading
+    import time as time_module
+
+    p = make_poller()
+    state = {"in_flight": 0, "max_in_flight": 0}
+    lock = threading.Lock()
+
+    def fake_fetch_with_concurrency_check(url, user, token_id, token_secret, path):
+        with lock:
+            state["in_flight"] += 1
+            state["max_in_flight"] = max(state["max_in_flight"], state["in_flight"])
+        try:
+            time_module.sleep(0.05)  # Simulate network latency; concurrent polls would spike in_flight
+            if path == "/api2/json/nodes":
+                return [{"node": "pve", "status": "online"}]
+            if path.endswith("/qemu"):
+                return [{"vmid": 108, "name": "haos13.2", "status": "running"}]
+            if path.endswith("/lxc"):
+                return []
+            return {"echo": path}
+        finally:
+            with lock:
+                state["in_flight"] -= 1
+
+    p._fetch = fake_fetch_with_concurrency_check
+
+    # Launch two _poll threads plus one fresh_nodes (which may call _poll if cache stale)
+    results = []
+    def poll_thread():
+        try:
+            p._poll()
+            results.append("poll_ok")
+        except Exception as e:
+            results.append(f"poll_err: {e}")
+
+    def fresh_thread():
+        try:
+            p.fresh_nodes()
+            results.append("fresh_ok")
+        except Exception as e:
+            results.append(f"fresh_err: {e}")
+
+    t1 = threading.Thread(target=poll_thread)
+    t2 = threading.Thread(target=poll_thread)
+    t3 = threading.Thread(target=fresh_thread)
+
+    t1.start()
+    t2.start()
+    t3.start()
+
+    t1.join()
+    t2.join()
+    t3.join()
+
+    # All threads completed successfully
+    assert all("ok" in r for r in results), f"Thread results: {results}"
+    # No concurrent polls were in-flight simultaneously
+    assert state["max_in_flight"] == 1, f"max_in_flight was {state['max_in_flight']}, expected 1"
+
+
 # ── Task 2: Proxmox adapter ──────────────────────────────────────────────────
 
 from netwatch.discovery_proxmox import (

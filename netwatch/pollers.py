@@ -356,6 +356,7 @@ class ProxmoxPoller:
             "nodes": [],
         }
         self._lock = threading.Lock()
+        self._poll_lock = threading.Lock()  # serializes _poll() to prevent discovery/loop race
         self._alert_state = {}    # condition_id -> bool (True = currently alerting)
         self._exemptions = {}     # vmid (int) -> float timestamp (exempt until)
         self._node_history = {}   # node name -> {"cpu": [...], "mem": [...]}
@@ -527,6 +528,10 @@ class ProxmoxPoller:
                     self._clear_alert(cid_pause)
 
     def _poll(self):
+        with self._poll_lock:
+            self._poll_locked()
+
+    def _poll_locked(self):
         url, user, token_id, token_secret = self._get_config()
         if not all([url, user, token_id, token_secret]):
             with self._lock:
