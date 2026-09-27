@@ -583,3 +583,95 @@ def test_auth_ui_only_refetches_connections_on_login_change_or_missing_status():
     out = run_js([(AUTH_JS, "function updateAuthUI")], expr, prelude=prelude)
     assert out[0] == [0, 1, 1, 1, 1, 2]
     assert out[1] == 6   # renderCxStatus() stays unconditional on every call
+
+
+# ── Task 6 fix round 1 (review rulings) ─────────────────────────────────────
+# 1 Important (plan-mandated): the focus guard in cxRenderTableRows swallowed
+# user-initiated renders (Cancel/Save/Swap/type-toggle/ports-loaded), because
+# clicking a button focuses it and that button lives inside .cx-edit-row.
+# Fix: an opts.force escape hatch, passed by every user-initiated call site.
+# Folded minors: diff cxSaveEdit against an editOrig snapshot taken at edit
+# start (not the live connection, which was already stale for the port-name
+# case); stop pendingEdit re-queuing itself forever when the connection never
+# shows up; seed _cxState.lastLoggedIn at mount so the first post-mount
+# updateAuthUI() isn't misread as a login change.
+
+@needs_node
+def test_save_edit_diffs_against_the_edit_start_snapshot_not_the_live_connection():
+    src = js_part(CX_JS, "async function cxSaveEdit")
+    script = (
+        "let postCalls, cancelCalls, _cxState, _conn;\n"
+        "async function cxPost(url, body){ postCalls.push([url, body]); return {ok: true, body: {warnings: []}}; }\n"
+        "function cxFindConnection(id){ return _conn; }\n"
+        "function toast(){}\n"
+        "function cxCancelEdit(){ cancelCalls++; }\n"
+        "function cxRenderTableRows(opts){}\n"
+        "function connectionsChanged(){}\n"
+        + src +
+        "\n"
+        "async function run(draft, orig, conn){\n"
+        "  postCalls = []; cancelCalls = 0; _conn = conn;\n"
+        "  _cxState = {editingConn: 9, editDraft: draft, editOrig: orig};\n"
+        "  await cxSaveEdit(9);\n"
+        "  return {posts: postCalls, cancelled: cancelCalls};\n"
+        "}\n"
+        "(async () => {\n"
+        # (a) "8" stored, mapped to "Port 8" in both draft and orig at edit
+        # start (per cxStartEdit's qaMatchPortOption fixup) - no real change.
+        "  const a = await run(\n"
+        "    {parent_port: 'Port 8', connection_type: 'ethernet', notes: ''},\n"
+        "    {parent_port: 'Port 8', connection_type: 'ethernet', notes: ''},\n"
+        "    {id: 9, parent_port: '8', connection_type: 'ethernet', notes: ''});\n"
+        # (b) orig port never matched a live one ("eth0"); draft is untouched
+        # (still "eth0"); only notes changed - the live connection's port
+        # ('eth0' too here) must not leak a stale parent_port into the body.
+        "  const b = await run(\n"
+        "    {parent_port: 'eth0', connection_type: 'ethernet', notes: 'new note'},\n"
+        "    {parent_port: 'eth0', connection_type: 'ethernet', notes: 'old note'},\n"
+        "    {id: 9, parent_port: 'eth0', connection_type: 'ethernet', notes: 'old note'});\n"
+        # (c) switched to wifi: connection_type changes, but parent_port must
+        # never be sent even though it differs from orig.
+        "  const c = await run(\n"
+        "    {parent_port: 'Port 8', connection_type: 'wifi', notes: ''},\n"
+        "    {parent_port: 'Port 3', connection_type: 'ethernet', notes: ''},\n"
+        "    {id: 9, parent_port: 'Port 3', connection_type: 'ethernet', notes: ''});\n"
+        "  process.stdout.write(JSON.stringify([a, b, c]));\n"
+        "})();"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    a, b, c = json.loads(r.stdout)
+    assert a == {"posts": [], "cancelled": 1}
+    assert b["posts"] == [["/api/connections/9", {"notes": "new note"}]]
+    assert c["posts"] == [["/api/connections/9", {"connection_type": "wifi"}]]
+
+
+@needs_node
+def test_refresh_all_replay_does_not_requeue_a_pending_edit_that_never_appears():
+    # cxStartEdit(id, {fromReplay: true}) must not re-set pendingEdit when the
+    # connection still can't be found - otherwise a pending edit for a
+    # deleted/never-existing id would requeue itself on every refresh forever.
+    prelude = (
+        "global.window = {};\n"
+        "async function cxGetJson(url){ return {}; }\n"
+        "async function qaLoadInventory(){ return []; }\n"
+        "function cxRender(){}\n"
+        "let startEditCalls = [];\n"
+        "function cxStartEdit(id, opts){ startEditCalls.push([id, opts]); }\n"
+        "let _cxState = {mounted: true, seq: 0, refreshing: false, refreshQueued: false,\n"
+        "  status: null, suggestions: null, connections: null, inventory: [], categories: [],\n"
+        "  portMaps: [], error: null, pendingEdit: 42};\n"
+    )
+    expr = (
+        "(async () => {\n"
+        "  await cxRefreshAll();\n"
+        "  return [startEditCalls, _cxState.pendingEdit];\n"
+        "})()"
+    )
+    src = prelude + "\n" + js_part(CX_JS, "async function cxRefreshAll")
+    script = src + f"\n{expr}.then(r => process.stdout.write(JSON.stringify(r)));"
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    calls, pending = json.loads(r.stdout)
+    assert calls == [[42, {"fromReplay": True}]]
+    assert pending is None   # consumed before the replay call, not left dangling

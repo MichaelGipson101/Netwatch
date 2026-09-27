@@ -24,7 +24,7 @@ let _cxState = {
   status: null, suggestions: null, connections: null, inventory: [], categories: [], portMaps: [],
   error: null, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
   filter: 'all', query: '', highlightConn: null,
-  editingConn: null, editDraft: null, editPorts: undefined, editOrigPort: null, pendingEdit: null,
+  editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null,
   drafts: {}, busy: {},
 };
 
@@ -113,7 +113,15 @@ async function cxRefreshAll(){
     if(seq !== _cxState.seq) return;
     _cxState.portMaps = maps.map((m, i) => ({device_id: m.device_id, name: m.name, data: ports[i]}));
     cxRender();
-    if(_cxState.pendingEdit !== null) cxStartEdit(_cxState.pendingEdit);
+    if(_cxState.pendingEdit !== null){
+      // Consume it before replaying: if the connection still isn't there
+      // (e.g. it was deleted elsewhere), the replay must not re-queue itself
+      // forever - cxStartEdit(id) only re-sets pendingEdit for a fresh,
+      // non-replay call.
+      const pending = _cxState.pendingEdit;
+      _cxState.pendingEdit = null;
+      cxStartEdit(pending, {fromReplay: true});
+    }
   } finally {
     _cxState.refreshing = false;
     if(_cxState.refreshQueued){
@@ -130,6 +138,10 @@ function cxRender(){
 
 function mountConnectionsTab(){
   _cxState.mounted = true;
+  // Seed from the current auth state so the first updateAuthUI() call after
+  // mount isn't misread as a login change (mountConnectionsTab already does
+  // its own initial cxRefreshAll() below).
+  if(typeof _authState !== 'undefined') _cxState.lastLoggedIn = _authState.logged_in;
   if(!_cxState.quickMounted){
     renderQuickAdd(document.getElementById('cx-quick'), {onAdded: () => connectionsChanged()});
     _cxState.quickMounted = true;
@@ -390,14 +402,14 @@ function renderCxTable(){
     search.addEventListener('input', () => {
       _cxState.query = search.value;
       _cxState.editingConn = null;
-      cxRenderTableRows();
+      cxRenderTableRows({force: true});
     });
     // Edit-row inputs write straight into the draft, so re-renders keep them.
     const sync = e => {
       const f = e.target.closest('.cx-edit-field');
       if(!f || !_cxState.editDraft) return;
       _cxState.editDraft[f.dataset.field] = f.value;
-      if(f.dataset.field === 'connection_type' && e.type === 'change') cxRenderTableRows();
+      if(f.dataset.field === 'connection_type' && e.type === 'change') cxRenderTableRows({force: true});
     };
     el.addEventListener('input', sync);
     el.addEventListener('change', sync);
@@ -405,7 +417,7 @@ function renderCxTable(){
   cxRenderTableRows();
 }
 
-function cxRenderTableRows(){
+function cxRenderTableRows(opts){
   const el = document.getElementById('cx-table');
   if(!el || !el.querySelector('tbody')) return;
   const conns = (_cxState.connections && _cxState.connections.items) || [];
@@ -419,9 +431,13 @@ function cxRenderTableRows(){
   const search = el.querySelector('.cx-search');
   if(search.value !== _cxState.query) search.value = _cxState.query;
   // Don't rebuild the rows under the user's cursor mid-typing; the draft
-  // keeps the values either way, this just keeps focus.
+  // keeps the values either way, this just keeps focus. Skipped entirely for
+  // a forced (user-initiated) render: clicking Cancel/Save/Swap focuses the
+  // button that triggered it, which lives inside .cx-edit-row, so an
+  // unconditional guard here would swallow the very render that action needs.
+  const force = !!(opts && opts.force);
   const active = document.activeElement;
-  if(active && active.closest && active.closest('.cx-edit-row') && el.contains(active)) return;
+  if(!force && active && active.closest && active.closest('.cx-edit-row') && el.contains(active)) return;
   const rows = cxFilterConnections(conns, _cxState.filter, _cxState.query, driftIds);
   const now = Math.floor(Date.now() / 1000);
   el.querySelector('tbody').innerHTML = rows.map(c => _cxState.editingConn === c.id
@@ -446,44 +462,54 @@ function cxRenderTableRows(){
 function cxSetFilter(f){
   _cxState.filter = f;
   _cxState.editingConn = null;
-  cxRenderTableRows();
+  cxRenderTableRows({force: true});
 }
 
-async function cxStartEdit(id){
+async function cxStartEdit(id, opts){
   const c = cxFindConnection(id);
-  if(!c){ _cxState.pendingEdit = id; return; }   // applied after the next refresh
+  if(!c){
+    // Not loaded yet (e.g. right after cxHighlightConnection triggers a
+    // refresh): try again once fresh data lands. A replay call that still
+    // can't find it must not re-queue itself forever.
+    if(!(opts && opts.fromReplay)) _cxState.pendingEdit = id;
+    return;
+  }
   _cxState.pendingEdit = null;
   _cxState.editingConn = id;
   _cxState.editDraft = {parent_port: c.parent_port || '', connection_type: c.connection_type || 'ethernet',
                         notes: c.notes || ''};
-  _cxState.editOrigPort = c.parent_port || '';
+  _cxState.editOrig = {parent_port: _cxState.editDraft.parent_port, connection_type: _cxState.editDraft.connection_type,
+                       notes: _cxState.editDraft.notes};
   _cxState.editPorts = undefined;
-  cxRenderTableRows();
+  cxRenderTableRows({force: true});
   const body = await cxGetJson('/api/ports/' + c.parent_id);
   if(_cxState.editingConn !== id) return;
   _cxState.editPorts = body && !body.migrationPending ? body.ports : null;
   const match = qaMatchPortOption(qaPortOptions(_cxState.editPorts), _cxState.editDraft.parent_port);
   if(match){   // "8" stored, "Port 8" live: same port, not a change
     _cxState.editDraft.parent_port = match;
-    _cxState.editOrigPort = match;
+    _cxState.editOrig.parent_port = match;
   }
-  cxRenderTableRows();
+  cxRenderTableRows({force: true});
 }
 
 function cxCancelEdit(){
   _cxState.editingConn = null;
   _cxState.editDraft = null;
-  cxRenderTableRows();
+  _cxState.editOrig = null;
+  _cxState.pendingEdit = null;
+  cxRenderTableRows({force: true});
 }
 
 async function cxSaveEdit(id){
   const c = cxFindConnection(id);
   const d = _cxState.editDraft;
-  if(!c || !d) return;
+  const orig = _cxState.editOrig;
+  if(!c || !d || !orig) return;
   const body = {};
-  if(d.connection_type !== c.connection_type) body.connection_type = d.connection_type;
-  if(d.connection_type !== 'wifi' && (d.parent_port || '') !== (_cxState.editOrigPort || '')) body.parent_port = d.parent_port;
-  if((d.notes || '') !== (c.notes || '')) body.notes = d.notes;
+  if(d.connection_type !== orig.connection_type) body.connection_type = d.connection_type;
+  if(d.connection_type !== 'wifi' && (d.parent_port || '') !== (orig.parent_port || '')) body.parent_port = d.parent_port;
+  if((d.notes || '') !== (orig.notes || '')) body.notes = d.notes;
   if(!Object.keys(body).length){ cxCancelEdit(); return; }
   const out = await cxPost('/api/connections/' + id, body);
   if(!out.ok){ toast('Could not save: ' + out.error, 'error'); return; }
@@ -493,6 +519,8 @@ async function cxSaveEdit(id){
   else toast('Connection saved', 'success');
   _cxState.editingConn = null;
   _cxState.editDraft = null;
+  _cxState.editOrig = null;
+  cxRenderTableRows({force: true});   // close the row now; connectionsChanged()'s refresh is unforced
   connectionsChanged();
 }
 
@@ -502,6 +530,8 @@ async function cxSwapConnection(id){
   toast('Direction swapped', 'success');
   _cxState.editingConn = null;
   _cxState.editDraft = null;
+  _cxState.editOrig = null;
+  cxRenderTableRows({force: true});   // close the row now; connectionsChanged()'s refresh is unforced
   connectionsChanged();
 }
 
@@ -521,5 +551,5 @@ function cxHighlightConnection(id, opts){
   _cxState.query = '';
   _cxState.highlightConn = id;
   if(opts && opts.edit) cxStartEdit(id);
-  else cxRenderTableRows();
+  else cxRenderTableRows({force: true});
 }
