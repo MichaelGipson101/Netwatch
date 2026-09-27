@@ -1244,3 +1244,63 @@ def test_accept_routes_require_csrf_and_route_correctly(tmp_path):
     finally:
         server.server_close(); t.join()
     hdb.close()
+
+
+# ── Final-review fix wave ───────────────────────────────────────────────────
+
+def suggestion_status(idb, key):
+    with idb.lock:
+        row = idb.conn.execute(
+            "SELECT status FROM connection_suggestions WHERE subject_key = ?", (key,)).fetchone()
+    return row and row[0]
+
+
+def scan_clients(idb, clients, now):
+    """scan() against a modified clients payload (a list of _sta rows)."""
+    snap = parse_unifi(unifi_device_payload(), {"data": clients})
+    changes = reconcile(unifi_observations(snap), records=idb.list_all(),
+                        edges=idb.list_all_connections(), pending=idb.suggestions.list(),
+                        healthy_sources={"unifi"}, now=now,
+                        live_ports_for=idb.live_port_provider,
+                        healthy_since={"unifi": NOW - 30 * DAY})
+    idb.apply_discovery_changes(changes, now)
+    return changes
+
+
+def clients_without_port(port):
+    return [c for c in unifi_clients_payload()["data"] if c["sw_port"] != port]
+
+
+# C1: an accepted suggestion comes back when its subject is observed again
+# after the accept (e.g. the accepted edge was deleted by hand).
+
+def test_final_c1a_accepted_edge_reopens_after_edge_deleted():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        key = f"edge:unifi:{VF2_MAC}"
+        ok, err, res = accept(idb, key)
+        assert ok
+        assert idb.delete_connection(res["connection_id"])
+        scan(idb, NOW + 60)
+        assert suggestion_status(idb, key) == "pending"
+        hdb.close()
+
+
+def test_final_c1b_scan_started_before_accept_keeps_it_accepted():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        key = f"edge:unifi:{VF2_MAC}"
+        # A scan that read its inputs before the accept...
+        changes = reconcile(unifi_observations(snapshot()), records=idb.list_all(),
+                            edges=idb.list_all_connections(), pending=idb.suggestions.list(),
+                            healthy_sources={"unifi"}, now=NOW,
+                            live_ports_for=idb.live_port_provider,
+                            healthy_since={"unifi": NOW - 30 * DAY})
+        assert key in {u["subject_key"] for u in changes["upserts"]}
+        assert accept(idb, key)[0]  # decided_at = NOW + 1
+        # ...and applies after it must not reopen it.
+        idb.apply_discovery_changes(changes, NOW)
+        assert suggestion_status(idb, key) == "accepted"
+        hdb.close()

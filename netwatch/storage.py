@@ -1810,7 +1810,7 @@ class SuggestionsDB:
 
     def upsert_locked(self, kind, source, subject_key, payload, fp, now):
         row = self.conn.execute(
-            "SELECT id, status, fingerprint FROM connection_suggestions "
+            "SELECT id, status, fingerprint, decided_at FROM connection_suggestions "
             "WHERE subject_key = ?", (subject_key,)).fetchone()
         blob = json.dumps(payload, sort_keys=True)
         if row is None:
@@ -1820,9 +1820,14 @@ class SuggestionsDB:
                 "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
                 (kind, source, subject_key, blob, fp, now, now))
             return cur.lastrowid
-        sid, status, old_fp = row
-        if status in ("dismissed", "accepted") and old_fp == fp:
-            # The user already decided on exactly this proposal.
+        sid, status, old_fp, decided_at = row
+        # Only a dismissal is sticky at an unchanged fingerprint (spec §1.7).
+        # An accepted proposal that is observed again means its result went
+        # away (e.g. the edge was deleted), so it reopens - unless this scan
+        # read its inputs before the accept (decided_at >= now), in which
+        # case the observation predates the accept and proves nothing.
+        if old_fp == fp and (status == "dismissed" or (
+                status == "accepted" and (decided_at or 0) >= now)):
             self.conn.execute(
                 "UPDATE connection_suggestions SET last_seen = ? WHERE id = ?",
                 (now, sid))
