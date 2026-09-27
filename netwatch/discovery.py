@@ -119,7 +119,8 @@ def unifi_observations(snapshot, guest_macs=None):
         port = next((p["name"] for p in sw["ports"] if p["idx"] == idx), str(idx))
         if guest_macs is None and any(is_likely_guest_mac(c["mac"]) for c in clients):
             obs.append({"type": "held", "source": "unifi",
-                        "macs": sorted(c["mac"] for c in clients)})
+                        "macs": sorted(c["mac"] for c in clients),
+                        "switch_mac": sw_mac, "port": port})
             continue
         remaining = [c for c in clients if c["mac"] not in (guest_macs or ())]
         if len(remaining) == 1:
@@ -137,11 +138,14 @@ def unifi_observations(snapshot, guest_macs=None):
                         "port": port, "macs": sorted(c["mac"] for c in remaining)})
     for sw in snapshot["switches"]:
         for n in sw["lldp"]:
+            is_uplink = next((p["is_uplink"] for p in sw["ports"]
+                              if p["idx"] == n["local_port_idx"]), False)
             obs.append({
                 "type": "lldp", "source": "unifi", "switch_mac": sw["mac"],
                 "port": n["local_port_name"] or str(n["local_port_idx"]),
                 "chassis_mac": n["chassis_mac"], "mgmt_ips": n["mgmt_ips"],
                 "remote_port": n["remote_port"],
+                "is_uplink": is_uplink, "local_port_idx": n["local_port_idx"],
             })
     return obs
 
@@ -166,12 +170,12 @@ def _index_records(records):
 
 
 def reconcile(observations, *, records, edges, pending, healthy_sources, now,
-              live_ports_for=None):
+              live_ports_for=None, healthy_since=None):
     """Pure: decide what one scan means. See spec §2.5 for the rules."""
     if not healthy_sources:
         return {"upserts": [], "resolve": [], "touch": []}
     by_id, by_mac, by_ip = _index_records(records)
-    upserts, touch, held_macs = {}, {}, set()
+    upserts, touch, held_macs, held_ports = {}, {}, set(), set()
 
     def suggest(kind, source, key, payload, fp_basis):
         upserts[key] = {"kind": kind, "source": source, "subject_key": key,
@@ -186,6 +190,18 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
     def links_from(child_id):
         return [e for e in edges if e["from_device_id"] == child_id
                 and e["connection_type"] in NETWORK_LINK_TYPES]
+
+    def child_is_held(rec):
+        if rec is None:
+            return False
+        macs = [rec.get("mac")] + list((rec.get("properties") or {}).get("mac_aliases") or [])
+        return any(_norm_mac(m) in held_macs for m in macs)
+
+    def lldp_orientation(switch, neighbour, is_uplink):
+        child, parent, ambiguous = orient_edge(switch, neighbour)
+        if ambiguous:
+            return (switch, neighbour) if is_uplink else (neighbour, switch)
+        return child, parent
 
     def observe_edge(child, parent, parent_port, child_port, subject_mac, ext_key,
                      ctype, source):
@@ -229,12 +245,57 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             "message": f"Your graph: {child['system']} → {cur_desc}. {label} sees: {new_desc}",
         }, [current["id"], parent["id"], pport, ctype])
 
+    # F2(a): a neighbour already wired via the client path (a wired-client
+    # `edge` observation resolving to the same inventory record) is never
+    # also processed via LLDP - precomputed so order doesn't matter.
+    client_edge_child_ids = set()
+    for o in observations:
+        if o["source"] in healthy_sources and o["type"] == "edge":
+            child = by_mac.get(o["child"]["mac"])
+            if child is not None:
+                client_edge_child_ids.add(child["id"])
+
+    # F2(b): when more than one LLDP neighbour would make a switch its
+    # child, keep exactly one (uplink first, then lowest local port index,
+    # then lowest port name) - independent of lldp_table order.
+    lldp_parent_candidates = {}
+    for o in observations:
+        if o["source"] not in healthy_sources or o["type"] != "lldp":
+            continue
+        switch = by_mac.get(o["switch_mac"])
+        if switch is None:
+            continue
+        neighbour = by_mac.get(o["chassis_mac"])
+        if neighbour is None:
+            for ip in o["mgmt_ips"]:
+                if ip in by_ip:
+                    neighbour = by_ip[ip]
+                    break
+        if (neighbour is None or neighbour["id"] == switch["id"]
+                or neighbour["id"] in client_edge_child_ids):
+            continue
+        child, _parent = lldp_orientation(switch, neighbour, o["is_uplink"])
+        if child is switch:
+            lldp_parent_candidates.setdefault(switch["id"], []).append(o)
+    lldp_winner = {}
+    for switch_id, candidates in lldp_parent_candidates.items():
+        candidates.sort(key=lambda o: (
+            not o["is_uplink"],
+            o["local_port_idx"] if o["local_port_idx"] is not None else float("inf"),
+            o["port"]))
+        lldp_winner[switch_id] = candidates[0]
+
     for o in observations:
         if o["source"] not in healthy_sources:
             continue
         t = o["type"]
         if t == "held":
             held_macs.update(o["macs"])
+            switch = by_mac.get(o.get("switch_mac"))
+            port_name = o.get("port")
+            if port_name is not None:
+                held_ports.add((o["switch_mac"],
+                                port_key(port_name, ports_of(switch) if switch else None)))
         elif t == "edge":
             parent = by_mac.get(o["parent"]["mac"])
             if parent is None:
@@ -306,8 +367,12 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                 }, [o["chassis_mac"], neighbour["id"] if neighbour else None])
             if neighbour is None or neighbour["id"] == switch["id"]:
                 continue
+            if neighbour["id"] in client_edge_child_ids:
+                continue
+            child, _parent = lldp_orientation(switch, neighbour, o["is_uplink"])
+            if child is switch and lldp_winner.get(switch["id"]) is not o:
+                continue
             ext = f"unifi:lldp:{o['switch_mac']}:{o['port']}"
-            child, _parent, _ambiguous = orient_edge(switch, neighbour)
             if child is switch:
                 observe_edge(switch, neighbour, o["remote_port"], o["port"],
                              o["switch_mac"], ext, "ethernet", o["source"])
@@ -319,7 +384,10 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
         if (e.get("source") not in healthy_sources or e["id"] in touch):
             continue
         child = by_id.get(e["from_device_id"])
-        if child is None or _norm_mac(child.get("mac")) in held_macs:
+        if child is None or child_is_held(child):
+            continue
+        streak_start = (healthy_since or {}).get(e.get("source"))
+        if streak_start is None or streak_start > now - STALE_AFTER_SECONDS:
             continue
         seen = e.get("last_seen") or e.get("updated_at") or 0
         if seen >= now - STALE_AFTER_SECONDS:
@@ -338,6 +406,9 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
 
     held_keys = {f"{kind}:{src}:{m}" for m in held_macs for src in healthy_sources
                  for kind in ("edge", "device", "drift")}
+    held_keys |= {f"shared_port:{switch_mac}:{port}" for switch_mac, port in held_ports}
+    held_keys |= {f"drift:stale:conn:{e['id']}" for e in edges
+                  if child_is_held(by_id.get(e["from_device_id"]))}
     resolve = [s["subject_key"] for s in pending
                if s["source"] in healthy_sources and s["subject_key"] not in upserts
                and s["subject_key"] not in held_keys]

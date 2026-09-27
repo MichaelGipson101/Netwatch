@@ -294,12 +294,13 @@ def live_for(records_by_mac=USW_MAC):
     return lambda r: [dict(p) for p in ports] if r.get("mac") == records_by_mac else None
 
 
-def run(records=None, edges=None, pending=(), healthy=("unifi",), guest_macs=None):
+def run(records=None, edges=None, pending=(), healthy=("unifi",), guest_macs=None,
+        healthy_since={"unifi": NOW - 30 * DAY}):
     return reconcile(unifi_observations(snapshot(), guest_macs),
                      records=records if records is not None else lab_records(),
                      edges=edges if edges is not None else lab_edges(),
                      pending=list(pending), healthy_sources=set(healthy), now=NOW,
-                     live_ports_for=live_for())
+                     live_ports_for=live_for(), healthy_since=healthy_since)
 
 
 def by_key(changes):
@@ -423,3 +424,153 @@ def test_reconcile_ignores_switch_missing_from_inventory():
     records = [r for r in lab_records() if r["id"] != 1]
     edges = [e for e in lab_edges() if 1 not in (e["from_device_id"], e["to_device_id"])]
     assert run(records=records, edges=edges)["upserts"] == []
+
+
+# ── Task 3 fix round 1: F1 held ports/aliases, F2 LLDP dedup + ordering, ────
+# ── F3 healthy-streak staleness ─────────────────────────────────────────────
+
+def test_reconcile_held_port_and_stale_key_are_protected_from_resolution():
+    """F1: a pending shared_port suggestion for a now-held port, and a pending
+    stale-drift suggestion whose child is a held MAC, must not be resolved
+    just because this scan didn't reproduce them."""
+    records = lab_records() + [rec(7, "Minecraft", "vm", GUEST_MC)]
+    edges = lab_edges() + [edge(15, 7, 1, to_port="Port 8", source="unifi",
+                                last_seen=NOW - 30 * DAY)]
+    pending = [
+        {"subject_key": f"shared_port:{USW_MAC}:Port 8", "source": "unifi"},  # port 8 is held
+        {"subject_key": "drift:stale:conn:15", "source": "unifi"},           # child is held
+    ]
+    assert run(records=records, edges=edges, pending=pending)["resolve"] == []
+
+
+def test_reconcile_stale_respects_held_mac_only_present_as_alias():
+    """F1: a child counts as held via properties.mac_aliases too, not just its
+    primary mac."""
+    records = lab_records() + [rec(8, "Aliased NAS", "host", "aa:aa:aa:aa:aa:aa",
+                                    mac_aliases=[GUEST_MC])]
+    edges = lab_edges() + [edge(16, 8, 1, to_port="Port 6", source="unifi",
+                                last_seen=NOW - 30 * DAY)]
+    assert "drift:stale:conn:16" not in by_key(run(records=records, edges=edges))
+
+
+AP_IFACE_MAC, AP_CHASSIS_MAC = "10:11:22:33:44:01", "10:11:22:33:44:02"
+
+
+def ap_dual_path_snapshot():
+    """An AP wired to USW Port 3 (interface mac, client path) that is also
+    the LLDP neighbour on that same port under a different (chassis) mac."""
+    devices = {"data": [
+        {"type": "usw", "mac": USW_MAC.upper(), "name": "USW Pro Max 16 PoE",
+         "ip": "192.168.6.2",
+         "port_table": [{"port_idx": 3, "name": "Port 3", "up": True, "speed": 1000,
+                         "poe_enable": True, "is_uplink": False}],
+         "lldp_table": [{"chassis_id": AP_CHASSIS_MAC, "local_port_idx": 3,
+                         "local_port_name": "Port 3", "port_id": "1"}]},
+    ]}
+    clients = {"data": [_sta(AP_IFACE_MAC, 3, "Lobby AP", "192.168.6.50")]}
+    return parse_unifi(devices, clients)
+
+
+def test_reconcile_lldp_skips_neighbour_already_covered_by_client_path():
+    """F2(a): the client path already covers this physical link (same
+    inventory record, matched by alias) - the LLDP path must not duplicate
+    it with a second suggestion keyed off the chassis mac."""
+    records = [
+        rec(1, "USW Pro Max 16 PoE", "network", USW_MAC, network_role="switch"),
+        rec(2, "Lobby AP", "network", AP_IFACE_MAC, network_role="ap",
+            mac_aliases=[AP_CHASSIS_MAC]),
+    ]
+    obs = unifi_observations(ap_dual_path_snapshot())
+    ch = by_key(reconcile(obs, records=records, edges=[], pending=[],
+                          healthy_sources={"unifi"}, now=NOW))
+    assert f"edge:unifi:{AP_IFACE_MAC}" in ch
+    assert f"edge:unifi:{AP_CHASSIS_MAC}" not in ch
+    assert f"drift:unifi:{AP_CHASSIS_MAC}" not in ch
+    assert f"identity:lldp:{AP_CHASSIS_MAC}" not in ch
+
+
+SWITCH2_MAC = "10:30:30:30:30:02"
+
+
+def two_equal_switches_snapshot():
+    """Two equal-role (network_role='switch') devices linked by LLDP on a
+    non-uplink USW port."""
+    devices = {"data": [
+        {"type": "usw", "mac": USW_MAC.upper(), "name": "USW Pro Max 16 PoE",
+         "ip": "192.168.6.2",
+         "port_table": [{"port_idx": 5, "name": "Port 5", "up": True, "speed": 1000,
+                         "poe_enable": True, "is_uplink": False}],
+         "lldp_table": [{"chassis_id": SWITCH2_MAC, "local_port_idx": 5,
+                         "local_port_name": "Port 5", "port_id": "1"}]},
+    ]}
+    return parse_unifi(devices, {"data": []})
+
+
+def test_reconcile_lldp_equal_role_switches_use_uplink_tiebreak():
+    """F2(b): ambiguous orientation (switch vs switch) on a non-uplink port
+    resolves to the neighbour being the child, not USW's parent."""
+    records = [
+        rec(1, "USW Pro Max 16 PoE", "network", USW_MAC, network_role="switch"),
+        rec(2, "Downstream switch", "network", SWITCH2_MAC, network_role="switch"),
+    ]
+    obs = unifi_observations(two_equal_switches_snapshot())
+    ch = by_key(reconcile(obs, records=records, edges=[], pending=[],
+                          healthy_sources={"unifi"}, now=NOW))
+    assert f"edge:unifi:{SWITCH2_MAC}" in ch
+    assert f"edge:unifi:{USW_MAC}" not in ch and f"drift:unifi:{USW_MAC}" not in ch
+
+
+GW1_MAC, GW2_MAC = "10:40:40:40:40:01", "10:40:40:40:40:02"
+
+
+def two_parent_candidates_snapshot(reverse=False):
+    """USW has two LLDP neighbours that would each become its parent: a
+    gateway on the uplink port (13) and another gateway-role device on a
+    non-uplink port (6). The uplink one must always win, regardless of
+    lldp_table order."""
+    port_table = [
+        {"port_idx": 6, "name": "Port 6", "up": True, "speed": 1000,
+         "poe_enable": True, "is_uplink": False},
+        {"port_idx": 13, "name": "Port 13", "up": True, "speed": 2500,
+         "poe_enable": False, "is_uplink": True},
+    ]
+    lldp_table = [
+        {"chassis_id": GW1_MAC, "local_port_idx": 13, "local_port_name": "Port 13",
+         "port_id": "1"},
+        {"chassis_id": GW2_MAC, "local_port_idx": 6, "local_port_name": "Port 6",
+         "port_id": "1"},
+    ]
+    if reverse:
+        lldp_table = list(reversed(lldp_table))
+    devices = {"data": [
+        {"type": "usw", "mac": USW_MAC.upper(), "name": "USW Pro Max 16 PoE",
+         "ip": "192.168.6.2", "port_table": port_table, "lldp_table": lldp_table},
+    ]}
+    return parse_unifi(devices, {"data": []})
+
+
+def test_reconcile_lldp_multi_parent_candidates_prefer_uplink_regardless_of_order():
+    records = [
+        rec(1, "USW Pro Max 16 PoE", "network", USW_MAC, network_role="switch"),
+        rec(2, "Gateway1", "network", GW1_MAC, network_role="gateway"),
+        rec(3, "Gateway2", "network", GW2_MAC, network_role="gateway"),
+    ]
+    results = {}
+    for reverse in (False, True):
+        obs = unifi_observations(two_parent_candidates_snapshot(reverse=reverse))
+        results[reverse] = by_key(reconcile(obs, records=records, edges=[], pending=[],
+                                            healthy_sources={"unifi"}, now=NOW))
+    forward, backward = results[False], results[True]
+    assert set(forward) == set(backward)
+    assert all(forward[k]["fp"] == backward[k]["fp"] for k in forward)
+    assert f"edge:unifi:{USW_MAC}" in forward
+    assert forward[f"edge:unifi:{USW_MAC}"]["payload"]["parent_id"] == 2
+    assert f"edge:unifi:{GW2_MAC}" not in forward and f"drift:unifi:{GW2_MAC}" not in forward
+
+
+def test_reconcile_stale_needs_a_full_week_of_healthy_streak():
+    """F3: staleness is measured only across healthy time - a source whose
+    current healthy streak is under 7 days (or unknown) never flags stale
+    edges, even if last_seen itself is more than 7 days old."""
+    assert "drift:stale:conn:12" not in by_key(run(healthy_since={"unifi": NOW - DAY}))
+    assert "drift:stale:conn:12" not in by_key(run(healthy_since=None))
