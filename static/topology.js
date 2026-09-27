@@ -110,11 +110,13 @@ function topoBuildForest(nodes, edges, prefs){
     sizeSeen[it.id] = true;
     return 1 + it.kids.reduce((acc, c) => acc + size(c), 0);
   }
-  const seen = {}, visible = [], info = {};
-  function countHidden(it){
+  // anchor: hidden id -> the collapsed, visible ancestor it's folded into.
+  const seen = {}, visible = [], info = {}, anchor = {};
+  function countHidden(it, into){
     if(seen[it.id]) return 0;
     seen[it.id] = true;
-    return 1 + it.kids.reduce((acc, c) => acc + countHidden(c), 0);
+    anchor[it.id] = into;
+    return 1 + it.kids.reduce((acc, c) => acc + countHidden(c, into), 0);
   }
   function build(it){
     seen[it.id] = true;
@@ -123,9 +125,9 @@ function topoBuildForest(nodes, edges, prefs){
     const guests = kids.filter(c => primaryType[c.id] === 'virtual').length;
     const collapsed = kids.length > 0 && topoIsCollapsed(it.id, guests, prefs);
     const out = {id: it.id, children: []};
-    const meta = {collapsible: kids.length > 0, collapsed: collapsed, hidden: 0,
+    const meta = {collapsible: kids.length > 0, collapsed: collapsed, hidden: 0, kids: kids.length,
                   guestPill: kids.length > 0 && guests === kids.length};
-    if(collapsed) kids.forEach(c => { meta.hidden += countHidden(c); });
+    if(collapsed) kids.forEach(c => { meta.hidden += countHidden(c, it.id); });
     else out.children = kids.map(build);
     info[it.id] = meta;
     return out;
@@ -156,7 +158,30 @@ function topoBuildForest(nodes, edges, prefs){
   const trees = roots.map(build);
   // Anything unreachable (a cycle in bad data) becomes its own root.
   nodes.forEach(n => { if(!seen[n.id]) trees.push(build(items[n.id])); });
-  return {trees: trees, visible: visible, info: info};
+  return {trees: trees, visible: visible, info: info, anchor: anchor};
+}
+
+// Tree layout: a ghost whose end is folded into a collapsed subtree is drawn
+// to that collapsed node instead of vanishing (real_* keep the true ends for
+// the tooltip). A ghost folded entirely into one node isn't drawn.
+function topoAnchorGhosts(ghosts, forest){
+  const vis = new Set(forest.visible);
+  const at = id => vis.has(id) ? id : forest.anchor[id];
+  const out = [];
+  (ghosts || []).forEach(g => {
+    const s = at(g.source), t = at(g.target);
+    if(s === undefined || t === undefined || s === t) return;
+    if(s === g.source && t === g.target){ out.push(g); return; }
+    out.push(Object.assign({}, g, {source: s, target: t, real_source: g.source, real_target: g.target}));
+  });
+  return out;
+}
+
+// "+N guests" counts only the guests themselves (anything under them is
+// still hidden, but isn't a guest); a mixed subtree counts everything hidden.
+function topoPillLabel(meta){
+  if(!meta || !meta.collapsed || !(meta.hidden > 0)) return '';
+  return meta.guestPill ? '+' + meta.kids + (meta.kids === 1 ? ' guest' : ' guests') : '+' + meta.hidden;
 }
 
 function topoTreePositions(trees, orient){
@@ -323,13 +348,14 @@ function renderTopologyWeb(){
     return;
   }
   _topoUserAdjusted = false;
-  let nodes = scene.nodes, forest = null;
+  let nodes = scene.nodes, forest = null, ghosts = scene.ghosts;
   if(_topoLayout === 'tree'){
     forest = topoBuildForest(nodes, scene.edges, topoLoadCollapsed());
     const vis = new Set(forest.visible);
     nodes = nodes.filter(n => vis.has(n.id));   // collapsed subtrees aren't drawn
+    ghosts = topoAnchorGhosts(ghosts, forest);
   }
-  const ctx = _topoBuildScene(container, nodes, scene.edges, scene.ghosts);
+  const ctx = _topoBuildScene(container, nodes, scene.edges, ghosts);
   ctx.forest = forest;
   if(forest) _layoutTree(ctx); else _layoutForce(ctx);
   _topoLastStatus = {};
@@ -754,8 +780,8 @@ function _topoAddCollapseControls(ctx){
       .on('click', ev => { ev.stopPropagation(); topologyToggleCollapse(d.id, !f.collapsed); });
     btn.append('circle').attr('r', 9);
     btn.append('text').attr('dy', '0.35em').text(f.collapsed ? '⊞' : '⊟');
-    if(f.collapsed && f.hidden > 0){
-      const label = '+' + f.hidden + (f.guestPill ? ' guests' : '');
+    const label = topoPillLabel(f);
+    if(label){
       const pill = sel.append('g')
         .attr('class', 'topo-hidden-pill')
         .attr('transform', 'translate(0,' + (r + 34) + ')')
@@ -924,15 +950,26 @@ function topologyToggleGhosts(on){
 
 function topologyOpenSuggestion(id){
   if(_topoFullscreen) exitTopologyFullscreen();
-  setTab('connections');
+  // cxHighlightSuggestion switches tab itself, capturing the refresh seq
+  // first - switching here too would just fire a second refresh.
   if(typeof cxHighlightSuggestion === 'function') cxHighlightSuggestion(id);
+  else setTab('connections');
 }
 
 function buildGhostTip(g){
   const src = (typeof CX_SOURCE_LABELS !== 'undefined' && CX_SOURCE_LABELS[g.origin]) || g.origin || '';
+  // Re-anchored onto a collapsed node: name the real (hidden) ends.
+  const nameOf = (id, fallback) => {
+    if(id === undefined) return fallback.name;
+    const n = ((_topoData && _topoData.nodes) || []).find(x => x.id === id);
+    return n ? n.name : fallback.name;
+  };
   let html = '<div class="topo-tip-edge-type">Suggested' + (src ? ' by ' + escapeHtml(src) : '') + '</div>'
-    + '<div class="topo-tip-name">' + escapeHtml(g.source.name) + ' <span class="topo-tip-arrow">→</span> '
-    + escapeHtml(g.target.name) + '</div>';
+    + '<div class="topo-tip-name">' + escapeHtml(nameOf(g.real_source, g.source)) + ' <span class="topo-tip-arrow">→</span> '
+    + escapeHtml(nameOf(g.real_target, g.target)) + '</div>';
+  if(g.real_source !== undefined || g.real_target !== undefined){
+    html += '<div class="topo-tip-meta">inside a collapsed group</div>';
+  }
   if(g.parent_port) html += '<div class="topo-tip-meta">port ' + escapeHtml(g.parent_port) + '</div>';
   return html + '<div class="topo-tip-meta">Tap to review in Connections</div>';
 }

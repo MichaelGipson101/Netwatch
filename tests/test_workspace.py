@@ -813,7 +813,7 @@ def test_port_tiles():
              " {name: '3', up: null, occupants: []}]")
     out = run_js(TILE_PARTS, f"{ports}.map(cxPortTile)")
     assert out[0] == {"name": "Port 7", "state": "occupied", "link": "up", "label": "Pi",
-                      "title": "Port 7 · link up · 1 Gbps · PoE · Pi", "conn_id": 4}
+                      "title": "Port 7 · link up · 1 Gbps · PoE · Pi", "conn_id": 4, "uplink": False}
     assert out[1]["state"] == "up" and out[1]["label"] == "?" and "2.5 Gbps" in out[1]["title"]
     assert out[2]["state"] == "down" and out[2]["link"] == "down" and out[2]["label"] == ""
     assert out[3]["label"] == "+2" and out[3]["conn_id"] == 1 and "100 Mbps" in out[3]["title"]
@@ -827,7 +827,7 @@ def test_port_tile_marks_the_devices_own_uplink():
     out = run_js(TILE_PARTS, f"{ports}.map(cxPortTile)")
     assert out[0]["label"] == "↑ Eero Pro 6E"
     assert out[0]["title"] == "Port 13 · link up · ↑ Eero Pro 6E"
-    assert out[0]["state"] == "occupied" and out[0]["conn_id"] == 9
+    assert out[0]["state"] == "occupied" and out[0]["conn_id"] == 9 and out[0]["uplink"] is True
 
 
 @needs_node
@@ -1172,3 +1172,59 @@ def test_port_options_mark_a_devices_own_uplink():
     ports = "[{name: 'Port 13', idx: 13, up: true, occupants: [{name: 'Eero', connection_id: 31, uplink: true}]}]"
     out = run_js([(QA_JS, "function qaPortOptions")], f"qaPortOptions({ports})")
     assert out == [{"value": "Port 13", "label": "Port 13 · ↑ Eero", "taken": True, "idx": 13}]
+
+
+# ── Final-review deferred minor: an uplink tile edits THIS device's port ───
+
+@needs_node
+def test_uplink_tile_opens_the_edit_row_on_the_child_port():
+    parts = [(UTILS_JS, "function escapeHtml"), (CX_JS, "function cxShortPortName"),
+             (CX_JS, "function cxFmtSpeed"), (CX_JS, "function cxPortTile"), (CX_JS, "function cxTileHtml")]
+    up = run_js(parts, "cxTileHtml(1, {name: 'Port 13', up: true, occupants: "
+                       "[{name: 'Eero', connection_id: 31, uplink: true}]})")
+    assert "cxHighlightConnection(31, {edit: true, focus: &#39;child_port&#39;})" in up \
+        or "cxHighlightConnection(31, {edit: true, focus: 'child_port'})" in up
+    down = run_js(parts, "cxTileHtml(1, {name: 'Port 7', up: true, occupants: [{name: 'Pi', connection_id: 4}]})")
+    assert "cxHighlightConnection(4)" in down
+
+
+@needs_node
+def test_edit_row_has_a_via_field_and_save_sends_child_port():
+    prelude = ("let _cxState = {editDraft: {parent_port: '1', child_port: 'Port 13', connection_type: 'ethernet', notes: ''},"
+               " editPorts: null};")
+    html = run_js(EDIT_PARTS, "cxEditRowHtml({id: 31, child_name: 'USW', parent_name: 'Eero', parent_id: 1}, [])",
+                  prelude=prelude)
+    assert 'data-field="child_port" value="Port 13"' in html
+    assert "Port on Eero" in html and "Via (USW" in html
+    src = js_part(CX_JS, "async function cxSaveEdit")
+    script = (
+        "let posts = [];\n"
+        "async function cxPost(url, body){ posts.push(body); return {ok: true, body: {warnings: []}}; }\n"
+        "function cxFindConnection(){ return {id: 31}; }\n"
+        "function toast(){} function cxCancelEdit(){} function cxRenderTableRows(){} function connectionsChanged(){}\n"
+        + src +
+        "\nlet _cxState = {editingConn: 31,"
+        " editDraft: {parent_port: '1', child_port: 'Port 12', connection_type: 'ethernet', notes: ''},"
+        " editOrig: {parent_port: '1', child_port: 'Port 13', connection_type: 'ethernet', notes: ''}};\n"
+        "cxSaveEdit(31).then(() => process.stdout.write(JSON.stringify(posts)));"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == [{"child_port": "Port 12"}]
+
+
+def test_editing_the_child_port_moves_the_uplink_on_the_port_map():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        eero = add_device(idb, "Eero", "network", network_role="gateway")
+        usw = add_device(idb, "USW", "network", network_role="switch", port_count=16)
+        idb.live_port_provider = lambda r: (
+            [{"name": f"Port {i}", "idx": i, "up": True} for i in range(1, 17)] if r["id"] == usw else None)
+        cid = insert_edge(idb, usw, eero, to_port="1", from_port="Port 13")
+        ok, err, _ = idb.update_connection(cid, {"child_port": "12"})
+        assert ok, err
+        ports, _ = idb.ports_for_device(usw)
+        by_name = {p["name"]: p["occupants"] for p in ports}
+        assert not by_name["Port 13"] and by_name["Port 12"][0]["uplink"] is True   # "12" canonicalises
+        assert idb.get_connection(cid)["to_port"] == "1"          # the Eero's port is untouched
+        hdb.close()

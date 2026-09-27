@@ -1928,11 +1928,12 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .cx-row-flash td{animation:cx-flash 2s ease-out}
 @keyframes cx-flash{0%{background:var(--blue-bg)}100%{background:transparent}}
 @media (prefers-reduced-motion:reduce){.cx-row-flash td{animation:none;box-shadow:inset 0 0 0 2px var(--blue)}}
-.cx-edit{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:end;padding:6px 0}
+.cx-edit{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end;padding:6px 0}
 .cx-edit-title,.cx-edit-hint,.cx-edit-actions{grid-column:1/-1}
 .cx-edit-title{font-weight:600;font-size:13px}
 .cx-edit-hint{margin:0}
 .cx-edit-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+@media (max-width:900px){.cx-edit{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:600px){
   .cx-edit{grid-template-columns:minmax(0,1fr);position:sticky;left:0;max-width:calc(100vw - 72px)}
   .cx-edit-actions .btn{flex:1 1 auto}

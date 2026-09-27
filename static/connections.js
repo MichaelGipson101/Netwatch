@@ -24,7 +24,7 @@ let _cxState = {
   status: null, suggestions: null, connections: null, inventory: [], categories: [], portMaps: [],
   error: null, migrationPending: false, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
   filter: 'all', query: '', highlightConn: null, highlightSugg: null, highlightAfterSeq: 0, suggSeq: 0,
-  editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null,
+  editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null, editFocus: null,
   swappedIds: {}, drafts: {}, busy: {},
 };
 
@@ -400,7 +400,10 @@ function cxEditRowHtml(c, issues){
   const staleWifiPort = wifi && _cxState.editOrig && _cxState.editOrig.parent_port;
   return '<tr class="cx-edit-row" data-conn="' + c.id + '"><td colspan="6"><div class="cx-edit">'
     + '<div class="cx-edit-title">' + escapeHtml(c.child_name) + ' → ' + escapeHtml(c.parent_name) + '</div>'
-    + '<label class="qa-field"><span>Port</span>' + portCtl + '</label>'
+    + '<label class="qa-field"><span>Port on ' + escapeHtml(c.parent_name) + '</span>' + portCtl + '</label>'
+    + '<label class="qa-field"><span>Via (' + escapeHtml(c.child_name) + '\'s port)</span>'
+      + '<input type="text" class="cx-edit-field" data-field="child_port" value="' + escapeHtml(d.child_port || '') + '"'
+      + ' autocomplete="off" spellcheck="false" placeholder="optional"></label>'
     + '<label class="qa-field"><span>Type</span><select class="cx-edit-field" data-field="connection_type">'
       + QA_CONNECTION_TYPES.map(t => '<option value="' + t + '"' + (t === d.connection_type ? ' selected' : '') + '>' + t + '</option>').join('')
     + '</select></label>'
@@ -508,7 +511,8 @@ function cxRenderTableRows(opts){
 function cxEditDraftDirty(){
   const d = _cxState.editDraft, o = _cxState.editOrig;
   if(_cxState.editingConn === null || !d || !o) return false;
-  return d.parent_port !== o.parent_port || d.connection_type !== o.connection_type || d.notes !== o.notes;
+  return d.parent_port !== o.parent_port || (d.child_port || '') !== (o.child_port || '')
+    || d.connection_type !== o.connection_type || d.notes !== o.notes;
 }
 
 function cxSetFilter(f){
@@ -529,10 +533,9 @@ async function cxStartEdit(id, opts){
   }
   _cxState.pendingEdit = null;
   _cxState.editingConn = id;
-  _cxState.editDraft = {parent_port: c.parent_port || '', connection_type: c.connection_type || 'ethernet',
-                        notes: c.notes || ''};
-  _cxState.editOrig = {parent_port: _cxState.editDraft.parent_port, connection_type: _cxState.editDraft.connection_type,
-                       notes: _cxState.editDraft.notes};
+  _cxState.editDraft = {parent_port: c.parent_port || '', child_port: c.child_port || '',
+                        connection_type: c.connection_type || 'ethernet', notes: c.notes || ''};
+  _cxState.editOrig = Object.assign({}, _cxState.editDraft);
   _cxState.editPorts = undefined;
   cxRenderTableRows({force: true});
   const body = await cxGetJson('/api/ports/' + c.parent_id);
@@ -544,6 +547,11 @@ async function cxStartEdit(id, opts){
     _cxState.editOrig.parent_port = match;
   }
   cxRenderTableRows({force: true});
+  if(_cxState.editFocus){
+    const f = document.querySelector('.cx-edit-row [data-field="' + _cxState.editFocus + '"]');
+    _cxState.editFocus = null;
+    if(f){ f.focus(); if(f.select) f.select(); }
+  }
 }
 
 function cxCancelEdit(){
@@ -572,6 +580,7 @@ async function cxSaveEdit(id){
     // in the same request.
     body.parent_port = null;
   }
+  if((d.child_port || '') !== (orig.child_port || '')) body.child_port = d.child_port;
   if((d.notes || '') !== (orig.notes || '')) body.notes = d.notes;
   if(!Object.keys(body).length){ cxCancelEdit(); return; }
   const out = await cxPost('/api/connections/' + id, body);
@@ -618,6 +627,7 @@ function cxHighlightConnection(id, opts){
   _cxState.filter = 'all';
   _cxState.query = '';
   _cxState.highlightConn = id;
+  _cxState.editFocus = (opts && opts.focus) || null;
   if(opts && opts.edit) cxStartEdit(id);
   else cxRenderTableRows({force: true});
 }
@@ -948,13 +958,21 @@ function cxPortTile(p){
   if(p.poe) bits.push('PoE');
   if(occ.length) bits.push(occ.map(occLabel).join(', '));
   return {name: p.name, state: state, link: link, label: label, title: bits.join(' · '),
-          conn_id: occ.length ? occ[0].connection_id : null};
+          conn_id: occ.length ? occ[0].connection_id : null,
+          uplink: occ.length === 1 && !!occ[0].uplink};
 }
 
 function cxTileHtml(deviceId, p){
   const t = cxPortTile(p);
   const inner = '<span class="cx-tile-port"><i class="cx-led ' + t.link + '"></i>' + escapeHtml(cxShortPortName(t.name)) + '</span>'
     + '<span class="cx-tile-dev">' + escapeHtml(t.label) + '</span>';
+  if(t.state === 'occupied' && t.uplink){
+    // This device's own uplink: the port on THIS device is the edge's child
+    // port, so open the edit row on that field rather than the parent's port.
+    const tip = t.title + ' · this device\'s uplink: tap to edit';
+    return '<button type="button" class="cx-tile cx-tile-occupied" title="' + escapeHtml(tip) + '"'
+      + ' aria-label="' + escapeHtml(tip) + '" onclick="cxHighlightConnection(' + t.conn_id + ', {edit: true, focus: \'child_port\'})">' + inner + '</button>';
+  }
   if(t.state === 'occupied'){
     return '<button type="button" class="cx-tile cx-tile-occupied" title="' + escapeHtml(t.title) + '"'
       + ' aria-label="' + escapeHtml(t.title) + '" onclick="cxHighlightConnection(' + t.conn_id + ')">' + inner + '</button>';

@@ -72,7 +72,8 @@ def test_forest_puts_the_gateway_tree_first_and_collapses_big_guest_parents():
     auto, expanded = js(expr)
     assert [t["id"] for t in auto["trees"]] == [1, 20]            # gateway first, then bigger
     assert auto["info"]["3"] == {"collapsible": True, "collapsed": True, "hidden": 7,
-                                 "guestPill": True}
+                                 "kids": 7, "guestPill": True}
+    assert all(auto["anchor"][str(100 + i)] == 3 for i in range(7))
     assert 100 not in auto["visible"] and 3 in auto["visible"]
     prodesk = auto["trees"][0]["children"][0]["children"][0]
     assert prodesk["id"] == 3 and prodesk["children"] == []
@@ -198,3 +199,91 @@ def test_topology_toolbar_fits_small_screens_and_version_bumped():
     assert "@media (max-width:380px)" in css and ".topo-web-controls" in css
     from netwatch import VERSION
     assert VERSION == "3.78"
+
+
+# ── Final-review deferred minors: pill count, ghosts into collapsed
+# subtrees, and behaviour (not just presence) for collapse + ghost open ─────
+
+@needs_node
+def test_guest_pill_counts_only_the_guests_not_what_runs_inside_them():
+    import json as _json
+    nodes = [n(1, "Node"), n(50, "Other", 1)]
+    edges = []
+    for i in range(7):
+        nodes.append(n(100 + i, f"vm{i}", 1 if i < 7 else None))
+        edges.append({"source": 100 + i, "target": 1, "connection_type": "virtual", "is_primary": True})
+    nodes = [x for x in nodes if x["id"] != 50]
+    nodes += [n(200, "docker-a", 100), n(201, "docker-b", 100)]   # containers inside vm0
+    parts = HELPERS + [(TOPO_JS, "function topoPillLabel")]
+    out = js(f"(() => {{ const f = topoBuildForest({_json.dumps(nodes)}, {_json.dumps(edges)}, {{}});"
+             " return [f.info['1'], topoPillLabel(f.info['1'])]; })()", parts)
+    info, label = out
+    assert info["hidden"] == 9 and info["kids"] == 7
+    assert label == "+7 guests"
+    assert js("[topoPillLabel({collapsed: true, hidden: 4, kids: 2, guestPill: false}),"
+              " topoPillLabel({collapsed: true, hidden: 1, kids: 1, guestPill: true}),"
+              " topoPillLabel({collapsed: false, hidden: 0, kids: 3, guestPill: true}),"
+              " topoPillLabel(undefined)]", parts) == ["+4", "+1 guest", "", ""]
+
+
+@needs_node
+def test_ghosts_into_a_collapsed_subtree_anchor_on_the_collapsed_node():
+    import json as _json
+    nodes = [n(1, "USW"), n(2, "Node", 1), n(3, "Pi", 1)]
+    edges = []
+    for i in range(7):
+        nodes.append(n(100 + i, f"vm{i}", 2))
+        edges.append({"source": 100 + i, "target": 2, "connection_type": "virtual", "is_primary": True})
+    ghosts = [{"suggestion_id": 1, "source": 100, "target": 3},     # hidden -> visible: re-anchored
+              {"suggestion_id": 2, "source": 3, "target": 1},       # both visible: untouched
+              {"suggestion_id": 3, "source": 101, "target": 2},     # folds into one node: dropped
+              {"suggestion_id": 4, "source": 102, "target": 999}]   # unknown end: dropped
+    parts = HELPERS + [(TOPO_JS, "function topoAnchorGhosts")]
+    out = js(f"topoAnchorGhosts({_json.dumps(ghosts)}, topoBuildForest({_json.dumps(nodes)}, {_json.dumps(edges)}, {{}}))",
+             parts)
+    assert out == [
+        {"suggestion_id": 1, "source": 2, "target": 3, "real_source": 100, "real_target": 3},
+        {"suggestion_id": 2, "source": 3, "target": 1},
+    ]
+
+
+@needs_node
+def test_toggling_collapse_persists_and_changes_what_the_tree_shows():
+    import json as _json
+    nodes = [n(1, "USW"), n(2, "Node", 1)] + [n(100 + i, f"vm{i}", 2) for i in range(7)]
+    edges = [{"source": 100 + i, "target": 2, "connection_type": "virtual", "is_primary": True}
+             for i in range(7)]
+    parts = HELPERS + [(TOPO_JS, "function topoLoadCollapsed"), (TOPO_JS, "function topologyToggleCollapse")]
+    prelude = ("const TOPO_COLLAPSED_KEY = 'nw-topo-collapsed';\n"
+               "const _store = {}; const localStorage = {getItem: k => _store[k] || null,"
+               " setItem: (k, v) => { _store[k] = v; }};\n"
+               "let renders = 0; function renderTopologyWeb(){ renders++; }\n"
+               f"const N = {_json.dumps(nodes)}, E = {_json.dumps(edges)};\n"
+               "const shown = () => topoBuildForest(N, E, topoLoadCollapsed()).visible.length;")
+    out = js("(() => { const r = [shown()];"
+             " topologyToggleCollapse(2, false); r.push(shown(), renders, _store['nw-topo-collapsed']);"
+             " topologyToggleCollapse(1, true); r.push(shown(), renders);"
+             " topologyToggleCollapse(1, false); r.push(shown());"
+             " return r; })()", parts, prelude)
+    assert out == [2, 9, 1, '{"2":false}', 1, 2, 9]
+
+
+@needs_node
+def test_right_oriented_siblings_clear_a_network_icon():
+    import json as _json
+    trees = [{"id": 1, "children": [{"id": i, "children": []} for i in range(2, 6)]}]
+    parts = [(TOPO_JS, "const TOPO_TREE_RULES"), (TOPO_JS, "function topoTreePositions")]
+    prelude = f"const d3 = require({_json.dumps(D3)});"
+    pos = run_js(parts, f"topoTreePositions({_json.dumps(trees)}, 'right')", prelude)
+    ys = sorted(pos[str(i)]["y"] for i in range(2, 6))
+    assert min(b - a for a, b in zip(ys, ys[1:])) >= 90          # 64px icon + label room
+
+
+@needs_node
+def test_opening_a_ghost_leaves_the_tab_switch_to_the_highlight():
+    parts = [(TOPO_JS, "function topologyOpenSuggestion")]
+    prelude = ("let calls = []; let _topoFullscreen = true;\n"
+               "function exitTopologyFullscreen(){ calls.push('exit'); _topoFullscreen = false; }\n"
+               "function setTab(t){ calls.push('setTab:' + t); }\n"
+               "function cxHighlightSuggestion(id){ calls.push('highlight:' + id); }")
+    assert js("(topologyOpenSuggestion(5), calls)", parts, prelude) == ["exit", "highlight:5"]
