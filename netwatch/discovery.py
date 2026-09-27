@@ -15,7 +15,8 @@ suggestions (spec §2). Accepting them is InventoryDB.accept_suggestion.
 import time
 
 from netwatch.connections import (
-    canonical_port, fingerprint, normalize_port, orient_edge, resolve_ports,
+    NETWORK_LINK_TYPES, canonical_port, fingerprint, normalize_port, orient_edge,
+    resolve_ports,
 )
 from netwatch.storage import InventoryDB
 
@@ -151,7 +152,6 @@ def unifi_observations(snapshot, guest_macs=None):
 
 
 STALE_AFTER_SECONDS = 7 * 86400
-NETWORK_LINK_TYPES = ("ethernet", "fiber", "wifi")
 SOURCE_LABELS = {"unifi": "UniFi", "proxmox": "Proxmox", "inferred": "Inference"}
 
 

@@ -578,7 +578,7 @@ def test_reconcile_stale_needs_a_full_week_of_healthy_streak():
 
 # ── Task 4: applying scans and accepting suggestions (storage) ──────────────
 
-from netwatch.connections import migration_drift_key
+from netwatch.connections import migration_drift_key, NETWORK_LINK_TYPES
 
 
 def lab_db(d):
@@ -793,4 +793,138 @@ def test_accept_suggestions_reports_per_item():
             {"id": good["id"], "ok": False, "error": "suggestion_changed"},
             {"id": "nope", "ok": False, "error": "invalid id"},
         ]
+        hdb.close()
+
+
+# ── Task 4 fix round 1: I1-I4, S1, M2 - live rows must still match the ──────
+# ── payload the suggestion's fingerprint was computed from ─────────────────
+
+def test_fix_i1a_drift_replace_rejects_when_live_edge_type_changed():
+    """I1(a): the Pi 5 wifi edge was hand-edited to ethernet after the scan -
+    the drift payload's `current` no longer matches, so accepting must 409
+    and leave the edge untouched."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, _ = idb.update_connection(e["pi5_wifi"], {"connection_type": "ethernet"})
+        assert ok, err
+        before = idb.get_connection(e["pi5_wifi"])
+        assert accept(idb, f"drift:unifi:{PI5_MAC}") == (False, "suggestion_changed", {})
+        assert idb.get_connection(e["pi5_wifi"]) == before
+        hdb.close()
+
+
+def test_fix_i1b_drift_replace_tolerates_notes_only_edit():
+    """I1(b): a notes-only edit doesn't touch parent/port/type, so it must
+    not block the drift replace."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, _ = idb.update_connection(e["usw_eero"], {"notes": "x"})
+        assert ok, err
+        ok, err, res = accept(idb, f"drift:unifi:{USW_MAC}")
+        assert ok and err is None
+        hdb.close()
+
+
+def test_fix_i2_stale_drift_rejects_edge_turned_manual():
+    """I2: hand-editing the stale UniFi edge (even just its notes) makes it
+    manual - a manual edge is never auto-removed as stale."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, _ = idb.update_connection(e["oldnas"], {"notes": "keep me"})
+        assert ok, err
+        assert accept(idb, "drift:stale:conn:%d" % e["oldnas"]) == (
+            False, "suggestion_changed", {})
+        assert idb.get_connection(e["oldnas"]) is not None
+        hdb.close()
+
+
+def test_fix_i3_edge_accept_rejects_second_network_link():
+    """I3: VF2 got hand-wired to the eero (over wifi) after the scan - VF2
+    already has a network link, so accepting the UniFi edge suggestion (which
+    would add a second one, to the USW) must 409."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        new_id, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["vf2"], "b_id": ids["eero"], "connection_type": "wifi"})
+        assert err is None
+        assert accept(idb, f"edge:unifi:{VF2_MAC}") == (False, "suggestion_changed", {})
+        links = [c for c in idb.list_all_connections()
+                 if c["child_id"] == ids["vf2"] and c["connection_type"] in NETWORK_LINK_TYPES]
+        assert len(links) == 1
+        hdb.close()
+
+
+def test_fix_i4a_shared_port_accept_rejects_when_port_now_occupied():
+    """I4(a): the printer got hand-wired directly to USW Port 9 after the
+    scan - accepting the shared_port suggestion for that same port must 409
+    and must not create a placeholder switch."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        before_count = len(idb.list_all())
+        new_id, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["printer"], "b_id": ids["usw"], "parent_port": "Port 9"})
+        assert err is None
+        assert accept(idb, f"shared_port:{USW_MAC}:Port 9") == (False, "suggestion_changed", {})
+        assert len(idb.list_all()) == before_count  # the hand-wire adds an edge, not a record
+        hdb.close()
+
+
+def test_fix_i4b_shared_port_accept_skips_already_linked_matched_device():
+    """I4(b): the printer got hand-wired to the eero (over wifi) after the
+    scan - it already has a network link, so the shared_port accept must
+    still create the placeholder switch (the port itself is unaffected) but
+    must not also link the printer to it."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        new_id, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["printer"], "b_id": ids["eero"], "connection_type": "wifi"})
+        assert err is None
+        ok, err_, res = accept(idb, f"shared_port:{USW_MAC}:Port 9")
+        assert ok and err_ is None and res["linked"] == []
+        ph = idb.get(res["device_id"])
+        assert ph["device_type"] == "network" and ph["properties"]["network_role"] == "switch"
+        hdb.close()
+
+
+def test_fix_s1a_identity_accept_rejects_when_candidate_deleted():
+    """S1: the eero (the identity suggestion's own candidate) was deleted
+    after the scan - accepting must 409, not ask for a device_id override."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err = idb.delete(ids["eero"])
+        assert ok, err
+        assert accept(idb, f"identity:lldp:{EERO_LLDP_MAC}") == (False, "suggestion_changed", {})
+        hdb.close()
+
+
+def test_fix_s1b_identity_accept_rejects_mac_already_aliased_elsewhere():
+    """S1: the chassis mac got attached as another device's alias after the
+    scan - accepting must be rejected (not silently double-owned)."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err = idb.update(ids["pi5"], {"properties": {"mac_aliases": [EERO_LLDP_MAC]}})
+        assert ok, err
+        assert accept(idb, f"identity:lldp:{EERO_LLDP_MAC}") == (
+            False, "rejected", {"error": "that MAC already belongs to Raspberry Pi 5"})
+        hdb.close()
+
+
+def test_fix_m2_device_accept_rejects_mac_already_aliased_elsewhere():
+    """M2: the workbench mac got attached as another device's alias after the
+    scan - accepting the new-device suggestion must 409, matching the plain
+    mac-column check."""
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err = idb.update(ids["printer"], {"properties": {"mac_aliases": [WORKBENCH_MAC]}})
+        assert ok, err
+        assert accept(idb, f"device:unifi:{WORKBENCH_MAC}") == (False, "suggestion_changed", {})
         hdb.close()

@@ -9,7 +9,7 @@ from netwatch import VERSION
 from netwatch.connections import (
     fingerprint, plan_connections_migration, orient_edge, default_connection_type,
     normalize_port, resolve_ports, validate_parent_port, lint_edge, migration_drift_key,
-    canonical_port,
+    canonical_port, NETWORK_LINK_TYPES,
 )
 
 
@@ -1351,19 +1351,21 @@ class InventoryDB:
                             "updated_at = ? WHERE id = ? AND source != 'manual'",
                             (now, t["parent_port"], now, t["id"]))
                 self.conn.execute("COMMIT")
-            except Exception:
+            except BaseException:
                 self._rollback_quietly()
                 raise
 
     def accept_suggestion(self, sid, fp, overrides=None, action=None, now=None):
         """Apply a pending suggestion atomically. Returns (ok, error, result);
         error is None, "not_found", "suggestion_changed" or "rejected" (then
-        result["error"] says why)."""
+        result["error"] says why).
+
+        The fingerprint only covers the suggestion row, not the live inventory
+        it was computed from - so every `_accept_*_locked` handler re-checks,
+        inside this same transaction, that the live rows still look the way
+        the payload assumed, and raises _SuggestionChanged if not."""
         now = int(now or time.time())
         overrides = overrides if isinstance(overrides, dict) else {}
-        row = self.suggestions.get(sid)
-        if row is None:
-            return False, "not_found", {}
         handlers = {
             "edge": self._accept_edge_locked,
             "device": self._accept_device_locked,
@@ -1376,14 +1378,22 @@ class InventoryDB:
             self.conn.execute("BEGIN")
             try:
                 cur = self.conn.execute(
-                    "SELECT status, fingerprint FROM connection_suggestions WHERE id = ?",
-                    (sid,)).fetchone()
-                if cur is None or cur[0] != "pending" or cur[1] != fp:
+                    "SELECT kind, payload, status, fingerprint FROM connection_suggestions "
+                    "WHERE id = ?", (sid,)).fetchone()
+                if cur is None:
+                    self._rollback_quietly()
+                    return False, "not_found", {}
+                kind, raw_payload, status, stored_fp = cur
+                if status != "pending" or stored_fp != fp:
                     raise _SuggestionChanged()
-                handler = handlers.get(row["kind"])
+                try:
+                    payload = json.loads(raw_payload)
+                except (TypeError, ValueError):
+                    payload = {}
+                handler = handlers.get(kind)
                 if handler is None:
-                    raise _SuggestionRejected(f"unknown suggestion kind '{row['kind']}'")
-                result = handler(row["payload"], overrides, action, now, relint)
+                    raise _SuggestionRejected(f"unknown suggestion kind '{kind}'")
+                result = handler(payload, overrides, action, now, relint)
                 self.conn.execute(
                     "UPDATE connection_suggestions SET status = 'accepted', decided_at = ? "
                     "WHERE id = ?", (now, sid))
@@ -1394,11 +1404,17 @@ class InventoryDB:
             except _SuggestionRejected as e:
                 self._rollback_quietly()
                 return False, "rejected", {"error": str(e)}
-            except Exception:
+            except BaseException:
                 self._rollback_quietly()
                 raise
+        # The accept already committed; a relint failure here must not turn a
+        # successful accept into an error response.
         for pid in relint:
-            self.relint_parent(pid, now)
+            try:
+                self.relint_parent(pid, now)
+            except Exception as e:
+                logging.warning(
+                    f"InventoryDB: relint_parent failed after accept: {type(e).__name__}")
         return True, None, result
 
     def accept_suggestions(self, items, now=None):
@@ -1420,15 +1436,48 @@ class InventoryDB:
         return self.conn.execute(
             "SELECT 1 FROM inventory WHERE id = ?", (inv_id,)).fetchone() is not None
 
+    # SQL fragment for "any network-link edge" (an interface has at most one).
+    _LINK_TYPE_PLACEHOLDERS = ",".join("?" * len(NETWORK_LINK_TYPES))
+
+    def _has_network_link_locked(self, device_id, as_child=True):
+        col = "from_device_id" if as_child else "to_device_id"
+        return self.conn.execute(
+            f"SELECT 1 FROM inventory_connections WHERE {col} = ? AND "
+            f"connection_type IN ({self._LINK_TYPE_PLACEHOLDERS})",
+            (device_id, *NETWORK_LINK_TYPES)).fetchone() is not None
+
+    def _mac_conflict_locked(self, mac, exclude_id=None):
+        """The system name of another record already using `mac` (as its
+        primary mac or a properties.mac_aliases entry), or None."""
+        if exclude_id is None:
+            row = self.conn.execute(
+                "SELECT system FROM inventory WHERE mac = ?", (mac,)).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT system FROM inventory WHERE mac = ? AND id != ?",
+                (mac, exclude_id)).fetchone()
+        if row:
+            return row[0]
+        params = (f"%{mac}%",) if exclude_id is None else (exclude_id, f"%{mac}%")
+        query = ("SELECT system, properties FROM inventory WHERE properties LIKE ?"
+                 if exclude_id is None else
+                 "SELECT system, properties FROM inventory WHERE id != ? AND properties LIKE ?")
+        for system, raw in self.conn.execute(query, params).fetchall():
+            try:
+                props = json.loads(raw) if raw else {}
+            except ValueError:
+                continue
+            if isinstance(props, dict) and mac in (props.get("mac_aliases") or []):
+                return system
+        return None
+
     def _accept_edge_locked(self, p, overrides, action, now, relint):
         if not (self._device_exists_locked(p["child_id"])
                 and self._device_exists_locked(p["parent_id"])):
             raise _SuggestionChanged()
-        dup = self.conn.execute(
-            "SELECT 1 FROM inventory_connections WHERE from_device_id = ? AND "
-            "to_device_id = ? AND connection_type IN ('ethernet', 'fiber', 'wifi')",
-            (p["child_id"], p["parent_id"])).fetchone()
-        if dup:
+        # A device has at most one network link - regardless of which parent
+        # it's already wired to, a second one would create a phantom uplink.
+        if self._has_network_link_locked(p["child_id"], as_child=True):
             raise _SuggestionChanged()
         cid = self._insert_connection_locked(
             p["child_id"], p["parent_id"], p.get("child_port"), p.get("parent_port"),
@@ -1449,8 +1498,7 @@ class InventoryDB:
         if dtype not in INVENTORY_TYPES:
             raise _SuggestionRejected(f"unknown device type '{dtype}'")
         mac = self.normalize_mac(dev.get("mac")) or None
-        if mac and self.conn.execute(
-                "SELECT 1 FROM inventory WHERE mac = ?", (mac,)).fetchone():
+        if mac and self._mac_conflict_locked(mac) is not None:
             raise _SuggestionChanged()
         e = p["edge"]
         if not self._device_exists_locked(e["parent_id"]):
@@ -1475,17 +1523,32 @@ class InventoryDB:
         if action is not None and action != kind:
             raise _SuggestionRejected(f"this suggestion's action is '{kind}'")
         row = self.conn.execute(
-            "SELECT to_device_id FROM inventory_connections WHERE id = ?",
+            "SELECT from_device_id, to_device_id, to_port, connection_type, source "
+            "FROM inventory_connections WHERE id = ?",
             (p["connection_id"],)).fetchone()
         if row is None:
             raise _SuggestionChanged()
-        old_parent = row[0]
+        from_id, to_id, to_port, ctype, source = row
+        old_parent = to_id
         if kind == "remove":
+            # Only remove an edge that's still discovery-sourced and still
+            # connects the same two devices the suggestion was computed for.
+            if (source == "manual" or from_id != p["child_id"]
+                    or to_id != p["parent_id"]):
+                raise _SuggestionChanged()
             self.conn.execute(
                 "DELETE FROM inventory_connections WHERE id = ?", (p["connection_id"],))
             self.suggestions.resolve_locked(migration_drift_key(p["connection_id"]), now)
             relint.add(old_parent)
             return {"removed_connection_id": p["connection_id"]}
+        # "replace": the live edge must still look like p["current"] (raw
+        # equality - either side may be None) or the proposal no longer
+        # applies to what's actually stored.
+        cur_expected = p["current"]
+        if (from_id != p["child_id"] or to_id != cur_expected["parent_id"]
+                or to_port != cur_expected["parent_port"]
+                or ctype != cur_expected["connection_type"]):
+            raise _SuggestionChanged()
         q = p["proposed"]
         if not self._device_exists_locked(q["parent_id"]):
             raise _SuggestionChanged()
@@ -1500,6 +1563,7 @@ class InventoryDB:
         return {"connection_id": p["connection_id"]}
 
     def _accept_identity_locked(self, p, overrides, action, now, relint):
+        has_override = "device_id" in overrides
         target = overrides.get("device_id", p.get("candidate_id"))
         try:
             target = int(target)
@@ -1508,15 +1572,23 @@ class InventoryDB:
         row = self.conn.execute(
             "SELECT properties FROM inventory WHERE id = ?", (target,)).fetchone()
         if row is None:
-            raise _SuggestionRejected("that device does not exist")
+            # A device_id the caller typed in themselves that doesn't exist is
+            # their mistake (rejected); the suggestion's own candidate having
+            # vanished since the scan is the data changing under us (409).
+            if has_override:
+                raise _SuggestionRejected("that device does not exist")
+            raise _SuggestionChanged()
         try:
             props = json.loads(row[0]) if row[0] else {}
         except ValueError:
             props = None
         if not isinstance(props, dict):
             raise _SuggestionRejected("that device's properties are unreadable; fix them first")
-        aliases = [a for a in (props.get("mac_aliases") or []) if isinstance(a, str)]
         mac = self.normalize_mac(p["chassis_mac"])
+        conflict = self._mac_conflict_locked(mac, exclude_id=target)
+        if conflict is not None:
+            raise _SuggestionRejected(f"that MAC already belongs to {conflict}")
+        aliases = [a for a in (props.get("mac_aliases") or []) if isinstance(a, str)]
         if mac not in aliases:
             aliases.append(mac)
         props["mac_aliases"] = aliases
@@ -1526,8 +1598,32 @@ class InventoryDB:
         return {"device_id": target}
 
     def _accept_shared_port_locked(self, p, overrides, action, now, relint):
-        if not self._device_exists_locked(p["switch_id"]):
+        switch_row = self.conn.execute(
+            "SELECT mac, properties FROM inventory WHERE id = ?",
+            (p["switch_id"],)).fetchone()
+        if switch_row is None:
             raise _SuggestionChanged()
+        mac, raw_props = switch_row
+        try:
+            props = json.loads(raw_props) if raw_props else {}
+        except ValueError:
+            props = {}
+        if not isinstance(props, dict):
+            props = {}
+        switch_rec = {"id": p["switch_id"], "mac": mac, "properties": props}
+        ports = resolve_ports(switch_rec, self._live_ports_for(switch_rec))
+        want_port = canonical_port(p["port"], ports) if ports else p["port"]
+        rows = self.conn.execute(
+            f"SELECT to_port FROM inventory_connections WHERE to_device_id = ? AND "
+            f"connection_type IN ({self._LINK_TYPE_PLACEHOLDERS})",
+            (p["switch_id"], *NETWORK_LINK_TYPES)).fetchall()
+        for (to_port,) in rows:
+            stored = canonical_port(to_port, ports) if ports else to_port
+            if stored == want_port:
+                # Something is already on this port (possibly a hand-wired
+                # edge added since the scan) - don't shadow it with a
+                # placeholder switch.
+                raise _SuggestionChanged()
         name = (str(overrides.get("system") or "").strip()
                 or f"Unmanaged switch ({p['switch_name']} · {p['port']})")
         cur = self.conn.execute(
@@ -1541,11 +1637,16 @@ class InventoryDB:
             last_seen=now)
         linked = []
         for m in p.get("matched", []):
-            if self._device_exists_locked(m["id"]):
-                self._insert_connection_locked(
-                    m["id"], placeholder, None, None, "ethernet", None, now,
-                    source="unifi", external_key=f"unifi:port:{m['mac']}", last_seen=now)
-                linked.append(m["id"])
+            if not self._device_exists_locked(m["id"]):
+                continue
+            # A matched device that's already wired elsewhere (e.g. hand-wired
+            # since the scan) is left alone rather than double-linked.
+            if self._has_network_link_locked(m["id"], as_child=True):
+                continue
+            self._insert_connection_locked(
+                m["id"], placeholder, None, None, "ethernet", None, now,
+                source="unifi", external_key=f"unifi:port:{m['mac']}", last_seen=now)
+            linked.append(m["id"])
         relint.add(p["switch_id"])
         return {"device_id": placeholder, "linked": linked}
 

@@ -24,6 +24,10 @@ TYPE_RANK = {
 NETWORK_ROLE_RANK = {"other": 0, "ap": 1, "switch": 2, "gateway": 3}
 NETWORK_ROLES = tuple(NETWORK_ROLE_RANK)
 
+# Connection types that represent a physical/logical network link (as opposed
+# to power, USB, console, etc.) - a device has at most one of these per NIC.
+NETWORK_LINK_TYPES = ("ethernet", "fiber", "wifi")
+
 # A port_count above this is treated as garbage rather than rendered as
 # thousands of dropdown entries.
 _MAX_PORT_COUNT = 512
