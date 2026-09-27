@@ -6,6 +6,7 @@ import sqlite3
 import threading
 
 from netwatch import VERSION
+from netwatch.connections import fingerprint, plan_connections_migration
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -934,6 +935,69 @@ class InventoryDB:
             logging.warning(f"InventoryDB: live port provider failed: {type(e).__name__}")
             return None
 
+    def connections_v2_ready(self):
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'connections_v2'").fetchone()
+        return bool(row and row[0] == "done")
+
+    def migrate_connections_v2(self, backup_fn=None, now=None):
+        """One-time data migration for the 4.0 connections model: seed
+        properties.network_role, re-orient edges child -> parent (swapping
+        their port fields), mark them manual, and file anything suspicious
+        as drift suggestions. Never deletes or rewrites anything else.
+
+        backup_fn runs first; if it raises, nothing is changed and the new
+        connection endpoints stay disabled (they return 503)."""
+        if self.connections_v2_ready():
+            return True, "already migrated"
+        if backup_fn is not None:
+            try:
+                backup_fn()
+            except Exception as e:
+                logging.error("InventoryDB: connections v2 migration aborted, "
+                              f"backup failed: {type(e).__name__}: {e}")
+                return False, "backup failed"
+        now = int(now or time.time())
+        records = {r["id"]: r for r in self.list_all()}
+        plan = plan_connections_migration(
+            records, self.list_all_connections(), self._live_ports_for)
+        with self.lock:
+            self.conn.execute("BEGIN")
+            try:
+                for rid, role in plan["network_roles"].items():
+                    props = dict(records[rid].get("properties") or {})
+                    props["network_role"] = role
+                    self.conn.execute(
+                        "UPDATE inventory SET properties = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(props), now, rid))
+                for eid in plan["swaps"]:
+                    # SQLite evaluates every right-hand side against the old
+                    # row, so this is a true swap.
+                    self.conn.execute(
+                        "UPDATE inventory_connections SET "
+                        "from_device_id = to_device_id, to_device_id = from_device_id, "
+                        "from_port = to_port, to_port = from_port WHERE id = ?", (eid,))
+                self.conn.execute(
+                    "UPDATE inventory_connections SET source = 'manual', updated_at = ?",
+                    (now,))
+                for key, payload in plan["drift"]:
+                    self.suggestions.upsert_locked(
+                        "drift", "migration", key, payload, fingerprint(payload), now)
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO schema_meta (key, value) "
+                    "VALUES ('connections_v2', 'done')")
+                self.conn.execute("COMMIT")
+            except Exception:
+                try: self.conn.execute("ROLLBACK")
+                except Exception: pass
+                raise
+        msg = (f"re-oriented {len(plan['swaps'])} edge(s), seeded "
+               f"{len(plan['network_roles'])} network role(s), flagged "
+               f"{len(plan['drift'])} for review")
+        logging.info(f"InventoryDB: connections v2 migration done: {msg}")
+        return True, msg
+
     def create_connection(self, data):
         """Create a new connection row. Returns (id, error_msg)."""
         try:
@@ -1649,6 +1713,21 @@ def create_backup_tarball(config_path, auth_path):
         if snapshot_path:
             try: os.unlink(snapshot_path)
             except OSError: pass
+
+
+def write_pre_migration_backup(config_path, auth_path, label):
+    """Write a full backup tarball to backups/ next to hosts.yaml before a
+    data migration. Returns the path. Mode 0600: it contains auth.json."""
+    data, _filename, _manifest = create_backup_tarball(config_path, auth_path)
+    backup_dir = os.path.join(os.path.dirname(os.path.abspath(config_path)), "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    path = os.path.join(
+        backup_dir, f"pre-{label}-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(path, 0o600)
+    return path
 
 
 def restore_backup(tarball_path, config_path, force=False):

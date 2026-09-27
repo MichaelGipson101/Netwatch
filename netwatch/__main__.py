@@ -13,7 +13,7 @@ import logging
 
 from netwatch import VERSION
 from netwatch.auth import AuthManager
-from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup
+from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup, write_pre_migration_backup
 from netwatch.hosts import HostManager, IncidentLog, load_yaml
 from netwatch.pollers import NASPoller, ProxmoxPoller, PBSPoller, HAPoller, UPSPoller
 from netwatch.server import start_web_server
@@ -100,6 +100,9 @@ def main():
     history_db = HistoryDB(db_path, retention_days=retention_days)
     print(f"[netwatch] History DB -> {db_path} (retention {retention_days} days)")
     inventory_db = InventoryDB(history_db)
+    ok, msg = inventory_db.migrate_connections_v2(
+        backup_fn=lambda: write_pre_migration_backup(config_path, auth_path, "connections-v2"))
+    print(f"[netwatch] Connections v2 -> {msg}")
     inv_count = len(inventory_db.list_all())
     print(f"[netwatch] Inventory  -> {inv_count} record(s)")
     quicklinks_db = QuickLinksDB(history_db)

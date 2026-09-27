@@ -131,3 +131,99 @@ def fingerprint(obj):
     """Short stable hash of a JSON-serialisable value (key order ignored)."""
     blob = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+ISSUE_TEXT = {
+    "ambiguous_direction": "couldn't tell which end is upstream",
+    "bad_parent_port": "'{port}' isn't a port on {parent}",
+    "port_on_wifi": "a wifi link has a port ('{port}')",
+    "duplicate_parent_port": "another connection also uses {parent} port {port}",
+}
+
+
+def describe_issues(issues, parent_name, parent_port):
+    return "; ".join(
+        ISSUE_TEXT[i].format(port=parent_port, parent=parent_name) for i in issues)
+
+
+def migration_drift_key(conn_id):
+    return f"drift:migration:conn:{conn_id}"
+
+
+def lint_edge(edge, child, parent, parent_ports):
+    """Per-edge problems for an already-oriented edge (to_* is the parent
+    side). Duplicate ports and ambiguity need more context and are added
+    by the callers."""
+    port = normalize_port(edge.get("to_port"))
+    if port is None:
+        return []
+    if (edge.get("connection_type") or "ethernet") == "wifi":
+        return ["port_on_wifi"]
+    if validate_parent_port(parent, port, parent_ports):
+        return ["bad_parent_port"]
+    return []
+
+
+def plan_connections_migration(records, edges, live_ports_for=None):
+    """Work out the one-time connections-v2 migration without touching the DB.
+
+    records: {inventory_id: record}; edges: rows from list_all_connections().
+    Returns {"network_roles": {id: role} to seed, "swaps": {edge ids to
+    reverse}, "drift": [(subject_key, payload)]}.
+    """
+    recs = {rid: dict(r, properties=dict(r.get("properties") or {}))
+            for rid, r in records.items()}
+
+    network_roles = {}
+    for rid, r in recs.items():
+        if _dtype(r) == "network" and "network_role" not in r["properties"]:
+            role = infer_network_role(r)
+            network_roles[rid] = role
+            r["properties"]["network_role"] = role  # orientation below needs it
+
+    swaps = set()
+    oriented = []  # (row as it will be stored, issues)
+    for e in edges:
+        a, b = recs.get(e["from_device_id"]), recs.get(e["to_device_id"])
+        if a is None or b is None:
+            continue
+        child, _parent, ambiguous = orient_edge(a, b, e.get("connection_type"))
+        row = dict(e)
+        issues = []
+        if ambiguous:
+            issues.append("ambiguous_direction")
+        elif child is b:
+            swaps.add(e["id"])
+            row.update(from_device_id=e["to_device_id"], to_device_id=e["from_device_id"],
+                       from_port=e.get("to_port"), to_port=e.get("from_port"))
+        parent = recs[row["to_device_id"]]
+        live = live_ports_for(parent) if live_ports_for else None
+        issues += lint_edge(row, recs[row["from_device_id"]], parent,
+                            resolve_ports(parent, live))
+        oriented.append((row, issues))
+
+    by_port = {}
+    for row, _issues in oriented:
+        port = normalize_port(row.get("to_port"))
+        if port is not None and row.get("connection_type") != "wifi":
+            by_port.setdefault((row["to_device_id"], port), []).append(row["id"])
+    duplicated = {i for ids in by_port.values() if len(ids) > 1 for i in ids}
+
+    drift = []
+    for row, issues in oriented:
+        if row["id"] in duplicated:
+            issues.append("duplicate_parent_port")
+        if not issues:
+            continue
+        child, parent = recs[row["from_device_id"]], recs[row["to_device_id"]]
+        port = normalize_port(row.get("to_port"))
+        drift.append((migration_drift_key(row["id"]), {
+            "connection_id": row["id"],
+            "issues": issues,
+            "message": describe_issues(issues, parent.get("system"), port),
+            "child_id": child["id"], "child_name": child.get("system"),
+            "parent_id": parent["id"], "parent_name": parent.get("system"),
+            "parent_port": port,
+            "connection_type": row.get("connection_type"),
+        }))
+    return {"network_roles": network_roles, "swaps": swaps, "drift": drift}

@@ -8,7 +8,9 @@ import pytest
 from netwatch.connections import (
     orient_edge, default_connection_type, infer_network_role, network_role,
     normalize_port, resolve_ports, validate_parent_port, fingerprint, type_rank,
+    lint_edge, plan_connections_migration, migration_drift_key,
 )
+from netwatch.storage import write_pre_migration_backup
 
 
 def rec(id_, device_type="host", system=None, role=None, **props):
@@ -290,3 +292,148 @@ def test_prune_keeps_pending_and_still_observed_dismissals():
         assert s.get(pending) is not None
         assert s.get(watched)["status"] == "dismissed"
         hdb.close()
+
+
+def _home_lab(idb):
+    """A slice of the real lab, stored the way pre-4.0 Netwatch stored it:
+    wifi edges in both directions, 'WAN' as a port, a VM edge drawn
+    host -> vm, a duplicate switch port, and a host<->host 'other' edge."""
+    ids = {
+        "eero": add_device(idb, "Eero Pro 6E — Gateway", "network", port_count=2),
+        "basement": add_device(idb, "Eero Pro 6E — Basement AP", "network", port_count=2),
+        "usw": add_device(idb, "Ubiquiti Unifi USW Pro Max 16 PoE", "network", port_count=16),
+        "prodesk": add_device(idb, "HP Prodesk 405 G6 Mini", "host"),
+        "desktop": add_device(idb, "Custom Desktop PC", "host"),
+        "xps": add_device(idb, "Dell XPS 17 9700", "host"),
+        "pi4": add_device(idb, "Raspberry Pi 4B", "host"),
+        "owui": add_device(idb, "OpenWebUI", "vm"),
+        "nas": add_device(idb, "Custom NAS", "host"),
+    }
+    with idb.lock:
+        idb.conn.execute("UPDATE inventory SET role = 'Primary Router & Gateway' WHERE id = ?", (ids["eero"],))
+        idb.conn.execute("UPDATE inventory SET role = 'Access Point' WHERE id = ?", (ids["basement"],))
+        idb.conn.execute("UPDATE inventory SET role = 'Primary Network Switch' WHERE id = ?", (ids["usw"],))
+    e = {
+        "eero_usw": insert_raw_edge(idb, ids["eero"], ids["usw"], "eth0", "13"),        # reversed
+        "prodesk_usw": insert_raw_edge(idb, ids["prodesk"], ids["usw"], "etho0", "8"),  # correct
+        "xps_wifi": insert_raw_edge(idb, ids["eero"], ids["xps"], "WAN", None, "wifi"),  # reversed + WAN
+        "pi4_wifi": insert_raw_edge(idb, ids["pi4"], ids["eero"], None, None, "wifi"),  # correct
+        "basement": insert_raw_edge(idb, ids["basement"], ids["eero"], None, None, "other"),  # correct via role
+        "desktop_owui": insert_raw_edge(idb, ids["desktop"], ids["owui"], None, None, "other"),  # reversed
+        "nas_dup": insert_raw_edge(idb, ids["nas"], ids["usw"], "eth0", "8"),           # duplicate port 8
+        "host_host": insert_raw_edge(idb, ids["desktop"], ids["nas"], None, None, "other"),  # ambiguous
+        "bad_port": insert_raw_edge(idb, ids["pi4"], ids["usw"], None, "99"),            # out of range
+    }
+    return ids, e
+
+
+def test_lint_edge_codes():
+    sw = rec(1, "network", system="USW", port_count=16)
+    host = rec(2, "host")
+    ports = resolve_ports(sw)
+    assert lint_edge({"to_port": "8", "connection_type": "ethernet"}, host, sw, ports) == []
+    assert lint_edge({"to_port": "99", "connection_type": "ethernet"}, host, sw, ports) == ["bad_parent_port"]
+    assert lint_edge({"to_port": "WAN", "connection_type": "wifi"}, host, sw, ports) == ["port_on_wifi"]
+    assert lint_edge({"to_port": None, "connection_type": "wifi"}, host, sw, ports) == []
+
+
+def test_plan_migration_on_home_lab():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        ids, e = _home_lab(idb)
+        records = {r["id"]: r for r in idb.list_all()}
+        plan = plan_connections_migration(records, idb.list_all_connections())
+        assert plan["network_roles"] == {ids["eero"]: "gateway", ids["basement"]: "ap", ids["usw"]: "switch"}
+        assert plan["swaps"] == {e["eero_usw"], e["xps_wifi"], e["desktop_owui"]}
+        drift = {key: payload for key, payload in plan["drift"]}
+        # eero_usw: after re-orientation the USW is the child and the eero
+        # parent port is "eth0", which is not one of the eero's 2 ports.
+        assert set(drift) == {
+            migration_drift_key(e["eero_usw"]), migration_drift_key(e["xps_wifi"]), migration_drift_key(e["prodesk_usw"]),
+            migration_drift_key(e["nas_dup"]), migration_drift_key(e["host_host"]),
+            migration_drift_key(e["bad_port"]),
+        }
+        xps = drift[migration_drift_key(e["xps_wifi"])]
+        assert xps["issues"] == ["port_on_wifi"]
+        assert (xps["child_id"], xps["parent_id"], xps["parent_port"]) == (ids["xps"], ids["eero"], "WAN")
+        assert drift[migration_drift_key(e["nas_dup"])]["issues"] == ["duplicate_parent_port"]
+        assert drift[migration_drift_key(e["host_host"])]["issues"] == ["ambiguous_direction"]
+        assert drift[migration_drift_key(e["bad_port"])]["issues"] == ["bad_parent_port"]
+        assert drift[migration_drift_key(e["eero_usw"])]["issues"] == ["bad_parent_port"]
+        assert "99" in drift[migration_drift_key(e["bad_port"])]["message"]
+        hdb.close()
+
+
+def test_plan_migration_keeps_existing_network_role():
+    records = {1: rec(1, "network", system="Some Switch", network_role="gateway")}
+    assert plan_connections_migration(records, [])["network_roles"] == {}
+
+
+def test_migrate_applies_plan_backs_up_first_and_is_idempotent():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        ids, e = _home_lab(idb)
+        calls = []
+        assert idb.connections_v2_ready() is False
+        ok, msg = idb.migrate_connections_v2(backup_fn=lambda: calls.append("backup"), now=500)
+        assert ok and calls == ["backup"]
+        assert idb.connections_v2_ready() is True
+
+        eero_usw = idb.get_connection(e["eero_usw"])
+        assert (eero_usw["child_id"], eero_usw["parent_id"]) == (ids["usw"], ids["eero"])
+        assert (eero_usw["child_port"], eero_usw["parent_port"]) == ("13", "eth0")
+        xps = idb.get_connection(e["xps_wifi"])
+        assert (xps["child_id"], xps["parent_id"], xps["parent_port"]) == (ids["xps"], ids["eero"], "WAN")
+        assert idb.get(ids["eero"])["properties"]["network_role"] == "gateway"
+        assert idb.get(ids["eero"])["properties"]["port_count"] == 2  # other props kept
+        assert all(c["source"] == "manual" and c["updated_at"] == 500
+                   for c in idb.list_all_connections())
+        assert idb.suggestions.count_pending() == 6
+
+        # Second run: no backup, no changes.
+        before = idb.list_all_connections()
+        ok2, msg2 = idb.migrate_connections_v2(backup_fn=lambda: calls.append("again"), now=900)
+        assert ok2 and msg2 == "already migrated" and calls == ["backup"]
+        assert idb.list_all_connections() == before
+        hdb.close()
+
+
+def test_migrate_aborts_without_changes_when_backup_fails():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        ids, e = _home_lab(idb)
+        def boom():
+            raise OSError("disk full")
+        ok, msg = idb.migrate_connections_v2(backup_fn=boom)
+        assert ok is False and msg == "backup failed"
+        assert idb.connections_v2_ready() is False
+        c = idb.get_connection(e["eero_usw"])
+        assert (c["child_id"], c["parent_id"]) == (ids["eero"], ids["usw"])  # untouched
+        assert idb.suggestions.count_pending() == 0
+        hdb.close()
+
+
+def test_migrate_skips_dangling_edges():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        a = add_device(idb, "A")
+        with idb.lock:
+            idb.conn.execute("PRAGMA foreign_keys = OFF")
+        insert_raw_edge(idb, 424242, a)
+        with idb.lock:
+            idb.conn.execute("PRAGMA foreign_keys = ON")
+        ok, _ = idb.migrate_connections_v2()
+        assert ok and idb.connections_v2_ready()
+        hdb.close()
+
+
+def test_write_pre_migration_backup_writes_private_tarball(tmp_path):
+    config = tmp_path / "hosts.yaml"
+    config.write_text("hosts: []\n")
+    auth = tmp_path / "auth.json"
+    auth.write_text("{}")
+    path = write_pre_migration_backup(str(config), str(auth), "connections-v2")
+    assert os.path.dirname(path) == str(tmp_path / "backups")
+    assert os.path.basename(path).startswith("pre-connections-v2-")
+    assert path.endswith(".tar.gz")
+    assert os.stat(path).st_mode & 0o777 == 0o600
