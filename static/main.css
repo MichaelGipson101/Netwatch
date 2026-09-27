@@ -128,6 +128,12 @@ nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:
 .topo-hidden-pill{cursor:pointer}
 .topo-hidden-pill rect{fill:var(--surface);stroke:var(--border)}
 .topo-hidden-pill text{font-size:10px;text-anchor:middle;fill:var(--muted);pointer-events:none}
+.topo-ghost{cursor:pointer}
+.topo-ghost-hit{fill:none;stroke:transparent;stroke-width:14}
+.topo-ghost-line{fill:none;stroke:var(--amber-text);stroke-width:1.5;stroke-dasharray:5,5;opacity:.7}
+.topo-ghost:hover .topo-ghost-line{opacity:1;stroke-width:2}
+.topo-ghost-q{font-size:11px;font-weight:700;text-anchor:middle;fill:var(--amber-text);paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
+.cx-sugg-flash{box-shadow:0 0 0 2px var(--amber-border);transition:box-shadow .3s}
 .topo-web-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .topo-web-toggle input{cursor:pointer}
 .topo-uncon-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint)}

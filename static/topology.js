@@ -275,6 +275,8 @@ function setTopoView(view){
 
 async function initTopologyWeb(){
   syncTopoLayoutControls();
+  const gt = document.getElementById('topo-ghost-toggle');
+  if(gt) gt.checked = _topoShowGhosts;
   const container = document.getElementById('topo-web-svg-host');
   if(!container) return;
   // Show a loading message while D3 loads + data fetches
@@ -310,7 +312,7 @@ function renderTopologyWeb(){
   const container = document.getElementById('topo-web-svg-host');
   if(!container) return;
   const scene = topoScene(_topoData, {includeUnconnected: _topoIncludeUnconnected,
-                                      showGhosts: _topoShowGhosts && _topoLayoutReady()});
+                                      showGhosts: _topoShowGhosts});
   const unconLabel = document.getElementById('topo-uncon-count');
   if(unconLabel) unconLabel.textContent = scene.unconnected > 0 ? '(' + scene.unconnected + ')' : '';
   if(_topoSimulation){ _topoSimulation.stop(); _topoSimulation = null; }
@@ -333,9 +335,6 @@ function renderTopologyWeb(){
   _topoLastStatus = {};
   ctx.renderNodes.forEach(n => { _topoLastStatus[n.id] = n.status; });
 }
-
-// Task 6 turns ghosts on; until then the scene never asks for them.
-function _topoLayoutReady(){ return false; }
 
 function _topoBuildScene(container, nodes, edges, ghosts){
   // Stable copies + restore pinned positions from localStorage
@@ -445,10 +444,14 @@ function _topoBuildScene(container, nodes, edges, ghosts){
   edgeSel.filter(d => !!topoPortLabel(d.to_port)).append('text')
     .attr('class', 'topo-edge-port').text(d => topoPortLabel(d.to_port));
 
-  // Ghost (suggested) edges: rendered, never part of any layout force/tree.
+  // Ghost (suggested) edges: dashed + "?", never part of any layout (spec §6.4).
   const ghostG = zoomG.append('g').attr('class', 'topo-ghosts');
   const ghostSel = ghostG.selectAll('g.topo-ghost').data(ghostEdges).join('g')
-    .attr('class', 'topo-ghost');
+    .attr('class', 'topo-ghost')
+    .on('click', (ev, g) => { ev.stopPropagation(); topologyOpenSuggestion(g.suggestion_id); });
+  ghostSel.append('path').attr('class', 'topo-ghost-hit');
+  ghostSel.append('path').attr('class', 'topo-ghost-line');
+  ghostSel.append('text').attr('class', 'topo-ghost-q').attr('dy', '0.35em').text('?');
 
   // Nodes
   const nodeG = zoomG.append('g').attr('class', 'topo-nodes');
@@ -536,6 +539,8 @@ function _topoBuildScene(container, nodes, edges, ghosts){
     tip.style('display', 'none');
     d3.select(this).classed('topo-edge-hovered', false);
   });
+  ghostSel.on('mousemove', function(ev, g){ placeTip(ev, buildGhostTip(g)); })
+    .on('mouseleave.tip', () => tip.style('display', 'none'));
 
   function highlightNode(target, on){
     const id = target ? target.id : null;
@@ -575,8 +580,9 @@ function _topoPositionAll(ctx){
     const path = this.querySelector('path.topo-edge-line');
     this._flowLen = path ? path.getTotalLength() : 0;   // cache while geometry changes
   });
-  ctx.ghostSel.select('path.topo-ghost-line')
-    .attr('d', d => 'M' + d.source.x + ',' + d.source.y + 'L' + d.target.x + ',' + d.target.y);
+  const ghostPath = d => 'M' + d.source.x + ',' + d.source.y + 'L' + d.target.x + ',' + d.target.y;
+  ctx.ghostSel.select('path.topo-ghost-line').attr('d', ghostPath);
+  ctx.ghostSel.select('path.topo-ghost-hit').attr('d', ghostPath);
   ctx.ghostSel.select('text.topo-ghost-q')
     .attr('x', d => (d.source.x + d.target.x) / 2)
     .attr('y', d => (d.source.y + d.target.y) / 2);
@@ -908,6 +914,27 @@ function disarmReset(btn){
 function topologyToggleUnconnected(checked){
   _topoIncludeUnconnected = checked;
   if(_topoView === 'web') renderTopologyWeb();
+}
+
+function topologyToggleGhosts(on){
+  _topoShowGhosts = !!on;
+  localStorage.setItem(TOPO_GHOSTS_KEY, on ? '1' : '0');
+  if(_topoView === 'web') renderTopologyWeb();
+}
+
+function topologyOpenSuggestion(id){
+  if(_topoFullscreen) exitTopologyFullscreen();
+  setTab('connections');
+  if(typeof cxHighlightSuggestion === 'function') cxHighlightSuggestion(id);
+}
+
+function buildGhostTip(g){
+  const src = (typeof CX_SOURCE_LABELS !== 'undefined' && CX_SOURCE_LABELS[g.origin]) || g.origin || '';
+  let html = '<div class="topo-tip-edge-type">Suggested' + (src ? ' by ' + escapeHtml(src) : '') + '</div>'
+    + '<div class="topo-tip-name">' + escapeHtml(g.source.name) + ' <span class="topo-tip-arrow">→</span> '
+    + escapeHtml(g.target.name) + '</div>';
+  if(g.parent_port) html += '<div class="topo-tip-meta">port ' + escapeHtml(g.parent_port) + '</div>';
+  return html + '<div class="topo-tip-meta">Tap to review in Connections</div>';
 }
 
 // Build tooltip HTML for an edge. Includes connection type icon,

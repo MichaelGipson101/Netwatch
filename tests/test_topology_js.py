@@ -160,3 +160,30 @@ def test_toolbar_has_the_segmented_layout_control():
         html = f.read()
     assert 'id="topo-layout-force"' in html and 'id="topo-layout-tree"' in html
     assert "setTopoLayout('tree')" in html and "setTopoLayout('force')" in html
+
+
+# ── Task 6: ghosts ───────────────────────────────────────────────────────────
+
+CX_JS = os.path.join(STATIC, "connections.js")
+
+
+def test_ghosts_are_drawn_toggled_and_open_the_inbox():
+    src = _src()
+    assert "function _topoLayoutReady(){ return false; }" not in src   # stub removed
+    for name in ("function topologyToggleGhosts(", "function topologyOpenSuggestion(",
+                 "function buildGhostTip("):
+        assert name in src, name
+    scene = src[src.index("function _topoBuildScene("):src.index("function _topoPositionAll(")]
+    assert "topo-ghost-line" in scene and "topo-ghost-q" in scene
+    assert "topologyOpenSuggestion(" in scene
+    opener = src[src.index("function topologyOpenSuggestion("):]
+    opener = opener[:opener.index("\n}\n")]
+    assert "setTab('connections')" in opener and "cxHighlightSuggestion(" in opener
+    with open(CX_JS, encoding="utf-8") as f:
+        cx = f.read()
+    assert "function cxHighlightSuggestion(" in cx and "function cxFlashSuggestion(" in cx
+    render = cx[cx.index("function renderCxSuggestions("):]
+    render = render[:render.index("\n}\n")]
+    assert "cxFlashSuggestion()" in render
+    with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
+        assert 'id="topo-ghost-toggle"' in f.read()

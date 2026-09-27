@@ -323,6 +323,10 @@
           <input type="checkbox" onchange="topologyToggleUnconnected(this.checked)">
           Include unconnected <span id="topo-uncon-count" class="topo-uncon-count"></span>
         </label>
+        <label class="topo-web-toggle">
+          <input type="checkbox" id="topo-ghost-toggle" checked onchange="topologyToggleGhosts(this.checked)">
+          Show suggestions
+        </label>
         <button class="topo-view-btn topo-view-btn-ghost" onclick="fitTopologyToView()" title="Frame the graph to fit the viewport">Fit to view</button>
         <button id="topo-reset-btn" class="topo-view-btn topo-view-btn-ghost" onclick="topologyResetPositions()">Reset positions</button>
       </div>

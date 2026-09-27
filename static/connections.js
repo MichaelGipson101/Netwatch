@@ -23,7 +23,7 @@ let _cxState = {
   mounted: false, quickMounted: false, seq: 0, refreshing: false, refreshQueued: false,
   status: null, suggestions: null, connections: null, inventory: [], categories: [], portMaps: [],
   error: null, migrationPending: false, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
-  filter: 'all', query: '', highlightConn: null,
+  filter: 'all', query: '', highlightConn: null, highlightSugg: null,
   editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null,
   swappedIds: {}, drafts: {}, busy: {},
 };
@@ -600,6 +600,37 @@ function cxHighlightConnection(id, opts){
   else cxRenderTableRows({force: true});
 }
 
+function cxHighlightSuggestion(id){
+  const view = document.getElementById('view-connections');
+  if(view && !view.classList.contains('active')) setTab('connections');
+  _cxState.highlightSugg = Number(id);
+  cxFlashSuggestion();
+}
+
+// Called now and after every inbox render, so it also works when the tab
+// is still loading. Says so when the suggestion is already gone.
+function cxFlashSuggestion(){
+  const id = _cxState.highlightSugg;
+  if(id === null || id === undefined) return;
+  const el = document.querySelector('.cx-sugg[data-sid="' + id + '"]');
+  if(!el){
+    // _cxState.suggestions is {items: [...]} once loaded (see
+    // renderCxSuggestions), not an array; null/undefined means "still
+    // loading" - don't declare it gone until we've actually seen the list.
+    if(_cxState.suggestions && Array.isArray(_cxState.suggestions.items)){
+      _cxState.highlightSugg = null;
+      toast('That suggestion was already handled');
+    }
+    return;
+  }
+  _cxState.highlightSugg = null;
+  const group = el.closest('details');
+  if(group) group.open = true;
+  el.scrollIntoView({block: 'center', behavior: 'smooth'});
+  el.classList.add('cx-sugg-flash');
+  setTimeout(() => el.classList.remove('cx-sugg-flash'), 2200);
+}
+
 // ── Suggestions inbox (spec §5.3) ───────────────────────────────────────────
 
 const CX_KIND_ORDER = ['device', 'edge', 'drift', 'identity', 'shared_port'];
@@ -763,6 +794,7 @@ function renderCxSuggestions(){
   if(active && el.contains(active) && active.matches('input, select')) return;
   if(!items.length){
     el.innerHTML = '<div class="cx-empty">Nothing to review. New suggestions appear here after each discovery scan.</div>';
+    cxFlashSuggestion();
     return;
   }
   el.innerHTML = cxGroupSuggestions(items).map(g =>
@@ -782,6 +814,7 @@ function renderCxSuggestions(){
     + '<datalist id="cx-cat-list">'
     + (_cxState.categories || []).map(c => '<option value="' + escapeHtml(c) + '">').join('')
     + '</datalist>';
+  cxFlashSuggestion();
 }
 
 async function cxSuggestionAction(id, action){
