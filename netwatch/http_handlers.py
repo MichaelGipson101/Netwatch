@@ -164,7 +164,8 @@ def build_topology_payload(inventory_db, host_manager):
     suggested = []
     try:
         pending = inventory_db.suggestions.list("pending")
-    except Exception:
+    except Exception as e:
+        logging.warning(f"topology: suggested_edges unavailable: {type(e).__name__}")
         pending = []
     for s in pending:
         p = s.get("payload") or {}

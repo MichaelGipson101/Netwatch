@@ -148,3 +148,19 @@ def test_suggested_edges_are_pending_edge_suggestions_with_both_ends_known():
         assert isinstance(g["suggestion_id"], int)
         assert all(edge.get("suggestion_id") is None for edge in out["edges"])  # never mixed in
         hdb.close()
+
+
+def test_suggested_edges_unavailable_degrades_to_empty_and_logs_a_warning(monkeypatch, caplog):
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids = lab(d)
+
+        def boom(status="pending"):
+            raise RuntimeError("suggestions table is locked")
+
+        monkeypatch.setattr(idb.suggestions, "list", boom)
+        with caplog.at_level("WARNING"):
+            out = build_topology_payload(idb, None)
+        assert out["suggested_edges"] == []
+        assert any("topology: suggested_edges unavailable: RuntimeError" in r.message
+                   for r in caplog.records)
+        hdb.close()
