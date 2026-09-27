@@ -352,6 +352,17 @@ def test_match_port_option_maps_hand_typed_ports_onto_live_names():
 
 
 @needs_node
+def test_match_port_option_matches_zero_padded_digits_against_plain_numeric_names():
+    # Ports without live idx metadata are just named "1".."8" (port_count
+    # devices) - the server's canonical_port treats "08" as "8", so the
+    # client match has to as well instead of leaving it "not a port".
+    opts = "[{value: '1', idx: null}, {value: '2', idx: null}, {value: '8', idx: null}]"
+    out = run_js([(QA_JS, "function qaMatchPortOption")],
+                 f"['08', '8', '007'].map(s => qaMatchPortOption({opts}, s))")
+    assert out == ["8", "8", None]
+
+
+@needs_node
 def test_orient_and_sentence():
     preview = "{child_id: 2, child_name: 'Pi', parent_id: 1, parent_name: 'USW', ambiguous: true}"
     out = run_js([(QA_JS, "function qaOrient"), (QA_JS, "function qaSentence")],
@@ -813,6 +824,7 @@ def test_old_drawer_form_is_gone_and_fan_out_is_used():
     assert "connectionsChanged()" in js_part(INV_JS, "async function deleteConnection")
     assert "connectionsChanged()" in js_part(INV_JS, "async function submitInventory")
     assert "connectionsChanged()" in js_part(INV_JS, "async function deleteInventory")
+    assert "connectionsChanged()" in js_part(INV_JS, "async function submitImport")
     css = open(os.path.join(STATIC, "main.css"), encoding="utf-8").read()
     for gone in (".conn-form", ".conn-add", ".conn-group", ".conn-icon"):
         assert gone not in css, gone
@@ -841,3 +853,196 @@ def test_workspace_breakpoints_are_present():
 def test_version_bumped_for_new_static_assets():
     from netwatch import VERSION
     assert VERSION == "3.77"
+
+
+# ── Whole-branch review fix wave (Minor findings 1, 3, 4, 6) ────────────────
+# 1: a partial load failure (status OK, connections/suggestions fail) must
+#    surface an honest error and retry, not silently show "no data".
+# 3: the edit row's swap control shouldn't vanish once a swap settles the
+#    drift that made it appear - a wrong swap needs to stay undoable.
+# 4: cxSwapConnection/cxSetFilter/the search box must not silently discard an
+#    open, dirty edit draft.
+# 6: migration-pending must disable quick add and show a matching message in
+#    the table/inbox, not just the status strip.
+
+@needs_node
+def test_needs_retry_excludes_migration_pending():
+    script = (
+        "var _cxState;\n"
+        + js_part(CX_JS, "function cxNeedsRetry") + "\n"
+        "function scenario(s){ _cxState = s; return cxNeedsRetry(); }\n"
+        "const out = [\n"
+        "  scenario({migrationPending: false, status: null, connections: {}, suggestions: {}}),\n"
+        "  scenario({migrationPending: false, status: {}, connections: null, suggestions: {}}),\n"
+        "  scenario({migrationPending: false, status: {}, connections: {}, suggestions: null}),\n"
+        "  scenario({migrationPending: false, status: {}, connections: {}, suggestions: {}}),\n"
+        "  scenario({migrationPending: true, status: null, connections: null, suggestions: null}),\n"
+        "];\n"
+        "process.stdout.write(JSON.stringify(out));\n"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == [True, True, True, False, False]
+
+
+@needs_node
+def test_badge_retries_on_a_partial_load_failure_but_not_during_migration_pending():
+    prelude = (
+        "var _cxState;\n"
+        "global.document = { getElementById: () => ({style: {}, textContent: ''}) };\n"
+        "let cxRefreshCalls = 0;\n"
+        "function cxRefreshAll(){ cxRefreshCalls++; }\n"
+    )
+    parts = [(CX_JS, "function cxNeedsRetry"), (CX_JS, "function updateConnectionsBadge")]
+    expr = (
+        "(function(){\n"
+        "  const seq = [];\n"
+        "  _cxState = {mounted: true, lastPending: null, migrationPending: false,\n"
+        "              status: {}, connections: null, suggestions: {}};\n"
+        "  updateConnectionsBadge(0); seq.push(cxRefreshCalls);\n"
+        "  _cxState = {mounted: true, lastPending: null, migrationPending: true,\n"
+        "              status: null, connections: null, suggestions: null};\n"
+        "  updateConnectionsBadge(0); seq.push(cxRefreshCalls);\n"
+        "  return seq;\n"
+        "})()"
+    )
+    out = run_js(parts, expr, prelude=prelude)
+    assert out == [1, 1]   # first call retries; migration-pending call adds no extra retry
+
+
+@needs_node
+def test_auth_hook_retries_on_a_partial_load_failure_but_not_during_migration_pending():
+    prelude = (
+        "global.window = {};\n"
+        "function escapeHtml(s){ return String(s); }\n"
+        "global.document = { getElementById: () => ({innerHTML: '', style: {}, textContent: ''}) };\n"
+        "var _cxState;\n"
+        "let cxRefreshCalls = 0;\n"
+        "function renderCxStatus(){}\n"
+        "function cxRefreshAll(){ cxRefreshCalls++; }\n"
+        "let _authState = {logged_in: true, username: 'admin', admin: true};\n"
+    )
+    expr = (
+        "(function(){\n"
+        "  const seq = [];\n"
+        "  _cxState = {mounted: true, lastLoggedIn: true, migrationPending: false,\n"
+        "              status: {}, connections: null, suggestions: {}};\n"
+        "  updateAuthUI(); seq.push(cxRefreshCalls);\n"
+        "  _cxState = {mounted: true, lastLoggedIn: true, migrationPending: true,\n"
+        "              status: null, connections: null, suggestions: null};\n"
+        "  updateAuthUI(); seq.push(cxRefreshCalls);\n"
+        "  return seq;\n"
+        "})()"
+    )
+    out = run_js([(CX_JS, "function cxNeedsRetry"), (AUTH_JS, "function updateAuthUI")], expr, prelude=prelude)
+    assert out == [1, 1]   # login-state unchanged both times; only cxNeedsRetry() drives the first retry
+
+
+@needs_node
+def test_table_and_inbox_show_the_honest_error_instead_of_empty_state():
+    # cxRenderTableRows' empty-state text and renderCxSuggestions' "no data"
+    # branch must surface _cxState.error rather than a misleading "no data
+    # yet" message when a load partially failed (or migration is pending).
+    table_part = js_part(CX_JS, "function cxRenderTableRows")
+    assert "_cxState.error" in table_part
+    sugg_part = js_part(CX_JS, "function renderCxSuggestions")
+    assert "_cxState.error" in sugg_part and "escapeHtml(_cxState.error)" in sugg_part
+
+
+EDIT_SWAPPED_PRELUDE = ("let _cxState = {editDraft: {parent_port: 'Port 8', connection_type: 'ethernet', notes: ''},"
+                        " editPorts: [{name: 'Port 8', idx: 8, occupants: []}], swappedIds: {9: true}};")
+
+
+@needs_node
+def test_edit_row_keeps_swap_control_for_a_swapped_id_with_no_drift():
+    html = run_js(EDIT_PARTS, f"cxEditRowHtml({EDIT_CONN}, [])", prelude=EDIT_SWAPPED_PRELUDE)
+    assert "cxSwapConnection(9)" in html
+    # No real drift this time - the hint about an undetermined direction
+    # shouldn't reappear just because the id is remembered as swapped.
+    assert "couldn't tell which end is upstream" not in html
+
+
+@needs_node
+def test_set_filter_confirms_before_discarding_a_dirty_edit():
+    src = js_part(CX_JS, "function cxEditDraftDirty") + "\n" + js_part(CX_JS, "function cxSetFilter")
+    script = (
+        "let renderCalls, confirmCalls, confirmReturn, _cxState;\n"
+        "function cxRenderTableRows(opts){ renderCalls++; }\n"
+        "global.confirm = m => { confirmCalls.push(m); return confirmReturn; };\n"
+        + src + "\n"
+        "function run(draft, orig, ret){\n"
+        "  renderCalls = 0; confirmCalls = []; confirmReturn = ret;\n"
+        "  _cxState = {editingConn: draft ? 9 : null, editDraft: draft, editOrig: orig, filter: 'all'};\n"
+        "  cxSetFilter('drift');\n"
+        "  return {filter: _cxState.filter, editingConn: _cxState.editingConn,\n"
+        "          renders: renderCalls, confirms: confirmCalls.length};\n"
+        "}\n"
+        "const clean = run({parent_port: 'a', connection_type: 'ethernet', notes: ''},\n"
+        "  {parent_port: 'a', connection_type: 'ethernet', notes: ''}, false);\n"
+        "const cancelled = run({parent_port: 'a', connection_type: 'ethernet', notes: 'edited'},\n"
+        "  {parent_port: 'a', connection_type: 'ethernet', notes: ''}, false);\n"
+        "const confirmed = run({parent_port: 'a', connection_type: 'ethernet', notes: 'edited'},\n"
+        "  {parent_port: 'a', connection_type: 'ethernet', notes: ''}, true);\n"
+        "process.stdout.write(JSON.stringify({clean, cancelled, confirmed}));\n"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["clean"] == {"filter": "drift", "editingConn": None, "renders": 1, "confirms": 0}
+    assert out["cancelled"] == {"filter": "all", "editingConn": 9, "renders": 0, "confirms": 1}
+    assert out["confirmed"] == {"filter": "drift", "editingConn": None, "renders": 1, "confirms": 1}
+
+
+@needs_node
+def test_swap_connection_confirms_before_discarding_edits_and_remembers_swapped_id():
+    src = js_part(CX_JS, "function cxEditDraftDirty") + "\n" + js_part(CX_JS, "async function cxSwapConnection")
+    script = (
+        "let postCalls, renderCalls, changedCalls, confirmCalls, confirmReturn, _cxState;\n"
+        "async function cxPost(url, body){ postCalls.push([url, body]); return {ok: true, body: {}}; }\n"
+        "function toast(){}\n"
+        "function cxRenderTableRows(opts){ renderCalls++; }\n"
+        "function connectionsChanged(){ changedCalls++; }\n"
+        "global.confirm = m => { confirmCalls.push(m); return confirmReturn; };\n"
+        + src + "\n"
+        "async function run(draft, orig, ret){\n"
+        "  postCalls = []; renderCalls = 0; changedCalls = 0; confirmCalls = []; confirmReturn = ret;\n"
+        "  _cxState = {editingConn: 9, editDraft: draft, editOrig: orig, swappedIds: {}};\n"
+        "  await cxSwapConnection(9);\n"
+        "  return {posts: postCalls, editingConn: _cxState.editingConn, swapped: _cxState.swappedIds,\n"
+        "          renders: renderCalls, changed: changedCalls, confirms: confirmCalls.length};\n"
+        "}\n"
+        "(async () => {\n"
+        "  const clean = await run(\n"
+        "    {parent_port: 'a', connection_type: 'ethernet', notes: ''},\n"
+        "    {parent_port: 'a', connection_type: 'ethernet', notes: ''}, false);\n"
+        "  const cancelled = await run(\n"
+        "    {parent_port: 'a', connection_type: 'ethernet', notes: 'edited'},\n"
+        "    {parent_port: 'a', connection_type: 'ethernet', notes: ''}, false);\n"
+        "  const confirmed = await run(\n"
+        "    {parent_port: 'a', connection_type: 'ethernet', notes: 'edited'},\n"
+        "    {parent_port: 'a', connection_type: 'ethernet', notes: ''}, true);\n"
+        "  process.stdout.write(JSON.stringify({clean, cancelled, confirmed}));\n"
+        "})();\n"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["clean"]["posts"] == [["/api/connections/9", {"swap": True}]]
+    assert out["clean"]["editingConn"] is None and out["clean"]["swapped"] == {"9": True}
+    assert out["clean"]["changed"] == 1 and out["clean"]["confirms"] == 0
+    assert out["cancelled"]["posts"] == [] and out["cancelled"]["editingConn"] == 9
+    assert out["cancelled"]["swapped"] == {} and out["cancelled"]["confirms"] == 1
+    assert out["confirmed"]["posts"] == [["/api/connections/9", {"swap": True}]]
+    assert out["confirmed"]["swapped"] == {"9": True} and out["confirmed"]["confirms"] == 1
+
+
+def test_search_input_guards_against_discarding_a_dirty_edit():
+    part = js_part(CX_JS, "function renderCxTable")
+    assert "cxEditDraftDirty()" in part
+    assert "search.value = _cxState.query" in part   # revert on cancel, keep editing
+
+
+def test_quick_add_is_locked_while_migration_is_pending():
+    assert "_cxQuickAdd.setLocked(pending)" in js_part(CX_JS, "async function cxRefreshAll")
+    qa_part = js_part(QA_JS, "function renderQuickAdd")
+    assert "setLocked:" in qa_part and "st.locked" in qa_part

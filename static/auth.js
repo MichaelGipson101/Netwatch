@@ -61,18 +61,19 @@ function updateAuthUI(){
   // admin-only; repaint (unconditionally) when admin state changes (login,
   // logout, or auth resolving after the tab was already shown). Only
   // re-fetch the whole workspace when the login state actually changed since
-  // the last check, or it never loaded (_cxState.status is still null) - this
-  // runs off the 5s/60s auth poll, so re-fetching every time would mean a
-  // full workspace re-fetch that often for no reason. If the workspace
-  // mounted while the session was expired, its initial fetches all 401'd and
-  // it's stuck showing "Loading..." with nothing to repaint into - a fresh
-  // login (or auth resolving late) is the recovery.
+  // the last check, or a load never fully succeeded (cxNeedsRetry(), which
+  // excludes migration-pending) - this runs off the 5s/60s auth poll, so
+  // re-fetching every time would mean a full workspace re-fetch that often
+  // for no reason. If the workspace mounted while the session was expired,
+  // its initial fetches all 401'd and it's stuck showing "Loading..." with
+  // nothing to repaint into - a fresh login (or auth resolving late) is the
+  // recovery.
   if (typeof renderCxStatus === 'function' && typeof _cxState !== 'undefined' && _cxState.mounted) {
     renderCxStatus();
     const cxLoginChanged = _cxState.lastLoggedIn !== _authState.logged_in;
     _cxState.lastLoggedIn = _authState.logged_in;
     if (_authState.logged_in && typeof cxRefreshAll === 'function'
-        && (cxLoginChanged || _cxState.status === null)) cxRefreshAll();
+        && (cxLoginChanged || (typeof cxNeedsRetry === 'function' && cxNeedsRetry()))) cxRefreshAll();
   }
 }
 

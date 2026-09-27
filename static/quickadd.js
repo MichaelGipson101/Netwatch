@@ -51,8 +51,9 @@ function qaMatchPortOption(opts, stored){
   }
   if(/^\d+$/.test(s)){
     const n = parseInt(s, 10);
+    const nStr = String(n);   // "08" -> "8": matches the server's canonical_port
     for(const o of opts){
-      if(o.idx === n) return o.value;
+      if(o.idx === n || String(o.value) === nStr) return o.value;
     }
   }
   return null;
@@ -122,7 +123,7 @@ function renderQuickAdd(container, opts){
   const st = {a: null, b: null, preview: null, ports: null, swapped: false,
               typeChosen: null, port: opts.parent_port || '',
               portParent: opts.parent_port && opts.b_id != null ? Number(opts.b_id) : null,
-              busy: false, seq: 0};
+              busy: false, seq: 0, locked: false};
   container.innerHTML =
     '<div class="qa' + (opts.compact ? ' qa-compact' : '') + '" id="' + uid + '">'
     + '<div class="qa-row">'
@@ -206,7 +207,7 @@ function renderQuickAdd(container, opts){
       });
     }
     swapBtn.hidden = !(st.preview && st.preview.ambiguous);
-    addBtn.disabled = !st.preview || st.busy;
+    addBtn.disabled = st.locked || !st.preview || st.busy;
     addBtn.textContent = st.busy ? 'Adding…' : 'Add';
     paintSentence();
   }
@@ -366,5 +367,10 @@ function renderQuickAdd(container, opts){
       onPairChanged();
     });
   }
-  return {focus: () => Promise.resolve(prefillDone).then(() => (st.a ? pickB : pickA).input.focus())};
+  return {
+    focus: () => Promise.resolve(prefillDone).then(() => (st.a ? pickB : pickA).input.focus()),
+    // Disables Add without touching the picked devices/preview - used while
+    // the connections backend is migration-pending (read-only for now).
+    setLocked: locked => { st.locked = !!locked; paint(); },
+  };
 }

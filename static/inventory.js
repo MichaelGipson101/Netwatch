@@ -1267,6 +1267,7 @@ async function submitImport(){
     showImportResult('ok', msg);
     btn.textContent = 'Done';
     await fetchInventory();
+    connectionsChanged();   // replace mode can delete records and edges
     setTimeout(closeImportModal, 2500);
   } catch(e){
     showImportResult('err', 'Network error during import');

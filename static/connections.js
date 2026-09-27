@@ -22,11 +22,24 @@ const CX_SINGULAR = {switches: 'switch', clients: 'client', nodes: 'node',
 let _cxState = {
   mounted: false, quickMounted: false, seq: 0, refreshing: false, refreshQueued: false,
   status: null, suggestions: null, connections: null, inventory: [], categories: [], portMaps: [],
-  error: null, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
+  error: null, migrationPending: false, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
   filter: 'all', query: '', highlightConn: null,
   editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null,
-  drafts: {}, busy: {},
+  swappedIds: {}, drafts: {}, busy: {},
 };
+
+// The quick add control mounted in this workspace (not the drawer/port-map
+// ones) - locked while migration-pending so its Add button can't be used on
+// a read-only backend. Set once in mountConnectionsTab.
+let _cxQuickAdd = null;
+
+// Excludes migration-pending on purpose: that state already has its own
+// honest "read-only for now" message and shouldn't trigger a refresh loop
+// every 5s poll just because connections/suggestions are (expectedly) null.
+function cxNeedsRetry(){
+  return !_cxState.migrationPending
+    && (_cxState.status === null || _cxState.connections === null || _cxState.suggestions === null);
+}
 
 // ── Pure helpers (unit-tested in node; keep brackets balanced in literals) ──
 
@@ -94,15 +107,19 @@ async function cxRefreshAll(){
       cxGetJson('/api/connections'), qaLoadInventory()]);
     if(seq !== _cxState.seq) return;
     const pending = [suggestions, connections].some(x => x && x.migrationPending);
+    _cxState.migrationPending = pending;
     if(pending){
       // Migration message takes precedence over a plain load failure.
       _cxState.error = 'The connections upgrade hasn\'t finished on the server yet, so this page is read-only for now.';
-    } else if(status === null){
-      // Distinct from "still loading": the fetch actually failed (401/500/network).
+    } else if(status === null || connections === null || suggestions === null){
+      // Distinct from "still loading": one of the fetches actually failed
+      // (401/500/network) - status alone succeeding isn't enough to call
+      // the load a success.
       _cxState.error = 'Couldn\'t load connection data. It will retry on the next refresh.';
     } else {
       _cxState.error = null;
     }
+    if(typeof _cxQuickAdd !== 'undefined' && _cxQuickAdd) _cxQuickAdd.setLocked(pending);
     _cxState.status = status && !status.migrationPending ? status : null;
     _cxState.suggestions = suggestions && !suggestions.migrationPending ? suggestions : null;
     _cxState.connections = connections && !connections.migrationPending ? connections : null;
@@ -145,7 +162,7 @@ function mountConnectionsTab(){
   // its own initial cxRefreshAll() below).
   if(typeof _authState !== 'undefined') _cxState.lastLoggedIn = _authState.logged_in;
   if(!_cxState.quickMounted){
-    renderQuickAdd(document.getElementById('cx-quick'), {onAdded: () => connectionsChanged()});
+    _cxQuickAdd = renderQuickAdd(document.getElementById('cx-quick'), {onAdded: () => connectionsChanged()});
     _cxState.quickMounted = true;
   }
   cxRender();       // paint what we already have...
@@ -167,11 +184,12 @@ function updateConnectionsBadge(n){
   if(el){ el.style.display = n > 0 ? '' : 'none'; el.textContent = n; }
   const changed = _cxState.lastPending !== null && n !== _cxState.lastPending;
   _cxState.lastPending = n;
-  // Refresh when a scan landed, or (retry path) the last load never succeeded -
-  // this 5s poll is what recovers the workspace from a failed first fetch
-  // without the user having to leave and re-enter the tab. cxRefreshAll's own
-  // refreshing guard keeps this from stacking overlapping fetches.
-  if(_cxState.mounted && (changed || _cxState.status === null)) cxRefreshAll();
+  // Refresh when a scan landed, or (retry path) the last load never fully
+  // succeeded - this 5s poll is what recovers the workspace from a failed
+  // first fetch without the user having to leave and re-enter the tab.
+  // cxRefreshAll's own refreshing guard keeps this from stacking overlapping
+  // fetches. cxNeedsRetry() excludes migration-pending on purpose.
+  if(_cxState.mounted && (changed || cxNeedsRetry())) cxRefreshAll();
 }
 
 // ── Status strip (spec §5.1) ────────────────────────────────────────────────
@@ -366,6 +384,11 @@ function cxEditRowHtml(c, issues){
     }
   }
   const ambiguous = (issues || []).indexOf('ambiguous_direction') !== -1;
+  // Once the user has explicitly swapped a connection this session, keep
+  // offering the control even after the swap settles the drift (the
+  // suggestion that flagged 'ambiguous_direction' disappears on refresh) -
+  // otherwise a wrong swap can't be undone without reloading the page.
+  const showSwap = ambiguous || !!(_cxState.swappedIds && _cxState.swappedIds[c.id]);
   return '<tr class="cx-edit-row" data-conn="' + c.id + '"><td colspan="6"><div class="cx-edit">'
     + '<div class="cx-edit-title">' + escapeHtml(c.child_name) + ' → ' + escapeHtml(c.parent_name) + '</div>'
     + '<label class="qa-field"><span>Port</span>' + portCtl + '</label>'
@@ -381,7 +404,7 @@ function cxEditRowHtml(c, issues){
       ? '<p class="cx-muted cx-edit-hint">Netwatch couldn\'t tell which end is upstream. If it\'s the wrong way round, swap it.</p>'
       : '')
     + '<div class="cx-edit-actions">'
-      + (ambiguous ? '<button type="button" class="btn" onclick="cxSwapConnection(' + c.id + ')">⇅ Swap direction</button>' : '')
+      + (showSwap ? '<button type="button" class="btn" onclick="cxSwapConnection(' + c.id + ')">⇅ Swap direction</button>' : '')
       + '<button type="button" class="btn btn-ghost" onclick="cxCancelEdit()">Cancel</button>'
       + '<button type="button" class="btn btn-primary" onclick="cxSaveEdit(' + c.id + ')">Save</button>'
     + '</div></div></td></tr>';
@@ -402,6 +425,10 @@ function renderCxTable(){
       + '<div class="cx-table-empty cx-muted" hidden></div>';
     const search = el.querySelector('.cx-search');
     search.addEventListener('input', () => {
+      if(cxEditDraftDirty() && !confirm('Discard your unsaved changes to the open connection edit?')){
+        search.value = _cxState.query;   // revert; keep the edit open
+        return;
+      }
       _cxState.query = search.value;
       _cxState.editingConn = null;
       cxRenderTableRows({force: true});
@@ -447,9 +474,11 @@ function cxRenderTableRows(opts){
     : cxRowHtml(c, now, Object.prototype.hasOwnProperty.call(issues, c.id))).join('');
   const empty = el.querySelector('.cx-table-empty');
   empty.hidden = rows.length > 0;
-  empty.textContent = conns.length
-    ? 'No connections match this filter.'
-    : 'No connections recorded yet. Add one above, or accept suggestions as discovery finds them.';
+  empty.textContent = _cxState.error
+    ? _cxState.error
+    : (conns.length
+      ? 'No connections match this filter.'
+      : 'No connections recorded yet. Add one above, or accept suggestions as discovery finds them.');
   if(_cxState.highlightConn !== null){
     const row = el.querySelector('tr[data-conn="' + _cxState.highlightConn + '"]');
     if(row){
@@ -461,7 +490,17 @@ function cxRenderTableRows(opts){
   }
 }
 
+// True when an edit row is open and its draft has diverged from the
+// snapshot cxStartEdit took (_cxState.editOrig) - i.e. discarding it now
+// would lose real, unsaved changes.
+function cxEditDraftDirty(){
+  const d = _cxState.editDraft, o = _cxState.editOrig;
+  if(_cxState.editingConn === null || !d || !o) return false;
+  return d.parent_port !== o.parent_port || d.connection_type !== o.connection_type || d.notes !== o.notes;
+}
+
 function cxSetFilter(f){
+  if(cxEditDraftDirty() && !confirm('Discard your unsaved changes to the open connection edit?')) return;
   _cxState.filter = f;
   _cxState.editingConn = null;
   cxRenderTableRows({force: true});
@@ -527,9 +566,14 @@ async function cxSaveEdit(id){
 }
 
 async function cxSwapConnection(id){
+  if(cxEditDraftDirty() && !confirm('Discard your unsaved changes to this connection and swap direction?')) return;
   const out = await cxPost('/api/connections/' + id, {swap: true});
   if(!out.ok){ toast('Could not swap: ' + out.error, 'error'); return; }
   toast('Direction swapped', 'success');
+  // Remember it locally: the drift that made the ⇅ control appear settles
+  // once the swap lands, but a wrong swap still needs to be undoable.
+  _cxState.swappedIds = _cxState.swappedIds || {};
+  _cxState.swappedIds[id] = true;
   _cxState.editingConn = null;
   _cxState.editDraft = null;
   _cxState.editOrig = null;
@@ -706,7 +750,9 @@ function renderCxSuggestions(){
   cxInitSuggestionEvents(el);
   const data = _cxState.suggestions;
   if(!data){
-    el.innerHTML = _cxState.error ? '' : '<div class="cx-muted">Loading…</div>';
+    el.innerHTML = _cxState.error
+      ? '<div class="cx-empty cx-warn-text">' + escapeHtml(_cxState.error) + '</div>'
+      : '<div class="cx-muted">Loading…</div>';
     if(countEl) countEl.textContent = '';
     return;
   }
