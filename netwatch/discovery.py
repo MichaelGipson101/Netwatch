@@ -124,7 +124,11 @@ def unifi_observations(snapshot, guest_macs=None):
     for sw_mac, idx in sorted(by_port):
         clients = by_port[(sw_mac, idx)]
         sw = switches[sw_mac]
-        port = next((p["name"] for p in sw["ports"] if p["idx"] == idx), str(idx))
+        port_info = next((p for p in sw["ports"] if p["idx"] == idx), None)
+        if port_info and port_info["is_uplink"]:
+            # Everything upstream shows up on the uplink; LLDP covers that link.
+            continue
+        port = port_info["name"] if port_info else str(idx)
         if guest_macs is None and any(is_likely_guest_mac(c["mac"]) for c in clients):
             obs.append({"type": "held", "source": "unifi",
                         "macs": sorted(c["mac"] for c in clients),
@@ -573,13 +577,11 @@ class DiscoveryRunner:
 
     def request_scan(self):
         """Ask the background loop for a scan now. False when nothing is
-        configured; a request during a running scan coalesces into it."""
+        configured. The loop clears the wake flag before scanning, so a
+        request that arrives mid-scan runs one more scan right after it."""
         if not self.any_source_configured():
             return False
-        with self._lock:
-            scanning = self._scanning
-        if not scanning:
-            self._wake.set()
+        self._wake.set()
         return True
 
     def status(self):

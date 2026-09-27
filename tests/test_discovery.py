@@ -1304,3 +1304,41 @@ def test_final_c1b_scan_started_before_accept_keeps_it_accepted():
         idb.apply_discovery_changes(changes, NOW)
         assert suggestion_status(idb, key) == "accepted"
         hdb.close()
+
+
+def test_scan_request_during_a_scan_runs_one_more_scan():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        started, release, calls = threading.Event(), threading.Event(), []
+
+        def fetch(*a):
+            calls.append(1)
+            started.set()
+            release.wait(5)
+            return unifi_device_payload(), unifi_clients_payload()
+        r = runner_for(idb, fetch)
+        r.FIRST_SCAN_DELAY_SECONDS = 3600
+        r.SCAN_INTERVAL_SECONDS = 3600
+        stop = threading.Event()
+        t = r.start(stop)
+        r.request_scan()
+        assert started.wait(5)
+        started.clear()
+        assert r.request_scan() is True  # arrives mid-scan
+        release.set()
+        assert started.wait(5), "mid-scan request was dropped"
+        assert len(calls) == 2
+        stop.set()
+        r.request_scan()
+        t.join(5)
+        assert not t.is_alive()
+        hdb.close()
+
+
+def test_clients_on_uplink_ports_are_ignored():
+    devices, clients = unifi_device_payload(), unifi_clients_payload()
+    clients["data"] += [_sta("30:00:00:00:00:01", 13, "upstream-a"),
+                        _sta("30:00:00:00:00:02", 13, "upstream-b")]
+    obs = unifi_observations(parse_unifi(devices, clients))
+    assert not [o for o in obs if o.get("port") == "Port 13" and o["type"] != "lldp"]
+    assert not [o for o in obs if o["type"] == "edge" and o["parent_port"] == "Port 13"]
