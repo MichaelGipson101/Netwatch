@@ -134,6 +134,7 @@ async function cxRefreshAll(){
 function cxRender(){
   renderCxStatus();
   renderCxSuggestions();
+  renderCxPortMaps();
   renderCxTable();
 }
 
@@ -800,4 +801,75 @@ async function cxAcceptAll(kind, source){
   qaInvalidateInventory();
   if(typeof fetchInventory === 'function') fetchInventory();
   connectionsChanged();
+}
+
+// ── Switch port map (spec §5.4) ─────────────────────────────────────────────
+
+function cxFmtSpeed(mbps){
+  if(!mbps) return '';
+  return mbps >= 1000 ? (mbps / 1000) + ' Gbps' : mbps + ' Mbps';
+}
+
+function cxShortPortName(name){
+  const s = String(name || '');
+  const m = s.match(/^Port (\d+)$/);
+  if(m) return m[1];
+  return s.replace(/^SFP\+ (\d+)$/, 'SFP+$1');
+}
+
+function cxPortTile(p){
+  const occ = p.occupants || [];
+  const link = p.up === true ? 'up' : p.up === false ? 'down' : 'unknown';
+  const state = occ.length ? 'occupied' : (p.up === true ? 'up' : 'down');
+  let label = '';
+  if(occ.length === 1) label = occ[0].name;
+  else if(occ.length > 1) label = '+' + occ.length;
+  else if(p.up === true) label = '?';
+  const bits = [p.name];
+  if(p.up === true) bits.push('link up' + (p.speed_mbps ? ' · ' + cxFmtSpeed(p.speed_mbps) : ''));
+  else if(p.up === false) bits.push('link down');
+  if(p.poe) bits.push('PoE');
+  if(occ.length) bits.push(occ.map(o => o.name).join(', '));
+  return {name: p.name, state: state, link: link, label: label, title: bits.join(' · '),
+          conn_id: occ.length ? occ[0].connection_id : null};
+}
+
+function cxTileHtml(deviceId, p){
+  const t = cxPortTile(p);
+  const inner = '<span class="cx-tile-port"><i class="cx-led ' + t.link + '"></i>' + escapeHtml(cxShortPortName(t.name)) + '</span>'
+    + '<span class="cx-tile-dev">' + escapeHtml(t.label) + '</span>';
+  if(t.state === 'occupied'){
+    return '<button type="button" class="cx-tile cx-tile-occupied" title="' + escapeHtml(t.title) + '"'
+      + ' aria-label="' + escapeHtml(t.title) + '" onclick="cxHighlightConnection(' + t.conn_id + ')">' + inner + '</button>';
+  }
+  if(t.state === 'up'){
+    const tip = t.title + ' · nothing recorded here: tap to add it';
+    return '<button type="button" class="cx-tile cx-tile-up" title="' + escapeHtml(tip) + '" aria-label="' + escapeHtml(tip) + '"'
+      + ' data-port="' + escapeHtml(t.name) + '" onclick="cxQuickAddAt(' + deviceId + ', this.dataset.port)">' + inner + '</button>';
+  }
+  return '<div class="cx-tile cx-tile-down" title="' + escapeHtml(t.title) + '">' + inner + '</div>';
+}
+
+function renderCxPortMaps(){
+  const panel = document.getElementById('cx-ports-panel');
+  const el = document.getElementById('cx-ports');
+  if(!panel || !el) return;
+  const maps = (_cxState.portMaps || []).filter(m => m.data && m.data.live && m.data.ports);
+  panel.hidden = maps.length === 0;
+  el.innerHTML = maps.map(m =>
+    '<div class="cx-face">'
+    + '<div class="cx-face-hdr">' + deviceIcon('network', 20) + '<span class="cx-face-name">' + escapeHtml(m.name) + '</span>'
+    + '<span class="cx-face-legend"><span><i class="cx-led up"></i>link up</span><span><i class="cx-led down"></i>down</span>'
+    + '<span><b class="cx-legend-q">?</b> not recorded</span></span></div>'
+    + '<div class="cx-face-grid">' + m.data.ports.map(p => cxTileHtml(m.device_id, p)).join('') + '</div>'
+    + '</div>').join('');
+}
+
+// Up-but-unrecorded tile: open quick add with the switch and port filled in.
+function cxQuickAddAt(deviceId, port){
+  const box = document.getElementById('cx-quick');
+  if(!box) return;
+  const qa = renderQuickAdd(box, {b_id: deviceId, parent_port: port, onAdded: () => connectionsChanged()});
+  box.closest('.cx-panel').scrollIntoView({block: 'start', behavior: 'smooth'});
+  if(qa) setTimeout(() => qa.focus(), 350);
 }

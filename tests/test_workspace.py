@@ -755,3 +755,32 @@ def test_device_editor_renders_drafts_over_the_payload():
     assert 'value="Workbench PC"' in html and "WORKBENCH-PC" not in html
     assert "<details class=\"cx-sugg-edit\" open" in html
     assert '<option value="host" selected>' in html
+
+
+# ── Task 8: port map ────────────────────────────────────────────────────────
+
+CX_PANELS.append("renderCxPortMaps")
+TILE_PARTS = [(CX_JS, "function cxFmtSpeed"), (CX_JS, "function cxPortTile")]
+
+
+@needs_node
+def test_port_tiles():
+    ports = ("[{name: 'Port 7', up: true, speed_mbps: 1000, poe: true, occupants: [{name: 'Pi', connection_id: 4}]},"
+             " {name: 'Port 4', up: true, speed_mbps: 2500, poe: false, occupants: []},"
+             " {name: 'Port 1', up: false, occupants: []},"
+             " {name: 'Port 11', up: true, speed_mbps: 100, occupants: [{name: 'A', connection_id: 1}, {name: 'B', connection_id: 2}]},"
+             " {name: '3', up: null, occupants: []}]")
+    out = run_js(TILE_PARTS, f"{ports}.map(cxPortTile)")
+    assert out[0] == {"name": "Port 7", "state": "occupied", "link": "up", "label": "Pi",
+                      "title": "Port 7 · link up · 1 Gbps · PoE · Pi", "conn_id": 4}
+    assert out[1]["state"] == "up" and out[1]["label"] == "?" and "2.5 Gbps" in out[1]["title"]
+    assert out[2]["state"] == "down" and out[2]["link"] == "down" and out[2]["label"] == ""
+    assert out[3]["label"] == "+2" and out[3]["conn_id"] == 1 and "100 Mbps" in out[3]["title"]
+    assert out[4]["link"] == "unknown" and out[4]["state"] == "down"
+
+
+@needs_node
+def test_short_port_names():
+    out = run_js([(CX_JS, "function cxShortPortName")],
+                 "['Port 7', 'Port 16', 'SFP+ 1', 'eth0', '3'].map(cxShortPortName)")
+    assert out == ["7", "16", "SFP+1", "eth0", "3"]

@@ -1941,3 +1941,38 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
   .cx-sugg-actions .btn{flex:1 1 0}
   .cx-sugg-edit-grid{grid-template-columns:minmax(0,1fr)}
 }
+
+/* Switch port map: a faceplate of RJ45-ish tiles */
+.cx-face+.cx-face{margin-top:16px}
+.cx-face-hdr{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-size:13px;font-weight:600;min-width:0}
+.cx-face-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cx-face-legend{margin-left:auto;display:inline-flex;flex-wrap:wrap;gap:10px;font:400 11px 'DM Sans',sans-serif;color:var(--hint)}
+.cx-face-legend span{display:inline-flex;align-items:center;gap:4px}
+.cx-legend-q{color:var(--amber-text)}
+.cx-face-grid{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:6px;padding:10px;border-radius:10px;border:1px solid var(--border);background:linear-gradient(180deg,var(--subtle),var(--bg));box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+.cx-tile{display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:0;min-height:54px;padding:6px 7px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:inherit;text-align:left;box-shadow:inset 0 -3px 0 rgba(0,0,0,.05)}
+button.cx-tile{cursor:pointer;transition:border-color .15s,transform .1s}
+button.cx-tile:hover{border-color:var(--blue)}
+button.cx-tile:active{transform:translateY(1px)}
+button.cx-tile:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.cx-tile-port{display:flex;align-items:center;gap:5px;font:500 11px 'DM Mono',monospace;color:var(--muted)}
+.cx-tile-dev{min-width:0;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cx-tile-up{border-style:dashed;border-color:var(--amber-border);background:var(--amber-bg)}
+.cx-tile-up .cx-tile-dev{color:var(--amber-text);font-weight:700}
+.cx-tile-down{opacity:.55}
+.cx-led{display:inline-block;flex-shrink:0;width:7px;height:7px;border-radius:50%;background:var(--border)}
+.cx-led.up{background:var(--green);box-shadow:0 0 0 2px var(--green-bg)}
+.cx-led.down{background:var(--hint)}
+@media (max-width:600px){
+  .cx-face-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;padding:8px}
+  .cx-face-legend{margin-left:0;flex-basis:100%}
+}
+@media (max-width:380px){
+  .cx-tile{min-height:44px;padding:5px 4px}
+  .cx-tile-port{font-size:10px;gap:3px}
+  .cx-tile-dev{font-size:10px}
+}
+[data-theme="dark"] .cx-face-grid{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.25));border-color:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+[data-theme="dark"] .cx-tile{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.09);box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
+[data-theme="dark"] .cx-tile-up{background:var(--amber-bg);border-color:var(--amber-border)}
+[data-theme="dark"] .cx-led.up{box-shadow:0 0 6px var(--green-glow)}
