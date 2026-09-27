@@ -18,6 +18,7 @@ async function fetchInventory(){
     if(!res.ok) return;
     const data = await res.json();
     _inventoryData = data.items || [];
+    if(typeof qaInvalidateInventory === 'function') qaInvalidateInventory();
     renderInventoryTab();
   } catch(e){ /* ignore */ }
 }

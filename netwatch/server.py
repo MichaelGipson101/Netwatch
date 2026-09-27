@@ -45,6 +45,7 @@ _STATIC_FILES = {
     'core.js':     'application/javascript; charset=utf-8',
     'topology.js': 'application/javascript; charset=utf-8',
     'inventory.js':'application/javascript; charset=utf-8',
+    'quickadd.js': 'application/javascript; charset=utf-8',
     'auth.js':     'application/javascript; charset=utf-8',
     'ai-panel.js':  'application/javascript; charset=utf-8',
     'nas.js':       'application/javascript; charset=utf-8',

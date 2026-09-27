@@ -301,4 +301,78 @@ def test_inventory_form_uses_prop_defs_everywhere():
                "function renderInventoryDrawer"):
         assert "invPropDefs(" in js_part(INV_JS, fn), fn
     assert "invParseMacList(" in js_part(INV_JS, "async function submitInventory")
+
+
+# ── Task 4: quick add ───────────────────────────────────────────────────────
+
+QA_JS = os.path.join(STATIC, "quickadd.js")
+DEVICES = ("[{id: 1, system: 'USW Pro Max 16 PoE', device_type: 'network', ip: '192.168.6.2'},"
+           " {id: 2, system: 'Raspberry Pi 5', device_type: 'host', ip: '192.168.6.90'},"
+           " {id: 3, system: 'ProDesk1', device_type: 'host', ip: '192.168.6.219'},"
+           " {id: 4, system: 'Printer (Office)', device_type: 'printer', ip: null}]")
+
+
+@needs_node
+def test_match_devices_ranks_prefix_first_and_excludes():
+    out = run_js([(QA_JS, "function qaMatchDevices")],
+                 f"[qaMatchDevices({DEVICES}, 'pr', [], 8).map(d => d.id),"
+                 f" qaMatchDevices({DEVICES}, 'pr', [3], 8).map(d => d.id),"
+                 f" qaMatchDevices({DEVICES}, '', [], 2).map(d => d.id),"
+                 f" qaMatchDevices({DEVICES}, '6.90', [], 8).map(d => d.id),"
+                 f" qaMatchDevices({DEVICES}, 'zzz', [], 8)]")
+    assert out[0] == [4, 3, 1]       # prefix matches first (alphabetical), then "USW Pro..." contains it
+    assert out[1] == [4, 1]
+    assert out[2] == [4, 3]          # empty query: alphabetical, limited
+    assert out[3] == [2]             # matches on IP too
+    assert out[4] == []
+
+
+@needs_node
+def test_port_options_mark_taken_and_live_ports():
+    ports = ("[{name: 'Port 1', idx: 1, up: true, occupants: []},"
+             " {name: 'Port 2', idx: 2, up: false, occupants: [{name: 'NAS', connection_id: 9}]},"
+             " {name: '3', up: null, occupants: []}]")
+    out = run_js([(QA_JS, "function qaPortOptions")], f"[qaPortOptions({ports}), qaPortOptions(null)]")
+    assert out[0] == [
+        {"value": "Port 1", "label": "Port 1 · link up", "taken": False, "idx": 1},
+        {"value": "Port 2", "label": "Port 2 · NAS", "taken": True, "idx": 2},
+        {"value": "3", "label": "3", "taken": False, "idx": None},
+    ]
+    assert out[1] is None
+
+
+@needs_node
+def test_match_port_option_maps_hand_typed_ports_onto_live_names():
+    opts = ("[{value: 'Port 8', idx: 8}, {value: 'SFP+ 1', idx: 17}, {value: '3', idx: null}]")
+    out = run_js([(QA_JS, "function qaMatchPortOption")],
+                 f"['8', 'port 8', 'Port 8', '17', 'sfp+ 1', '3', 'eth0', '', null]"
+                 f".map(s => qaMatchPortOption({opts}, s))")
+    assert out == ["Port 8", "Port 8", "Port 8", "SFP+ 1", "SFP+ 1", "3", None, None, None]
+
+
+@needs_node
+def test_orient_and_sentence():
+    preview = "{child_id: 2, child_name: 'Pi', parent_id: 1, parent_name: 'USW', ambiguous: true}"
+    out = run_js([(QA_JS, "function qaOrient"), (QA_JS, "function qaSentence")],
+                 f"[qaSentence(qaOrient({preview}, false), 'Port 7', 'ethernet'),"
+                 f" qaSentence(qaOrient({preview}, true), '', 'ethernet'),"
+                 f" qaOrient(null, false), qaSentence(null, 'x', 'y')]")
+    assert out == ["Pi → USW · Port 7 · ethernet", "USW → Pi · ethernet", None, ""]
+
+
+def test_quickadd_is_served_and_loaded():
+    from netwatch.server import _STATIC_FILES
+    assert _STATIC_FILES["quickadd.js"].startswith("application/javascript")
+    html = open(DASHBOARD, encoding="utf-8").read()
+    assert '<script src="/static/quickadd.js?v={{VERSION}}"></script>' in html
+    assert "qaInvalidateInventory" in js_part(INV_JS, "async function fetchInventory")
+
+
+@needs_node
+@pytest.mark.parametrize("name", sorted(f for f in os.listdir(STATIC)
+                                        if f.endswith(".js") and f != "d3.v7.min.js"))
+def test_every_static_script_parses(name):
+    r = subprocess.run(["node", "--check", os.path.join(STATIC, name)],
+                       capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
     assert "p.type === \"select\"" in js_part(INV_JS, "function onInvTypeChange")
