@@ -34,6 +34,7 @@ function _fillSettingsForm(s) {
     'ha_entity_current', 'ha_entity_energy',
     'pbs_url', 'pbs_api_token_id', 'pbs_api_token_secret', 'pbs_ca_cert',
     'nut_server', 'nut_port', 'nut_ups_name', 'nut_username', 'nut_password',
+    'unifi_url', 'unifi_api_key', 'unifi_site', 'unifi_ca_cert',
   ];
   for (const k of keys) {
     const el = _settingsField(k);
@@ -42,7 +43,7 @@ function _fillSettingsForm(s) {
   // Secret fields come back as a redaction sentinel — hint that leaving the
   // sentinel untouched keeps the stored value, while clearing the field erases it.
   const secretKeys = ['truenas_api_key', 'proxmox_password', 'proxmox_token_secret',
-                      'openrouter_api_key', 'ha_token', 'pbs_api_token_secret', 'nut_password'];
+                      'openrouter_api_key', 'ha_token', 'pbs_api_token_secret', 'nut_password', 'unifi_api_key'];
   for (const k of secretKeys) {
     const el = _settingsField(k);
     if (el && el.value === '••••••••') {
@@ -53,6 +54,8 @@ function _fillSettingsForm(s) {
   if (verifyEl) verifyEl.checked = (s.proxmox_verify_ssl !== false);
   const pbsVerifyEl = _settingsField('pbs_verify_ssl');
   if (pbsVerifyEl) pbsVerifyEl.checked = (s.pbs_verify_ssl !== false);
+  const unifiVerifyEl = _settingsField('unifi_verify_ssl');
+  if (unifiVerifyEl) unifiVerifyEl.checked = (s.unifi_verify_ssl !== false);
 }
 
 function _collectSettingsForm() {
@@ -67,6 +70,7 @@ function _collectSettingsForm() {
     'ha_entity_current', 'ha_entity_energy',
     'pbs_url', 'pbs_api_token_id', 'pbs_api_token_secret', 'pbs_ca_cert',
     'nut_server', 'nut_ups_name', 'nut_username', 'nut_password',
+    'unifi_url', 'unifi_api_key', 'unifi_site', 'unifi_ca_cert',
   ];
   const out = {};
   for (const k of intKeys) {
@@ -81,6 +85,8 @@ function _collectSettingsForm() {
   if (verifyEl) out.proxmox_verify_ssl = verifyEl.checked;
   const pbsVerifyEl = _settingsField('pbs_verify_ssl');
   if (pbsVerifyEl) out.pbs_verify_ssl = pbsVerifyEl.checked;
+  const unifiVerifyEl = _settingsField('unifi_verify_ssl');
+  if (unifiVerifyEl) out.unifi_verify_ssl = unifiVerifyEl.checked;
   return out;
 }
 

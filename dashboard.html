@@ -919,6 +919,17 @@
             <input type="password" id="s-nut_password" placeholder="NUT monuser password" autocomplete="off">
           </label>
           <p class="form-hint">Point this at the raw LAN IP of the NUT server, not a Tailscale hostname - see pve.md's Power/UPS section in the homelab docs for why.</p>
+          <div class="settings-section-hdr" style="margin-top:8px">UniFi (connection discovery)</div>
+          <label class="form-field">Controller URL<input type="text" id="s-unifi_url" placeholder="https://192.168.x.x:11443"></label>
+          <label class="form-field">API key
+            <input type="password" id="s-unifi_api_key" placeholder="Settings → Control Plane → Integrations" autocomplete="off">
+          </label>
+          <label class="form-field">Site<input type="text" id="s-unifi_site" placeholder="default"></label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)"><input type="checkbox" id="s-unifi_verify_ssl" checked> Verify the controller's TLS certificate</label>
+          <label class="form-field">Controller CA cert path
+            <input type="text" id="s-unifi_ca_cert" placeholder="/path/to/unifi-ca.pem (optional)">
+          </label>
+          <p class="form-hint">Netwatch reads which switch port each wired device is plugged into and turns it into connection suggestions. A local, read-only API key is enough. A self-hosted UniFi OS Server uses a self-signed certificate on port 11443, so either point the CA path at its certificate or uncheck verification.</p>
         </div>
       </div>
 
