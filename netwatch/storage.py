@@ -962,10 +962,30 @@ class InventoryDB:
         records = {r["id"]: r for r in self.list_all()}
         plan = plan_connections_migration(
             records, self.list_all_connections(), self._live_ports_for)
+        # Never overwrite a properties blob we can't parse: skip seeding
+        # network_role for any record whose *raw* stored value is non-empty
+        # but not valid JSON (a NULL/empty blob is fine to seed).
+        network_roles = dict(plan["network_roles"])
+        if network_roles:
+            with self.lock:
+                qmarks = ",".join("?" * len(network_roles))
+                raw_by_id = dict(self.conn.execute(
+                    f"SELECT id, properties FROM inventory WHERE id IN ({qmarks})",
+                    tuple(network_roles)).fetchall())
+            for rid in list(network_roles):
+                raw = raw_by_id.get(rid)
+                if not raw:
+                    continue
+                try:
+                    parsed = json.loads(raw)
+                except (ValueError, TypeError):
+                    parsed = None
+                if not isinstance(parsed, dict):
+                    del network_roles[rid]
         with self.lock:
             self.conn.execute("BEGIN")
             try:
-                for rid, role in plan["network_roles"].items():
+                for rid, role in network_roles.items():
                     props = dict(records[rid].get("properties") or {})
                     props["network_role"] = role
                     self.conn.execute(
@@ -988,12 +1008,14 @@ class InventoryDB:
                     "INSERT OR REPLACE INTO schema_meta (key, value) "
                     "VALUES ('connections_v2', 'done')")
                 self.conn.execute("COMMIT")
-            except Exception:
+            except Exception as e:
                 try: self.conn.execute("ROLLBACK")
                 except Exception: pass
-                raise
+                logging.error("InventoryDB: connections v2 migration failed mid-"
+                              f"transaction, rolled back: {type(e).__name__}: {e}")
+                return False, "migration failed"
         msg = (f"re-oriented {len(plan['swaps'])} edge(s), seeded "
-               f"{len(plan['network_roles'])} network role(s), flagged "
+               f"{len(network_roles)} network role(s), flagged "
                f"{len(plan['drift'])} for review")
         logging.info(f"InventoryDB: connections v2 migration done: {msg}")
         return True, msg

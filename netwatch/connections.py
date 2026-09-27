@@ -92,7 +92,7 @@ def normalize_port(value):
     s = str(value).strip()
     if not s:
         return None
-    if s.isdigit():
+    if s.isascii() and s.isdigit():
         return str(int(s))
     return s
 

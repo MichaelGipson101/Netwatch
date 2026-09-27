@@ -95,6 +95,7 @@ def test_network_role_reads_property_and_rejects_unknown_values():
 
 @pytest.mark.parametrize("raw,expected", [
     (" 8 ", "8"), ("08", "8"), (8, "8"), ("SFP+ 1", "SFP+ 1"), ("", None), (None, None), ("  ", None),
+    ("²", "²"),
 ])
 def test_normalize_port(raw, expected):
     assert normalize_port(raw) == expected
@@ -437,3 +438,39 @@ def test_write_pre_migration_backup_writes_private_tarball(tmp_path):
     assert os.path.basename(path).startswith("pre-connections-v2-")
     assert path.endswith(".tar.gz")
     assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def test_migrate_rolls_back_and_reports_failure_on_mid_transaction_error(monkeypatch):
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        ids, e = _home_lab(idb)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("suggestions store exploded")
+        monkeypatch.setattr(idb.suggestions, "upsert_locked", boom)
+
+        ok, msg = idb.migrate_connections_v2(now=500)
+        assert (ok, msg) == (False, "migration failed")
+        assert idb.connections_v2_ready() is False
+
+        c = idb.get_connection(e["eero_usw"])
+        assert (c["child_id"], c["parent_id"]) == (ids["eero"], ids["usw"])  # untouched
+        assert "network_role" not in idb.get(ids["eero"])["properties"]
+        hdb.close()
+
+
+def test_migrate_does_not_overwrite_malformed_properties_blob():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        eero = add_device(idb, "Eero Pro 6E — Gateway", "network", port_count=2)
+        with idb.lock:
+            idb.conn.execute(
+                "UPDATE inventory SET role = 'Primary Router & Gateway', properties = ? WHERE id = ?",
+                ("{not json", eero))
+        ok, msg = idb.migrate_connections_v2()
+        assert ok is True
+        with idb.lock:
+            raw = idb.conn.execute(
+                "SELECT properties FROM inventory WHERE id = ?", (eero,)).fetchone()[0]
+        assert raw == "{not json"
+        hdb.close()
