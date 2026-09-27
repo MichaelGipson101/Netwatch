@@ -442,10 +442,16 @@ def test_unidentified_or_offline_node_holds_its_guests_and_node_port():
 
 
 def test_node_port_suggestions_are_held_while_proxmox_is_down():
+    # Isolated to just the blanket "proxmox is down" stale-hold (fix round 1,
+    # #5): the port carries no likely-guest MAC at all - prodesk1 itself is
+    # simply absent from this scan's clients - so the per-mac hold path can't
+    # be what's protecting the edge/pending key.
     pending = pend(("edge:unifi:node-port:prodesk1", "unifi"))
     edges = [edge(41, 56, 1, to_port="Port 8", source="unifi", last_seen=NOW - 9 * DAY,
                   external_key="unifi:node-port:prodesk1")]
-    obs = unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=None)
+    clients = [(PI5_MAC, 7, "192.168.6.90", "ApplePi5")]
+    obs = unifi_observations(usw_snapshot(clients), guest_macs=None)
+    assert not [o for o in obs if o["type"] == "held"]     # confirms isolation
     ch = run(obs, lab_records(), edges=edges, pending=pending, healthy=("unifi",))
     assert ch["resolve"] == []
     assert "drift:stale:conn:41" not in keys(ch)
@@ -461,3 +467,81 @@ def test_held_macs_only_protect_their_own_source():
     ch = run(obs, records, edges=edges, pending=pending, healthy=("unifi", "inferred"))
     assert ch["resolve"] == [f"edge:unifi:{laptop}"]
     assert "drift:stale:conn:70" not in keys(ch)
+
+
+# ── Fix round 1 ───────────────────────────────────────────────────────────────
+
+def test_a_vm_carrying_proxmox_node_never_matches_the_node():
+    """Finding #1 (critical): on a VM record, proxmox_node means "runs on
+    node X", not "is node X". A VM record sorting before the real host (and
+    itself matching the HAOS guest by vmid) must not steal the node match -
+    the host still matches by its own recorded proxmox_node, and the VM
+    guest still gets its own virtual edge to that host, not to itself."""
+    records = [
+        rec(5, "AAA Decoy VM", "vm", proxmox_node="pve", proxmox_vmid=108),
+    ] + lab_records(pve_known=True)
+    ch = keys(run(pve_obs(), records, healthy=("proxmox",)))
+    assert "identity:proxmox-node:pve" not in ch          # host still matches
+    guest_edge = ch["edge:proxmox:pve:108"]
+    assert guest_edge["payload"]["parent_id"] == 11       # HAOS -> the real host
+    assert guest_edge["payload"]["child_id"] == 5         # HAOS's record is the decoy VM
+
+
+def test_offline_identified_node_holds_its_node_port_edge():
+    """Finding #2(a): an offline node that IS identified still can't have its
+    node-port fact re-derived this scan - the pending suggestion must not
+    resolve and the existing edge must not age."""
+    records = lab_records() + [rec(90, "Custom NAS", "host", "9c:6b:00:aa:8c:09",
+                                   "192.168.6.60")]
+    edges = [edge(42, 90, 1, to_port="Port 12", source="unifi", last_seen=NOW - 9 * DAY,
+                  external_key="unifi:node-port:NASMachineV3")]
+    pending = pend(("edge:unifi:node-port:NASMachineV3", "unifi"))
+    ch = run(pve_obs() + lab_unifi_obs(), records, edges=edges, pending=pending)
+    assert ch["resolve"] == []
+    assert "drift:stale:conn:42" not in keys(ch)
+
+
+def test_held_node_own_mac_holds_its_node_port_edge():
+    """Finding #2(b): the node's own MAC turns up in a `held` observation (an
+    unexplained likely-guest MAC on its port keeps UniFi from voting for the
+    node) - the node's still-unproven node-port fact must not resolve or age
+    either, even though the node itself is identified and online."""
+    configs = {k: v for k, v in CONFIGS.items() if k != ("prodesk1", 301)}
+    clients = [
+        (NODE_PVE_MAC, 11, "192.168.4.237", None),
+        (HA_MAC, 11, "192.168.5.110", "homeassistant"),
+        (NODE_PRODESK_MAC, 8, "192.168.6.219", None),
+        (MC_MAC, 8, "192.168.6.220", "Minecraft"),
+        (MYSTERY_MAC, 8, "192.168.6.70", "mystery"),
+        (PI5_MAC, 7, "192.168.6.90", "ApplePi5"),
+    ]
+    obs = pve_obs(configs=configs) + unifi_observations(
+        usw_snapshot(clients), guest_macs=set(PVE_GUESTS), guest_node_of=PVE_GUESTS,
+        guests_complete=False)
+    edges = [edge(43, 56, 1, to_port="Port 8", source="unifi", last_seen=NOW - 9 * DAY,
+                  external_key="unifi:node-port:prodesk1")]
+    pending = pend(("edge:unifi:node-port:prodesk1", "unifi"))
+    ch = run(obs, lab_records(), edges=edges, pending=pending)
+    assert ch["resolve"] == []
+    assert "drift:stale:conn:43" not in keys(ch)
+
+
+def test_ip_macs_lookup_normalizes_the_candidate_mac():
+    """Finding #3 (minor): an ip_macs MAC in a different case still matches
+    by_mac, which is keyed by normalized MACs."""
+    ch = keys(run(pve_obs() + lab_unifi_obs(), lab_records(),
+                  ip_macs={"192.168.4.237": NODE_PVE_MAC.upper()}))
+    p = ch["identity:proxmox-node:pve"]["payload"]
+    assert (p["candidate_id"], p["candidate_name"]) == (11, "HP EliteDesk 800 G3 Mini")
+
+
+def test_name_only_guest_match_gets_its_edge_but_no_props_fill():
+    """Finding #4 (minor): a same-named VM record with no recorded vmid or
+    matching MAC is too weak a match to trust for filling properties, but it
+    still gets its virtual edge to the node."""
+    records = lab_records(pve_known=True) + [rec(80, "haos13.2", "vm")]  # no vmid, no MAC
+    ch = run(pve_obs(), records, healthy=("proxmox",))
+    edge_key = "edge:proxmox:pve:108"
+    assert edge_key in keys(ch)
+    assert keys(ch)[edge_key]["payload"]["child_id"] == 80
+    assert not [p for p in ch["props"] if p["id"] == 80]
