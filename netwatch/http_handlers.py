@@ -23,6 +23,71 @@ from netwatch.pollers import PROXMOX_NODE_RE
 from netwatch.auth import verify_maintenance_token
 
 
+# Spec §4.3: which edge makes a device "behind" another. Lower wins.
+PRIMARY_TYPE_PRIORITY = {"virtual": 0, "ethernet": 1, "fiber": 1, "wifi": 2,
+                         "usb": 3, "console": 3, "other": 4, "power": 5}
+
+
+def _primary_rank(edge):
+    """Sort key: type priority, then most recent last_seen, then lowest id."""
+    return (PRIMARY_TYPE_PRIORITY.get(edge.get("connection_type"), 4),
+            -(edge.get("last_seen") or 0), edge["id"])
+
+
+def _find_primary_cycle(chosen):
+    """First cycle among chosen primary edges (child -> edge), or None."""
+    color = {}
+    for start in sorted(chosen):
+        if color.get(start):
+            continue
+        path, node = [], start
+        while node is not None and color.get(node) is None:
+            color[node] = 1
+            path.append(node)
+            edge = chosen.get(node)
+            node = edge["to_device_id"] if edge is not None else None
+        if node is not None and color.get(node) == 1:
+            return [chosen[n] for n in path[path.index(node):]]
+        for n in path:
+            color[n] = 2
+    return None
+
+
+def compute_primary_parents(nodes, edges):
+    """Pure (spec §4.3): each node's primary parent, and the set of primary
+    edge ids. The dependency-suppression work must call this same function.
+
+    Cycles (only possible via bad manual data) are broken by excluding the
+    lowest-priority edge in the cycle; its child then falls back to its next
+    candidate. Excluded edges still render as cross-links."""
+    ids = {n["id"] for n in nodes}
+    candidates = {}
+    for edge in edges:
+        child, parent = edge["from_device_id"], edge["to_device_id"]
+        if child in ids and parent in ids and child != parent:
+            candidates.setdefault(child, []).append(edge)
+    for lst in candidates.values():
+        lst.sort(key=_primary_rank)
+    excluded = set()
+
+    def choose(child):
+        return next((c for c in candidates.get(child, ()) if c["id"] not in excluded), None)
+
+    chosen = {child: choose(child) for child in candidates}
+    while True:
+        cycle = _find_primary_cycle(chosen)
+        if not cycle:
+            break
+        worst = max(cycle, key=_primary_rank)
+        excluded.add(worst["id"])
+        chosen[worst["from_device_id"]] = choose(worst["from_device_id"])
+    parents = {i: None for i in ids}
+    for child, edge in chosen.items():
+        if edge is not None:
+            parents[child] = edge["to_device_id"]
+    return parents, {edge["id"] for edge in chosen.values() if edge is not None}
+
+
 def build_topology_payload(inventory_db, host_manager):
     """Bundle inventory records + connections + linked-host status into a
     single payload for the topology view. Doing this server-side cuts the
