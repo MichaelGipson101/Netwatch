@@ -76,7 +76,8 @@ def parse_unifi(devices_payload, clients_payload):
                 "is_uplink": bool(p.get("is_uplink")),
             })
         lldp = [{
-            "local_port_idx": n.get("local_port_idx"),
+            "local_port_idx": (n.get("local_port_idx")
+                               if _is_port_idx(n.get("local_port_idx")) else None),
             "local_port_name": n.get("local_port_name"),
             "chassis_mac": _norm_mac(n.get("chassis_id")),
             "mgmt_ips": list(n.get("mgmt_ips") or []),
@@ -218,6 +219,8 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                      ctype, source):
         ports = ports_of(parent)
         pport = port_key(parent_port, ports)
+        if ports and pport not in {p["name"] for p in ports}:
+            pport = None  # e.g. an LLDP port_id that's an ifname or a MAC
         proposed = {"child_id": child["id"], "child_name": child["system"],
                     "parent_id": parent["id"], "parent_name": parent["system"],
                     "parent_port": pport, "child_port": child_port,
@@ -462,10 +465,20 @@ def unifi_ssl_context(settings):
     return ctx
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib re-sends custom headers on a redirect, even to another host or
+    to plain http - so refuse redirects; the 30x surfaces as an HTTPError."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 def _get_json(url, api_key, ctx):
     req = urllib.request.Request(
         url, headers={"X-API-Key": api_key, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ctx), _NoRedirect())
+    with opener.open(req, timeout=15) as resp:
         payload = json.load(resp)
     if (payload.get("meta") or {}).get("rc", "ok") != "ok":
         raise UnifiError()
@@ -503,6 +516,7 @@ class DiscoveryRunner:
         self._scanning = False
         self._health = {}
         self._last_scan = None
+        self._apply_error = None
         self._switches = []
         # Per source: start of the current healthy streak and the last
         # successful scan. Persisted in schema_meta so a quick restart
@@ -555,6 +569,15 @@ class DiscoveryRunner:
         except Exception as e:
             logging.warning(f"Discovery: saving health streak failed: {type(e).__name__}")
 
+    def _set_apply_error(self, error):
+        """Type name only (exception text can carry data), logged once."""
+        with self._lock:
+            prev, self._apply_error = self._apply_error, error
+        if error and error != prev:
+            logging.warning(f"Discovery: applying scan failed: {error}")
+        elif prev and not error:
+            logging.info("Discovery: applying scans recovered")
+
     def _set_health(self, source, ok, error, at, counts):
         with self._lock:
             prev = self._health.get(source)
@@ -600,8 +623,9 @@ class DiscoveryRunner:
                         live_ports_for=self.live_ports_for,
                         healthy_since=self._healthy_snapshot())
                     self._db.apply_discovery_changes(changes, now)
+                    self._set_apply_error(None)
                 except Exception as e:
-                    logging.warning(f"Discovery: applying scan failed: {type(e).__name__}: {e}")
+                    self._set_apply_error(type(e).__name__)
             with self._lock:
                 self._last_scan = now
             return True
@@ -627,8 +651,10 @@ class DiscoveryRunner:
             unifi = dict(self._health.get(
                 "unifi", {"ok": None, "error": None, "at": None, "counts": None}))
             last, scanning = self._last_scan, self._scanning
+            apply_error = self._apply_error
         unifi["configured"] = self.unifi_configured()
-        return {"sources": {"unifi": unifi}, "last_scan": last, "scanning": scanning}
+        return {"sources": {"unifi": unifi}, "last_scan": last, "scanning": scanning,
+                "apply_error": apply_error}
 
     def live_ports_for(self, rec):
         """Live port table for an inventory record that is a scanned switch."""

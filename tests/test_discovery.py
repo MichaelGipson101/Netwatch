@@ -1429,3 +1429,82 @@ def test_accept_never_calls_the_live_port_provider_under_the_db_lock():
         assert ok, err
         assert db_lock_held and not any(db_lock_held)
         hdb.close()
+
+
+# ── Final-review minors ─────────────────────────────────────────────────────
+
+from http.server import BaseHTTPRequestHandler
+from netwatch.discovery import _get_json
+
+
+def test_api_key_is_not_sent_across_a_redirect():
+    seen = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.headers.get("X-API-Key"))
+            self.send_response(200); self.end_headers(); self.wfile.write(b'{"data": []}')
+        def log_message(self, *a): pass
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+
+    class Redirector(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/x")
+            self.end_headers()
+        def log_message(self, *a): pass
+    redirector = ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+    threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (target, redirector)]
+    for t in threads: t.start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _get_json(f"http://127.0.0.1:{redirector.server_address[1]}/", SECRET,
+                      ssl.create_default_context())
+        assert safe_error(exc.value) == "HTTP 302"
+        assert seen == []
+    finally:
+        for s in (target, redirector):
+            s.shutdown(); s.server_close()
+
+
+def test_non_int_lldp_port_idx_does_not_break_the_scan():
+    devices = unifi_device_payload()
+    devices["data"][0]["lldp_table"].append(
+        {"chassis_id": "aa:00:00:00:00:09", "local_port_idx": "15", "local_port_name": None,
+         "port_id": "x"})
+    snap = parse_unifi(devices, unifi_clients_payload())
+    assert snap["switches"][0]["lldp"][-1]["local_port_idx"] is None
+    reconcile(unifi_observations(snap), records=lab_records(), edges=lab_edges(),
+              pending=[], healthy_sources={"unifi"}, now=NOW, live_ports_for=live_for())
+
+
+def test_lldp_port_that_is_not_on_the_parent_is_not_proposed():
+    devices = unifi_device_payload()
+    devices["data"][0]["lldp_table"][0]["port_id"] = "eth7"  # eero has ports 1-2
+    changes = reconcile(unifi_observations(parse_unifi(devices, unifi_clients_payload())),
+                        records=lab_records(), edges=lab_edges(), pending=[],
+                        healthy_sources={"unifi"}, now=NOW, live_ports_for=live_for())
+    blob = json.dumps(changes["upserts"])
+    assert "eth7" not in blob
+
+
+def test_apply_failure_logs_type_once_and_shows_in_status(caplog):
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        r = runner_for(idb, ok_fetch())
+        real_apply = idb.apply_discovery_changes
+
+        def broken(changes, now=None):
+            raise RuntimeError("detail that must not be logged")
+        idb.apply_discovery_changes = broken
+        with caplog.at_level(logging.WARNING):
+            r.scan_once(now=NOW)
+            r.scan_once(now=NOW + 900)
+        msgs = [m.getMessage() for m in caplog.records if "applying" in m.getMessage()]
+        assert len(msgs) == 1 and "RuntimeError" in msgs[0]
+        assert "must not be logged" not in caplog.text
+        assert r.status()["apply_error"] == "RuntimeError"
+        idb.apply_discovery_changes = real_apply
+        r.scan_once(now=NOW + 1800)
+        assert r.status()["apply_error"] is None
+        hdb.close()
