@@ -410,7 +410,7 @@ def test_reconcile_resolution_rules():
     assert run(pending=pending)["resolve"] == ["edge:unifi:ff:ff:ff:ff:ff:01"]
     unhealthy = reconcile([], records=lab_records(), edges=lab_edges(), pending=pending,
                           healthy_sources=set(), now=NOW)
-    assert unhealthy == {"upserts": [], "resolve": [], "touch": []}
+    assert unhealthy == {"upserts": [], "resolve": [], "touch": [], "props": []}
 
 
 def test_reconcile_fingerprint_ignores_renames():

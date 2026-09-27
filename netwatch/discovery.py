@@ -210,13 +210,62 @@ def _index_records(records):
     return by_id, by_mac, by_ip
 
 
+def _match_node(o, records, by_ip):
+    """Proxmox node -> inventory record: node IP, then properties.proxmox_node."""
+    ip = str(o.get("ip") or "").strip()
+    if ip and ip in by_ip:
+        return by_ip[ip]
+    for r in records:
+        if (r.get("properties") or {}).get("proxmox_node") == o["name"]:
+            return r
+    return None
+
+
+def _match_guest(o, records, by_mac):
+    """Proxmox guest -> inventory record, first hit wins (spec §2.3): recorded
+    vmid (and node, if recorded), then any of its MACs, then its name."""
+    for r in records:
+        p = r.get("properties") or {}
+        vmid = p.get("proxmox_vmid")
+        if (vmid not in (None, "") and str(vmid) == str(o["vmid"])
+                and p.get("proxmox_node") in (None, "", o["node"])):
+            return r
+    for m in o["macs"]:
+        if m in by_mac:
+            return by_mac[m]
+    name = str(o.get("name") or "").strip().lower()
+    if name:
+        for r in records:
+            if str(r.get("system") or "").strip().lower() == name:
+                return r
+    return None
+
+
+def _most_common_category(records, device_type):
+    counts = {}
+    for r in records:
+        cat = str(r.get("category") or "").strip()
+        if r.get("device_type") == device_type and cat:
+            counts[cat] = counts.get(cat, 0) + 1
+    return min(counts, key=lambda c: (-counts[c], c)) if counts else None
+
+
 def reconcile(observations, *, records, edges, pending, healthy_sources, now,
-              live_ports_for=None, healthy_since=None):
-    """Pure: decide what one scan means. See spec §2.5 for the rules."""
+              live_ports_for=None, healthy_since=None, ip_macs=None):
+    """Pure: decide what one scan means. See spec §2.5 for the rules.
+
+    ip_macs: {ip: mac} from this scan's UniFi clients and the Pi's ARP table.
+    Used only to propose which device an unidentified Proxmox node is.
+    """
     if not healthy_sources:
-        return {"upserts": [], "resolve": [], "touch": []}
+        return {"upserts": [], "resolve": [], "touch": [], "props": []}
     by_id, by_mac, by_ip = _index_records(records)
-    upserts, touch, held_macs, held_ports = {}, {}, set(), set()
+    upserts, touch, props_fill = {}, {}, {}
+    held_macs, held_ports = {}, set()        # held_macs: source -> {mac}
+    held_keys_extra, held_prefixes = set(), set()
+    stale_hold_keys, stale_hold_prefixes = set(), set()
+    vm_category = _most_common_category(records, "vm")
+    live = [o for o in observations if o["source"] in healthy_sources]
 
     def suggest(kind, source, key, payload, fp_basis):
         upserts[key] = {"kind": kind, "source": source, "subject_key": key,
@@ -228,15 +277,22 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
     def port_key(port, ports):
         return canonical_port(port, ports) if ports else normalize_port(port)
 
-    def links_from(child_id):
+    def links_from(child_id, family=NETWORK_LINK_TYPES):
         return [e for e in edges if e["from_device_id"] == child_id
-                and e["connection_type"] in NETWORK_LINK_TYPES]
+                and e["connection_type"] in family]
 
-    def child_is_held(rec):
+    def child_is_held(rec, source):
         if rec is None:
             return False
+        held = held_macs.get(source, ())
         macs = [rec.get("mac")] + list((rec.get("properties") or {}).get("mac_aliases") or [])
-        return any(_norm_mac(m) in held_macs for m in macs)
+        return any(_norm_mac(m) in held for m in macs)
+
+    def stale_is_held(e):
+        ext = e.get("external_key") or ""
+        return (child_is_held(by_id.get(e["from_device_id"]), e.get("source"))
+                or ext in stale_hold_keys
+                or any(ext.startswith(p) for p in stale_hold_prefixes))
 
     def lldp_orientation(switch, neighbour, is_uplink):
         child, parent, ambiguous = orient_edge(switch, neighbour)
@@ -244,7 +300,7 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             return (switch, neighbour) if is_uplink else (neighbour, switch)
         return child, parent
 
-    def observe_edge(child, parent, parent_port, child_port, subject_mac, ext_key,
+    def observe_edge(child, parent, parent_port, child_port, subject, ext_key,
                      ctype, source):
         ports = ports_of(parent)
         pport = port_key(parent_port, ports)
@@ -254,7 +310,10 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                     "parent_id": parent["id"], "parent_name": parent["system"],
                     "parent_port": pport, "child_port": child_port,
                     "connection_type": ctype, "source": source, "external_key": ext_key}
-        links = links_from(child["id"])
+        # Conflicts only within a type family: network links (ethernet/fiber/
+        # wifi) or the observed type itself (virtual) - spec §2.5.
+        family = NETWORK_LINK_TYPES if ctype in NETWORK_LINK_TYPES else (ctype,)
+        links = links_from(child["id"], family)
         same = [e for e in links if e["to_device_id"] == parent["id"]]
         if same:
             current = same[0]
@@ -269,8 +328,10 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             current = links[0]
         else:
             where = f"{parent['system']} · {pport}" if pport else parent["system"]
-            suggest("edge", source, f"edge:{source}:{subject_mac}",
-                    dict(proposed, message=f"{child['system']} is wired to {where}"),
+            verb = {"virtual": "runs on", "wifi": "connects over wifi to"}.get(
+                ctype, "is wired to")
+            suggest("edge", source, f"edge:{source}:{subject}",
+                    dict(proposed, message=f"{child['system']} {verb} {where}"),
                     [child["id"], parent["id"], pport, ctype])
             return
         cur_parent = by_id.get(current["to_device_id"], {}).get("system") or "?"
@@ -278,7 +339,7 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
         cur_desc = f"{cur_parent}{' · ' + cur_port if cur_port else ''} ({current['connection_type']})"
         new_desc = f"{parent['system']}{' · ' + pport if pport else ''} ({ctype})"
         label = SOURCE_LABELS.get(source, source)
-        suggest("drift", source, f"drift:{source}:{subject_mac}", {
+        suggest("drift", source, f"drift:{source}:{subject}", {
             "connection_id": current["id"], "action": "replace",
             "child_id": child["id"], "child_name": child["system"],
             "current": {"parent_id": current["to_device_id"], "parent_name": cur_parent,
@@ -288,12 +349,59 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             "message": f"Your graph: {child['system']} → {cur_desc}. {label} sees: {new_desc}",
         }, [current["id"], parent["id"], pport, ctype])
 
+    # ── Proxmox nodes: match to inventory, or ask which device each one is ──
+    node_records, offline_nodes, node_names = {}, set(), set()
+    for o in live:
+        if o["type"] != "node":
+            continue
+        name = o["name"]
+        node_names.add(name)
+        if not o.get("online", True):
+            offline_nodes.add(name)
+        node = _match_node(o, records, by_ip)
+        if node is not None:
+            node_records[name] = node
+            continue
+        cand_mac = (ip_macs or {}).get(str(o.get("ip") or ""))
+        cand = by_mac.get(cand_mac) if cand_mac else None
+        if cand is None:
+            cand = next((r for r in records
+                         if str(r.get("system") or "").strip().lower() == name.lower()), None)
+        where = f" ({o['ip']})" if o.get("ip") else ""
+        suggest("identity", o["source"], f"identity:proxmox-node:{name}", {
+            "proxmox_node": name, "node_ip": o.get("ip"),
+            "candidate_id": cand["id"] if cand else None,
+            "candidate_name": cand["system"] if cand else None,
+            "message": (f"Is Proxmox node {name}{where} your {cand['system']}?" if cand
+                        else f"Which device is Proxmox node {name}{where}?"),
+        }, ["proxmox-node", name, cand["id"] if cand else None])
+    for name in node_names:
+        # Unknown or offline node: its guests are unknowable this scan.
+        if name not in node_records or name in offline_nodes:
+            held_prefixes.add(f"proxmox:{name}:")
+            stale_hold_prefixes.add(f"proxmox:guest:{name}:")
+        if name not in node_records:
+            held_keys_extra.update({f"edge:unifi:node-port:{name}",
+                                    f"drift:unifi:node-port:{name}"})
+    if "proxmox" not in healthy_sources:
+        # No node map this scan, so node-port facts can't be re-derived.
+        stale_hold_prefixes.add("unifi:node-port:")
+
+    def resolve_parent(spec):
+        if "inventory_id" in spec:
+            return by_id.get(spec["inventory_id"])
+        return by_mac.get(spec.get("mac"))
+
+    node_port_child_ids = {node_records[o["child"]["proxmox_node"]]["id"] for o in live
+                           if o["type"] == "edge"
+                           and o["child"].get("proxmox_node") in node_records}
+
     # F2(a): a neighbour already wired via the client path (a wired-client
     # `edge` observation resolving to the same inventory record) is never
     # also processed via LLDP - precomputed so order doesn't matter.
-    client_edge_child_ids = set()
-    for o in observations:
-        if o["source"] in healthy_sources and o["type"] == "edge":
+    client_edge_child_ids = set(node_port_child_ids)
+    for o in live:
+        if o["type"] == "edge" and o["source"] == "unifi" and "mac" in o["child"]:
             child = by_mac.get(o["child"]["mac"])
             if child is not None:
                 client_edge_child_ids.add(child["id"])
@@ -302,8 +410,8 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
     # child, keep exactly one (uplink first, then lowest local port index,
     # then lowest port name) - independent of lldp_table order.
     lldp_parent_candidates = {}
-    for o in observations:
-        if o["source"] not in healthy_sources or o["type"] != "lldp":
+    for o in live:
+        if o["type"] != "lldp":
             continue
         switch = by_mac.get(o["switch_mac"])
         if switch is None:
@@ -328,42 +436,109 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             o["port"]))
         lldp_winner[switch_id] = candidates[0]
 
-    for o in observations:
-        if o["source"] not in healthy_sources:
-            continue
+    def process_edge(o):
+        parent = resolve_parent(o["parent"])
+        if parent is None:
+            return
+        spec = o["child"]
+        if "proxmox_node" in spec:
+            child = node_records.get(spec["proxmox_node"])
+            if child is not None and child["id"] != parent["id"]:
+                observe_edge(child, parent, o["parent_port"], o.get("child_port"),
+                             f"node-port:{spec['proxmox_node']}", o["external_key"],
+                             o["connection_type"], o["source"])
+            return
+        mac = spec["mac"]
+        child = by_mac.get(mac)
+        if child is not None:
+            # A node's own MAC is superseded by its node-port observation.
+            if child["id"] != parent["id"] and child["id"] not in node_port_child_ids:
+                observe_edge(child, parent, o["parent_port"], o.get("child_port"), mac,
+                             o["external_key"], o["connection_type"], o["source"])
+            return
+        name = spec.get("name") or f"Unknown device {mac}"
+        pport = port_key(o["parent_port"], ports_of(parent))
+        suggest("device", o["source"], f"device:{o['source']}:{mac}", {
+            "device": {"system": name, "mac": mac, "ip": spec.get("ip"),
+                       "device_type": "host", "category": None},
+            "edge": {"parent_id": parent["id"], "parent_name": parent["system"],
+                     "parent_port": pport, "child_port": o.get("child_port"),
+                     "connection_type": o["connection_type"],
+                     "source": o["source"], "external_key": o["external_key"]},
+            "message": (f"{name} ({mac}) is wired to {parent['system']} · {pport} "
+                        "but isn't in inventory"),
+        }, [mac, parent["id"], pport])
+
+    def process_guest(o):
+        node = node_records.get(o["node"])
+        if node is None or o["node"] in offline_nodes:
+            return  # held above
+        subject = f"{o['node']}:{o['vmid']}"
+        guest = _match_guest(o, records, by_mac)
+        if guest is not None:
+            if guest["id"] == node["id"]:
+                return
+            if guest.get("device_type") == "vm":
+                props = guest.get("properties") or {}
+                fill = {k: v for k, v in (("guest_type", o["guest_type"]),
+                                          ("proxmox_node", o["node"]),
+                                          ("proxmox_vmid", o["vmid"]))
+                        if props.get(k) in (None, "")}
+                if fill:
+                    props_fill[guest["id"]] = fill
+            observe_edge(guest, node, None, None, subject, o["external_key"],
+                         "virtual", o["source"])
+            return
+        props = {"hypervisor": "Proxmox", "guest_type": o["guest_type"],
+                 "proxmox_node": o["node"], "proxmox_vmid": o["vmid"],
+                 "vcpu_count": o.get("cores"),
+                 "ram_alloc_gb": (round(o["memory_mb"] / 1024, 1)
+                                  if o.get("memory_mb") else None),
+                 "autostart": o.get("onboot")}
+        props = {k: v for k, v in props.items() if v is not None}
+        kind_label = "LXC" if o["guest_type"] == "lxc" else "VM"
+        suggest("device", o["source"], f"device:{o['source']}:{subject}", {
+            "device": {"system": o["name"], "mac": (o["macs"] or [None])[0], "ip": None,
+                       "device_type": "vm", "category": vm_category, "properties": props},
+            "edge": {"parent_id": node["id"], "parent_name": node["system"],
+                     "parent_port": None, "child_port": None,
+                     "connection_type": "virtual", "source": o["source"],
+                     "external_key": o["external_key"]},
+            "message": f"{o['name']} ({kind_label} {o['vmid']} on {o['node']}) isn't in inventory",
+        }, [o["node"], o["vmid"], node["id"]])
+
+    for o in live:
         t = o["type"]
         if t == "held":
-            held_macs.update(o["macs"])
+            held_macs.setdefault(o["source"], set()).update(o["macs"])
             switch = by_mac.get(o.get("switch_mac"))
             port_name = o.get("port")
             if port_name is not None:
                 held_ports.add((o["switch_mac"],
                                 port_key(port_name, ports_of(switch) if switch else None)))
+        elif t == "held_guest":
+            subject = f"{o['node']}:{o['vmid']}"
+            held_keys_extra.update(f"{k}:proxmox:{subject}" for k in ("edge", "device", "drift"))
+            stale_hold_keys.add(f"proxmox:guest:{subject}")
         elif t == "edge":
-            parent = by_mac.get(o["parent"]["mac"])
-            if parent is None:
-                continue
-            mac = o["child"]["mac"]
-            child = by_mac.get(mac)
-            if child is not None:
-                observe_edge(child, parent, o["parent_port"], o.get("child_port"), mac,
-                             o["external_key"], o["connection_type"], o["source"])
-                continue
-            name = o["child"].get("name") or f"Unknown device {mac}"
-            pport = port_key(o["parent_port"], ports_of(parent))
-            suggest("device", o["source"], f"device:{o['source']}:{mac}", {
-                "device": {"system": name, "mac": mac, "ip": o["child"].get("ip"),
-                           "device_type": "host", "category": None},
-                "edge": {"parent_id": parent["id"], "parent_name": parent["system"],
-                         "parent_port": pport, "child_port": o.get("child_port"),
-                         "connection_type": o["connection_type"],
-                         "source": o["source"], "external_key": o["external_key"]},
-                "message": (f"{name} ({mac}) is wired to {parent['system']} · {pport} "
-                            "but isn't in inventory"),
-            }, [mac, parent["id"], pport])
+            process_edge(o)
+        elif t == "guest":
+            process_guest(o)
         elif t == "shared_port":
             switch = by_mac.get(o["switch_mac"])
             if switch is None:
+                continue
+            macs = [m for m in o["macs"]
+                    if not (m in by_mac and by_mac[m]["id"] in node_port_child_ids)]
+            if len(macs) == 1:
+                # Only the node's own MAC made this port look shared.
+                process_edge({"type": "edge", "source": o["source"],
+                              "child": {"mac": macs[0], "ip": None, "name": None},
+                              "parent": {"mac": o["switch_mac"]}, "parent_port": o["port"],
+                              "child_port": None, "connection_type": "ethernet",
+                              "external_key": f"unifi:port:{macs[0]}"})
+                continue
+            if not macs:
                 continue
             ports = ports_of(switch)
             pport = port_key(o["port"], ports)
@@ -377,13 +552,13 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                         touch.setdefault(e["id"], None)
                 continue
             matched = [{"id": by_mac[m]["id"], "name": by_mac[m]["system"], "mac": m}
-                       for m in o["macs"] if m in by_mac]
+                       for m in macs if m in by_mac]
             suggest("shared_port", o["source"], f"shared_port:{o['switch_mac']}:{pport}", {
                 "switch_id": switch["id"], "switch_name": switch["system"], "port": pport,
-                "macs": o["macs"], "matched": matched,
-                "message": (f"{len(o['macs'])} devices share {switch['system']} · {pport}. "
+                "macs": macs, "matched": matched,
+                "message": (f"{len(macs)} devices share {switch['system']} · {pport}. "
                             "Unmanaged switch or AP behind it?"),
-            }, [switch["id"], pport, o["macs"]])
+            }, [switch["id"], pport, macs])
         elif t == "lldp":
             switch = by_mac.get(o["switch_mac"])
             if switch is None:
@@ -427,7 +602,7 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
         if (e.get("source") not in healthy_sources or e["id"] in touch):
             continue
         child = by_id.get(e["from_device_id"])
-        if child is None or child_is_held(child):
+        if child is None or stale_is_held(e):
             continue
         streak_start = (healthy_since or {}).get(e.get("source"))
         if streak_start is None or streak_start > now - STALE_AFTER_SECONDS:
@@ -447,16 +622,28 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                         f"seen by {label} since {when}. Remove it?"),
         }, ["stale", e["id"]])
 
-    held_keys = {f"{kind}:{src}:{m}" for m in held_macs for src in healthy_sources
+    held_keys = {f"{kind}:{src}:{m}" for src, macs in held_macs.items() for m in macs
                  for kind in ("edge", "device", "drift")}
     held_keys |= {f"shared_port:{switch_mac}:{port}" for switch_mac, port in held_ports}
-    held_keys |= {f"drift:stale:conn:{e['id']}" for e in edges
-                  if child_is_held(by_id.get(e["from_device_id"]))}
+    held_keys |= {f"drift:stale:conn:{e['id']}" for e in edges if stale_is_held(e)}
+    held_keys |= held_keys_extra
+
+    def is_held(key):
+        if key in held_keys:
+            return True
+        kind, _, rest = key.partition(":")
+        if kind not in ("edge", "device", "drift"):
+            return False
+        if "proxmox" not in healthy_sources and rest.startswith("unifi:node-port:"):
+            return True
+        return any(rest.startswith(p) for p in held_prefixes)
+
     resolve = [s["subject_key"] for s in pending
                if s["source"] in healthy_sources and s["subject_key"] not in upserts
-               and s["subject_key"] not in held_keys]
+               and not is_held(s["subject_key"])]
     return {"upserts": list(upserts.values()), "resolve": resolve,
-            "touch": [{"id": k, "parent_port": v} for k, v in touch.items()]}
+            "touch": [{"id": k, "parent_port": v} for k, v in touch.items()],
+            "props": [{"id": k, "set": v} for k, v in props_fill.items()]}
 
 
 class UnifiError(Exception):

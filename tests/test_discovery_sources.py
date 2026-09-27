@@ -334,3 +334,130 @@ def test_node_port_vote_prefers_most_guests_then_lowest_port():
 def test_without_node_map_output_is_unchanged():
     obs = unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=set(PVE_GUESTS))
     assert node_port_obs(obs) == {}
+
+
+# ── Task 4: reconciler - nodes, node-port edges, holds ───────────────────────
+
+from netwatch.discovery import reconcile
+
+
+def rec(id_, system, device_type="host", mac=None, ip=None, category=None, **props):
+    return {"id": id_, "system": system, "device_type": device_type, "mac": mac, "ip": ip,
+            "role": None, "category": category, "properties": dict(props)}
+
+
+def edge(id_, child, parent, to_port=None, ctype="ethernet", source="manual",
+         last_seen=None, external_key=None):
+    return {"id": id_, "from_device_id": child, "to_device_id": parent, "from_port": None,
+            "to_port": to_port, "connection_type": ctype, "source": source,
+            "external_key": external_key, "last_seen": last_seen, "updated_at": None}
+
+
+def lab_records(pve_known=False):
+    return [
+        rec(1, "USW Pro Max 16 PoE", "network", USW_MAC, network_role="switch", port_count=16),
+        rec(2, "Eero Pro 6E — Gateway", "network", GW_MAC, "192.168.4.1",
+            network_role="gateway"),
+        rec(11, "HP EliteDesk 800 G3 Mini", "host", NODE_PVE_MAC,
+            **({"proxmox_node": "pve"} if pve_known else {})),
+        rec(56, "HP Prodesk 405 G6 Mini", "host", NODE_PRODESK_MAC, "192.168.6.219"),
+        rec(3, "Raspberry Pi 5", "host", PI5_MAC),
+    ]
+
+
+def pve_obs(configs=None, cache=None):
+    return proxmox_observations(proxmox_snapshot(
+        cache if cache is not None else pve_cache(), cluster_status(),
+        CONFIGS if configs is None else configs))
+
+
+def lab_unifi_obs(guests_complete=True):
+    return unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=set(PVE_GUESTS),
+                              guest_node_of=PVE_GUESTS, guests_complete=guests_complete)
+
+
+def run(observations, records, edges=(), pending=(), healthy=("unifi", "proxmox"),
+        ip_macs=None):
+    return reconcile(observations, records=records, edges=list(edges),
+                     pending=list(pending), healthy_sources=set(healthy), now=NOW,
+                     live_ports_for=lambda r: ([dict(p) for p in LIVE]
+                                               if r.get("mac") == USW_MAC else None),
+                     healthy_since={s: NOW - 30 * DAY for s in healthy}, ip_macs=ip_macs)
+
+
+def keys(changes):
+    return {u["subject_key"]: u for u in changes["upserts"]}
+
+
+def pend(*pairs):
+    return [{"subject_key": k, "source": s} for k, s in pairs]
+
+
+def test_nodes_match_by_ip_and_unknown_nodes_ask_with_a_candidate():
+    ch = keys(run(pve_obs() + lab_unifi_obs(), lab_records(),
+                  ip_macs={"192.168.4.237": NODE_PVE_MAC}))
+    ident = ch["identity:proxmox-node:pve"]
+    assert (ident["kind"], ident["source"]) == ("identity", "proxmox")
+    p = ident["payload"]
+    assert (p["proxmox_node"], p["node_ip"]) == ("pve", "192.168.4.237")
+    assert (p["candidate_id"], p["candidate_name"]) == (11, "HP EliteDesk 800 G3 Mini")
+    assert p["message"] == "Is Proxmox node pve (192.168.4.237) your HP EliteDesk 800 G3 Mini?"
+    nas = ch["identity:proxmox-node:NASMachineV3"]["payload"]
+    assert nas["candidate_id"] is None
+    assert nas["message"] == "Which device is Proxmox node NASMachineV3 (192.168.6.60)?"
+    assert "identity:proxmox-node:prodesk1" not in ch      # matched by IP
+
+
+def test_node_matches_by_recorded_proxmox_node_property():
+    ch = keys(run(pve_obs(), lab_records(pve_known=True), healthy=("proxmox",)))
+    assert "identity:proxmox-node:pve" not in ch
+
+
+def test_node_port_edge_replaces_the_nodes_own_mac_edge():
+    ch = keys(run(pve_obs() + lab_unifi_obs(), lab_records()))
+    np = ch["edge:unifi:node-port:prodesk1"]["payload"]
+    assert (np["child_id"], np["parent_id"], np["parent_port"], np["connection_type"]) == (
+        56, 1, "Port 8", "ethernet")
+    assert np["external_key"] == "unifi:node-port:prodesk1"
+    assert f"edge:unifi:{NODE_PRODESK_MAC}" not in ch
+    # pve isn't identified yet: no node-port edge, its own MAC edge stands in
+    assert "edge:unifi:node-port:pve" not in ch
+    assert ch[f"edge:unifi:{NODE_PVE_MAC}"]["payload"]["parent_port"] == "Port 11"
+
+
+def test_unidentified_or_offline_node_holds_its_guests_and_node_port():
+    records = lab_records() + [
+        rec(70, "TrueNAS", "vm", proxmox_vmid=121),
+        rec(90, "Custom NAS", "host", "9c:6b:00:aa:8c:09", "192.168.6.60")]
+    edges = [edge(40, 70, 90, ctype="virtual", source="proxmox",
+                  last_seen=NOW - 9 * DAY, external_key="proxmox:guest:NASMachineV3:121")]
+    pending = pend(("edge:unifi:node-port:pve", "unifi"),
+                   ("device:proxmox:pve:116", "proxmox"),
+                   ("drift:proxmox:NASMachineV3:121", "proxmox"),
+                   ("device:proxmox:prodesk1:999", "proxmox"))
+    ch = run(pve_obs() + lab_unifi_obs(), records, edges=edges, pending=pending)
+    assert not [k for k in keys(ch) if k.startswith("device:proxmox:pve:")]
+    assert ch["resolve"] == ["device:proxmox:prodesk1:999"]
+    assert "drift:stale:conn:40" not in keys(ch)          # offline node: not aged
+
+
+def test_node_port_suggestions_are_held_while_proxmox_is_down():
+    pending = pend(("edge:unifi:node-port:prodesk1", "unifi"))
+    edges = [edge(41, 56, 1, to_port="Port 8", source="unifi", last_seen=NOW - 9 * DAY,
+                  external_key="unifi:node-port:prodesk1")]
+    obs = unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=None)
+    ch = run(obs, lab_records(), edges=edges, pending=pending, healthy=("unifi",))
+    assert ch["resolve"] == []
+    assert "drift:stale:conn:41" not in keys(ch)
+
+
+def test_held_macs_only_protect_their_own_source():
+    laptop = "aa:bb:cc:dd:ee:10"
+    records = lab_records() + [rec(10, "Laptop", "host", laptop)]
+    edges = [edge(70, 10, 2, ctype="wifi", source="inferred", last_seen=NOW - 9 * DAY,
+                  external_key=f"inferred:wifi:{laptop}")]
+    obs = [{"type": "held", "source": "inferred", "macs": [laptop]}]
+    pending = pend((f"edge:unifi:{laptop}", "unifi"), (f"edge:inferred:{laptop}", "inferred"))
+    ch = run(obs, records, edges=edges, pending=pending, healthy=("unifi", "inferred"))
+    assert ch["resolve"] == [f"edge:unifi:{laptop}"]
+    assert "drift:stale:conn:70" not in keys(ch)
