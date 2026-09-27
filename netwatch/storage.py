@@ -991,6 +991,18 @@ class InventoryDB:
                 "SELECT value FROM schema_meta WHERE key = 'connections_v2'").fetchone()
         return bool(row and row[0] == "done")
 
+    def get_meta(self, key):
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT value FROM schema_meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key, value):
+        with self.lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+                (key, value))
+
     def migrate_connections_v2(self, backup_fn=None, now=None):
         """One-time data migration for the 4.0 connections model: seed
         properties.network_role, re-orient edges child -> parent (swapping

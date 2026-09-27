@@ -1032,22 +1032,74 @@ def test_failed_scan_keeps_suggestions_logs_once_and_hides_key(caplog):
         hdb.close()
 
 
+def scan_hourly(r, start, end):
+    for t in range(start, end + 1, 3600):
+        r.scan_once(now=t)
+
+
+def boom_fetch(*a):
+    raise urllib.error.URLError("down")
+
+
 def test_runner_tracks_healthy_streak_for_staleness():
     with tempfile.TemporaryDirectory() as d:
         hdb, idb, ids, e = lab_db(d)
+        stale = "drift:stale:conn:%d" % e["oldnas"]
         r = runner_for(idb, ok_fetch())
         r.scan_once(now=NOW)  # streak starts now: nothing can be stale yet
-        assert "drift:stale:conn:%d" % e["oldnas"] not in pending(idb)
-        r.scan_once(now=NOW + 8 * DAY)  # streak now 8 days old
+        assert stale not in pending(idb)
+        scan_hourly(r, NOW, NOW + 8 * DAY)  # healthy for 8 days
+        assert stale in pending(idb)
+        assert r._healthy_since["unifi"] == NOW
+
+        r._fetch_unifi = boom_fetch
+        r.scan_once(now=NOW + 9 * DAY)
+        r._fetch_unifi = ok_fetch()
+        r.scan_once(now=NOW + 20 * DAY)  # long gap between successes: new streak
+        assert r._healthy_since["unifi"] == NOW + 20 * DAY
+        hdb.close()
+
+
+def test_short_outage_keeps_the_streak():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        r = runner_for(idb, ok_fetch())
+        r.scan_once(now=NOW)
+        r._fetch_unifi = boom_fetch
+        r.scan_once(now=NOW + 900)
+        r.scan_once(now=NOW + 1800)
+        r._fetch_unifi = ok_fetch()
+        r.scan_once(now=NOW + 2700)  # 45 min since the last success
+        assert r._healthy_since["unifi"] == NOW
+        r.scan_once(now=NOW + 2700 + 3601)  # just over an hour: new streak
+        assert r._healthy_since["unifi"] == NOW + 2700 + 3601
+        hdb.close()
+
+
+def test_streak_survives_a_quick_restart_but_not_a_long_one():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan_hourly(runner_for(idb, ok_fetch()), NOW - 8 * DAY, NOW)
+        restarted = runner_for(idb, ok_fetch())
+        assert restarted._healthy_since["unifi"] == NOW - 8 * DAY
+        restarted.scan_once(now=NOW + 1200)  # e.g. a deploy restart
+        assert restarted._healthy_since["unifi"] == NOW - 8 * DAY
         assert "drift:stale:conn:%d" % e["oldnas"] in pending(idb)
 
-        def boom(*a):
-            raise urllib.error.URLError("down")
-        r._fetch_unifi = boom
-        r.scan_once(now=NOW + 9 * DAY)  # outage breaks the streak
-        r._fetch_unifi = ok_fetch()
-        r.scan_once(now=NOW + 20 * DAY)
-        assert r._healthy_since["unifi"] == NOW + 20 * DAY
+        later = runner_for(idb, ok_fetch())
+        later.scan_once(now=NOW + 3 * 3600)  # netwatch was down for hours
+        assert later._healthy_since["unifi"] == NOW + 3 * 3600
+        hdb.close()
+
+
+def test_unreadable_persisted_streak_is_ignored():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        idb.set_meta("discovery_health_streaks", "{not json")
+        r = runner_for(idb, ok_fetch())
+        assert r._healthy_since == {}
+        r.scan_once(now=NOW)
+        assert r._healthy_since["unifi"] == NOW
         hdb.close()
 
 

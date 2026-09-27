@@ -488,6 +488,10 @@ class DiscoveryRunner:
 
     SCAN_INTERVAL_SECONDS = 900
     FIRST_SCAN_DELAY_SECONDS = 90
+    # A gap longer than this between successful scans (controller outage, or
+    # netwatch itself down) restarts a source's healthy streak.
+    OUTAGE_GRACE_SECONDS = 3600
+    _STREAKS_META_KEY = "discovery_health_streaks"
 
     def __init__(self, auth_manager, settings, inventory_db, fetch_unifi=None):
         self._auth = auth_manager
@@ -500,9 +504,10 @@ class DiscoveryRunner:
         self._health = {}
         self._last_scan = None
         self._switches = []
-        # Start of each source's current unbroken healthy streak (in memory:
-        # after a restart, stale-edge suggestions wait a full 7 days).
-        self._healthy_since = {}
+        # Per source: start of the current healthy streak and the last
+        # successful scan. Persisted in schema_meta so a quick restart
+        # doesn't make stale-edge suggestions wait another 7 days.
+        self._healthy_since, self._last_ok = self._load_streaks()
 
     def _unifi_config(self):
         data = self._auth.data if self._auth else {}
@@ -518,6 +523,31 @@ class DiscoveryRunner:
 
     def any_source_configured(self):
         return self.unifi_configured()
+
+    def _load_streaks(self):
+        try:
+            raw = json.loads(self._db.get_meta(self._STREAKS_META_KEY) or "{}")
+        except (ValueError, TypeError, AttributeError):
+            raw = {}
+        since, last_ok = {}, {}
+        for source, v in (raw.items() if isinstance(raw, dict) else ()):
+            if (isinstance(v, dict) and isinstance(v.get("since"), int)
+                    and isinstance(v.get("last_ok"), int)):
+                since[source], last_ok[source] = v["since"], v["last_ok"]
+        return since, last_ok
+
+    def _record_success(self, source, now):
+        """Extend or restart `source`'s healthy streak (caller holds _lock)."""
+        prev = self._last_ok.get(source)
+        if prev is None or now - prev > self.OUTAGE_GRACE_SECONDS:
+            self._healthy_since[source] = now
+        self._last_ok[source] = now
+        blob = json.dumps({s: {"since": self._healthy_since[s], "last_ok": self._last_ok[s]}
+                           for s in self._last_ok})
+        try:
+            self._db.set_meta(self._STREAKS_META_KEY, blob)
+        except Exception as e:
+            logging.warning(f"Discovery: saving health streak failed: {type(e).__name__}")
 
     def _set_health(self, source, ok, error, at, counts):
         with self._lock:
@@ -548,13 +578,11 @@ class DiscoveryRunner:
                     healthy.add("unifi")
                     with self._lock:
                         self._switches = snap["switches"]
-                        self._healthy_since.setdefault("unifi", now)
+                        self._record_success("unifi", now)
                     self._set_health("unifi", True, None, now,
                                      {"switches": len(snap["switches"]),
                                       "clients": len(snap["clients"])})
                 except Exception as e:
-                    with self._lock:
-                        self._healthy_since.pop("unifi", None)
                     self._set_health("unifi", False, safe_error(e), now, None)
             if healthy:
                 try:
@@ -564,7 +592,7 @@ class DiscoveryRunner:
                         pending=self._db.suggestions.list("pending"),
                         healthy_sources=healthy, now=now,
                         live_ports_for=self.live_ports_for,
-                        healthy_since=dict(self._healthy_since))
+                        healthy_since=self._healthy_snapshot())
                     self._db.apply_discovery_changes(changes, now)
                 except Exception as e:
                     logging.warning(f"Discovery: applying scan failed: {type(e).__name__}: {e}")
@@ -574,6 +602,10 @@ class DiscoveryRunner:
         finally:
             with self._lock:
                 self._scanning = False
+
+    def _healthy_snapshot(self):
+        with self._lock:
+            return dict(self._healthy_since)
 
     def request_scan(self):
         """Ask the background loop for a scan now. False when nothing is
