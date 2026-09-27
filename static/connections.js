@@ -13,8 +13,14 @@
 const CX_SOURCE_LABELS = {manual: 'Manual', unifi: 'UniFi', proxmox: 'Proxmox',
                           inferred: 'Wifi inference', migration: 'Migration'};
 
+// Explicit singular forms for counts whose plural doesn't just take an 's'
+// (or whose naive 's'-strip would mangle it, e.g. "nodes" -> "nod"); anything
+// else falls back to stripping one trailing 's'.
+const CX_SINGULAR = {switches: 'switch', clients: 'client', nodes: 'node',
+                     guests: 'guest', devices: 'device'};
+
 let _cxState = {
-  mounted: false, quickMounted: false, seq: 0,
+  mounted: false, quickMounted: false, seq: 0, refreshing: false,
   status: null, suggestions: null, connections: null, inventory: [], categories: [], portMaps: [],
   error: null, openChip: null, scanPolling: false, lastPending: null,
   filter: 'all', query: '', highlightConn: null,
@@ -26,8 +32,11 @@ let _cxState = {
 
 function cxCountsText(counts){
   if(!counts) return '';
-  return Object.keys(counts).sort().map(k =>
-    counts[k] + ' ' + (counts[k] === 1 ? k.replace(/es$|s$/, '') : k)).join(' · ');
+  return Object.keys(counts).sort().map(k => {
+    const n = counts[k];
+    if(n === 1) return n + ' ' + (CX_SINGULAR[k] || k.replace(/s$/, ''));
+    return n + ' ' + k;
+  }).join(' · ');
 }
 
 function cxSourceChips(status, nowSec){
@@ -73,25 +82,37 @@ async function cxPost(url, body){
 }
 
 async function cxRefreshAll(){
-  const seq = ++_cxState.seq;
-  const [status, suggestions, connections, inventory] = await Promise.all([
-    cxGetJson('/api/discovery/status'), cxGetJson('/api/suggestions'),
-    cxGetJson('/api/connections'), qaLoadInventory()]);
-  if(seq !== _cxState.seq) return;
-  const pending = [suggestions, connections].some(x => x && x.migrationPending);
-  _cxState.error = pending
-    ? 'The connections upgrade hasn\'t finished on the server yet, so this page is read-only for now.'
-    : null;
-  _cxState.status = status && !status.migrationPending ? status : null;
-  _cxState.suggestions = suggestions && !suggestions.migrationPending ? suggestions : null;
-  _cxState.connections = connections && !connections.migrationPending ? connections : null;
-  _cxState.inventory = inventory || [];
-  _cxState.categories = Array.from(new Set(_cxState.inventory.map(i => i.category).filter(Boolean))).sort();
-  const maps = (_cxState.status && _cxState.status.port_maps) || [];
-  const ports = await Promise.all(maps.map(m => cxGetJson('/api/ports/' + m.device_id)));
-  if(seq !== _cxState.seq) return;
-  _cxState.portMaps = maps.map((m, i) => ({device_id: m.device_id, name: m.name, data: ports[i]}));
-  cxRender();
+  if(_cxState.refreshing) return;   // one in-flight refresh at a time
+  _cxState.refreshing = true;
+  try {
+    const seq = ++_cxState.seq;
+    const [status, suggestions, connections, inventory] = await Promise.all([
+      cxGetJson('/api/discovery/status'), cxGetJson('/api/suggestions'),
+      cxGetJson('/api/connections'), qaLoadInventory()]);
+    if(seq !== _cxState.seq) return;
+    const pending = [suggestions, connections].some(x => x && x.migrationPending);
+    if(pending){
+      // Migration message takes precedence over a plain load failure.
+      _cxState.error = 'The connections upgrade hasn\'t finished on the server yet, so this page is read-only for now.';
+    } else if(status === null){
+      // Distinct from "still loading": the fetch actually failed (401/500/network).
+      _cxState.error = 'Couldn\'t load connection data. It will retry on the next refresh.';
+    } else {
+      _cxState.error = null;
+    }
+    _cxState.status = status && !status.migrationPending ? status : null;
+    _cxState.suggestions = suggestions && !suggestions.migrationPending ? suggestions : null;
+    _cxState.connections = connections && !connections.migrationPending ? connections : null;
+    _cxState.inventory = inventory || [];
+    _cxState.categories = Array.from(new Set(_cxState.inventory.map(i => i.category).filter(Boolean))).sort();
+    const maps = (_cxState.status && _cxState.status.port_maps) || [];
+    const ports = await Promise.all(maps.map(m => cxGetJson('/api/ports/' + m.device_id)));
+    if(seq !== _cxState.seq) return;
+    _cxState.portMaps = maps.map((m, i) => ({device_id: m.device_id, name: m.name, data: ports[i]}));
+    cxRender();
+  } finally {
+    _cxState.refreshing = false;
+  }
 }
 
 function cxRender(){
@@ -123,7 +144,11 @@ function updateConnectionsBadge(n){
   if(el){ el.style.display = n > 0 ? '' : 'none'; el.textContent = n; }
   const changed = _cxState.lastPending !== null && n !== _cxState.lastPending;
   _cxState.lastPending = n;
-  if(changed && _cxState.mounted) cxRefreshAll();  // a scan landed
+  // Refresh when a scan landed, or (retry path) the last load never succeeded -
+  // this 5s poll is what recovers the workspace from a failed first fetch
+  // without the user having to leave and re-enter the tab. cxRefreshAll's own
+  // refreshing guard keeps this from stacking overlapping fetches.
+  if(_cxState.mounted && (changed || _cxState.status === null)) cxRefreshAll();
 }
 
 // ── Status strip (spec §5.1) ────────────────────────────────────────────────
@@ -184,7 +209,11 @@ async function cxOpenIntegrations(){
 
 async function cxScanNow(){
   if(_cxState.scanPolling) return;
-  const before = (_cxState.status && _cxState.status.last_scan) || 0;
+  // Freshly-fetched, not the possibly-stale cached _cxState.status: if a scan
+  // already landed since our last render, "before" must reflect that or the
+  // poll below can see last_scan > before immediately and stop too early.
+  const freshStatus = await cxGetJson('/api/discovery/status');
+  const before = (freshStatus && freshStatus.last_scan) || (_cxState.status && _cxState.status.last_scan) || 0;
   _cxState.scanPolling = true;
   renderCxStatus();
   try {

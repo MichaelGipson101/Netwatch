@@ -391,9 +391,10 @@ CX_PANELS = ["renderCxStatus"]
 
 @needs_node
 def test_counts_text():
-    out = run_js([(CX_JS, "function cxCountsText")],
-                 "[cxCountsText({switches: 1, clients: 35}), cxCountsText({switches: 2}), cxCountsText(null)]")
-    assert out == ["35 clients · 1 switch", "2 switches", ""]
+    out = run_js([(CX_JS, "const CX_SINGULAR"), (CX_JS, "function cxCountsText")],
+                 "[cxCountsText({switches: 1, clients: 35}), cxCountsText({switches: 2}), cxCountsText(null),"
+                 " cxCountsText({nodes: 1})]")
+    assert out == ["35 clients · 1 switch", "2 switches", "", "1 node"]
 
 
 @needs_node
@@ -403,6 +404,7 @@ def test_source_chips():
               " inferred: {configured: false, ok: null},"
               " later: {configured: true, ok: null, at: null}}, apply_error: 'RuntimeError'}")
     out = run_js([(UTILS_JS, "function lastSeenStr"), (CX_JS, "const CX_SOURCE_LABELS"),
+                  (CX_JS, "const CX_SINGULAR"),
                   (CX_JS, "function cxCountsText"), (CX_JS, "function cxSourceChips")],
                  f"[cxSourceChips({status}, 1300), cxSourceChips(null, 0)]")
     chips = out[0]
@@ -430,7 +432,9 @@ def test_connections_tab_is_wired_in():
     assert _STATIC_FILES["connections.js"].startswith("application/javascript")
     assert "mountConnectionsTab" in js_part(CORE_JS, "function setTab")
     assert "updateConnectionsBadge(data.suggestions_pending)" in js_part(CORE_JS, "async function refresh")
-    assert "renderCxStatus" in js_part(AUTH_JS, "function updateAuthUI")
+    auth_body = js_part(AUTH_JS, "function updateAuthUI")
+    assert "renderCxStatus" in auth_body
+    assert "cxRefreshAll" in auth_body
 
 
 def test_cx_render_fans_out_to_every_panel():

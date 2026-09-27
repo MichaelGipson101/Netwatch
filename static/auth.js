@@ -59,9 +59,13 @@ function updateAuthUI(){
   if (qlEdit) qlEdit.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
   // Scan now and the Settings link in the Connections status strip are
   // admin-only; repaint when admin state changes (login, logout, or auth
-  // resolving after the tab was already shown).
+  // resolving after the tab was already shown). Also re-fetch when logged in:
+  // if the workspace mounted while the session was expired, its initial
+  // fetches all 401'd and it's stuck showing "Loading..." with nothing to
+  // repaint into - a fresh login (or auth resolving late) is the recovery.
   if (typeof renderCxStatus === 'function' && typeof _cxState !== 'undefined' && _cxState.mounted) {
     renderCxStatus();
+    if (_authState.logged_in && typeof cxRefreshAll === 'function') cxRefreshAll();
   }
 }
 
