@@ -446,3 +446,140 @@ def test_cx_render_fans_out_to_every_panel():
 def test_connections_changed_refreshes_workspace_and_drawer():
     body = js_part(CX_JS, "function connectionsChanged")
     assert "cxRefreshAll()" in body and "loadInventoryConnections(" in body
+
+
+# ── Task 6: connections table ───────────────────────────────────────────────
+
+CX_PANELS.append("renderCxTable")
+
+CONNS = ("[{id: 1, child_name: 'Pi', parent_name: 'USW', parent_port: 'Port 10', source: 'manual', connection_type: 'ethernet'},"
+         " {id: 2, child_name: 'NAS', parent_name: 'USW', parent_port: 'Port 9', source: 'unifi', connection_type: 'ethernet'},"
+         " {id: 3, child_name: 'Printer', parent_name: 'Eero', parent_port: null, source: 'manual', connection_type: 'wifi', notes: 'office'},"
+         " {id: 4, child_name: 'Box', parent_name: 'USW', parent_port: 'SFP+ 1', source: 'manual', connection_type: 'fiber'}]")
+TABLE_PARTS = [(CX_JS, "function cxPortSortKey"), (CX_JS, "function cxCompareConnections"),
+               (CX_JS, "function cxFilterConnections"), (CX_JS, "function cxFilterCounts")]
+
+
+@needs_node
+def test_filter_and_sort_connections():
+    out = run_js(TABLE_PARTS,
+                 f"[cxFilterConnections({CONNS}, 'all', '', []).map(c => c.id),"
+                 f" cxFilterConnections({CONNS}, 'drift', '', [3]).map(c => c.id),"
+                 f" cxFilterConnections({CONNS}, 'manual', '', []).map(c => c.id),"
+                 f" cxFilterConnections({CONNS}, 'discovered', '', []).map(c => c.id),"
+                 f" cxFilterConnections({CONNS}, 'all', 'OFFICE', []).map(c => c.id),"
+                 f" cxFilterCounts({CONNS}, [3, 99])]")
+    assert out[0] == [3, 2, 1, 4]   # by parent, then natural port order (9 before 10), SFP after Port
+    assert out[1] == [3] and out[2] == [3, 1, 4] and out[3] == [2] and out[4] == [3]
+    assert out[5] == {"all": 4, "drift": 1, "manual": 3, "discovered": 1}
+
+
+@needs_node
+def test_drift_issues_by_connection():
+    sugg = ("{items: [{kind: 'drift', payload: {connection_id: 5, issues: ['ambiguous_direction']}},"
+            " {kind: 'drift', payload: {connection_id: 6, action: 'replace'}},"
+            " {kind: 'edge', payload: {connection_id: 7}}]}")
+    out = run_js([(CX_JS, "function cxDriftIssues")], f"[cxDriftIssues({sugg}), cxDriftIssues(null)]")
+    assert out == [{"5": ["ambiguous_direction"], "6": []}, {}]
+
+
+EDIT_PRELUDE = ("let _cxState = {editDraft: {parent_port: 'eth0', connection_type: 'ethernet', notes: 'typed'},"
+                " editPorts: [{name: 'Port 8', idx: 8, occupants: []}]};")
+EDIT_PARTS = [(UTILS_JS, "function escapeHtml"), (QA_JS, "const QA_CONNECTION_TYPES"),
+              (QA_JS, "function qaPortOptions"), (CX_JS, "function cxEditRowHtml")]
+EDIT_CONN = "{id: 9, child_name: 'Pi', parent_name: 'USW', parent_id: 1, source: 'unifi'}"
+
+
+@needs_node
+def test_edit_row_renders_from_the_draft_and_keeps_an_unknown_port():
+    html = run_js(EDIT_PARTS, f"cxEditRowHtml({EDIT_CONN}, [])", prelude=EDIT_PRELUDE)
+    assert 'value="typed"' in html                                   # draft, not the DOM
+    assert '<option value="eth0" selected>eth0 (not a port on this device)</option>' in html
+    assert "Saving makes this connection manual" in html            # sourced edge
+    assert "cxSwapConnection" not in html
+    html = run_js(EDIT_PARTS, f"cxEditRowHtml({EDIT_CONN}, ['ambiguous_direction'])", prelude=EDIT_PRELUDE)
+    assert "cxSwapConnection(9)" in html
+
+
+@needs_node
+def test_edit_row_waits_for_ports_and_disables_port_for_wifi():
+    prelude = ("let _cxState = {editDraft: {parent_port: '', connection_type: 'wifi', notes: ''},"
+               " editPorts: undefined};")
+    html = run_js(EDIT_PARTS, f"cxEditRowHtml({EDIT_CONN}, [])", prelude=prelude)
+    assert "Loading ports" in html
+    prelude = ("let _cxState = {editDraft: {parent_port: '', connection_type: 'wifi', notes: ''},"
+               " editPorts: null};")
+    html = run_js(EDIT_PARTS, f"cxEditRowHtml({EDIT_CONN}, [])", prelude=prelude)
+    assert 'data-field="parent_port"' in html and "disabled" in html
+
+
+# ── Carried ruling (a): cxRefreshAll coalesces instead of dropping ─────────
+
+@needs_node
+def test_refresh_all_coalesces_a_call_that_arrives_mid_flight():
+    prelude = (
+        "global.window = {};\n"
+        "let statusCalls = 0, renderCalls = 0;\n"
+        "async function cxGetJson(url){\n"
+        "  if(url === '/api/discovery/status') statusCalls++;\n"
+        "  return {};\n"
+        "}\n"
+        "async function qaLoadInventory(){ return []; }\n"
+        "function cxRender(){ renderCalls++; }\n"
+        "function cxStartEdit(id){}\n"
+        "let _cxState = {mounted: true, seq: 0, refreshing: false, refreshQueued: false,\n"
+        "  status: null, suggestions: null, connections: null, inventory: [], categories: [],\n"
+        "  portMaps: [], error: null, pendingEdit: null};\n"
+    )
+    expr = (
+        "(async () => {\n"
+        "  cxRefreshAll();\n"
+        "  cxRefreshAll();\n"     # arrives while the first is in flight - must coalesce, not drop
+        "  for(let i = 0; i < 100 && (renderCalls < 2 || _cxState.refreshing); i++){\n"
+        "    await new Promise(r => setTimeout(r, 5));\n"
+        "  }\n"
+        "  return [statusCalls, renderCalls, _cxState.refreshing, _cxState.refreshQueued];\n"
+        "})()"
+    )
+    src = prelude + "\n" + js_part(CX_JS, "async function cxRefreshAll")
+    script = src + f"\n{expr}.then(r => process.stdout.write(JSON.stringify(r)));"
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out == [2, 2, False, False]   # two full fetch rounds ran; the second wasn't swallowed
+
+
+# ── Carried ruling (b): auth polling only re-fetches connections when the
+# login state actually changed, or the workspace never loaded ─────────────
+
+def test_auth_ui_only_refetches_connections_on_login_change_or_missing_status():
+    prelude = (
+        "global.window = {};\n"
+        "function escapeHtml(s){ return String(s); }\n"
+        "function makeEl(){\n"
+        "  const el = {innerHTML: '', style: {}, textContent: ''};\n"
+        "  return new Proxy(el, {get(t, p){ return p in t ? t[p] : function(){}; },\n"
+        "                        set(t, p, v){ t[p] = v; return true; }});\n"
+        "}\n"
+        "global.document = { getElementById: () => makeEl() };\n"
+        "let cxRefreshCalls = 0, renderCxStatusCalls = 0;\n"
+        "function renderCxStatus(){ renderCxStatusCalls++; }\n"
+        "function cxRefreshAll(){ cxRefreshCalls++; }\n"
+        "let _cxState = { mounted: true, status: null, lastLoggedIn: null };\n"
+        "let _authState = { logged_in: false, username: 'admin', admin: true };\n"
+    )
+    expr = (
+        "(function(){\n"
+        "  const seq = [];\n"
+        "  updateAuthUI(); seq.push(cxRefreshCalls);\n"                                    # not logged in: no fetch
+        "  _authState.logged_in = true; updateAuthUI(); seq.push(cxRefreshCalls);\n"       # login, status null: fetch
+        "  _cxState.status = {}; updateAuthUI(); seq.push(cxRefreshCalls);\n"              # loaded, unchanged: no fetch
+        "  updateAuthUI(); seq.push(cxRefreshCalls);\n"                                    # 60s poll, unchanged: no fetch
+        "  _authState.logged_in = false; updateAuthUI(); seq.push(cxRefreshCalls);\n"      # logout: no fetch
+        "  _authState.logged_in = true; updateAuthUI(); seq.push(cxRefreshCalls);\n"       # re-login: fetch again
+        "  return [seq, renderCxStatusCalls];\n"
+        "})()"
+    )
+    out = run_js([(AUTH_JS, "function updateAuthUI")], expr, prelude=prelude)
+    assert out[0] == [0, 1, 1, 1, 1, 2]
+    assert out[1] == 6   # renderCxStatus() stays unconditional on every call
