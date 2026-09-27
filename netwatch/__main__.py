@@ -105,7 +105,7 @@ def main():
     quicklinks_db = QuickLinksDB(history_db)
 
     # Daily prune task
-    pt = threading.Thread(target=_prune_loop, args=(history_db, stop_event), daemon=True, name="prune")
+    pt = threading.Thread(target=_prune_loop, args=(history_db, stop_event, inventory_db), daemon=True, name="prune")
     pt.start()
 
     # Ping flush task (batched inserts land every 30s)

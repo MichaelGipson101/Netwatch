@@ -536,7 +536,7 @@ def _flush_loop(history_db, stop_event):
         pass
 
 
-def _prune_loop(history_db, stop_event):
+def _prune_loop(history_db, stop_event, inventory_db=None):
     """Run prune() once a day until stop_event is set."""
     SECONDS_PER_DAY = 86400
     # Run first prune ~60s after startup so the system isn't busy at boot
@@ -554,6 +554,13 @@ def _prune_loop(history_db, stop_event):
                     history_db.prune()
                 except Exception as e:
                     logging.warning(f"HistoryDB prune failed: {e}")
+            if inventory_db is not None:
+                try:
+                    n = inventory_db.suggestions.prune_decided()
+                    if n:
+                        logging.info(f"InventoryDB: pruned {n} decided suggestion(s)")
+                except Exception as e:
+                    logging.warning(f"Suggestion prune failed: {e}")
             elapsed = 0
         time.sleep(5)
         elapsed += 5
@@ -696,6 +703,7 @@ class InventoryDB:
         # Assigned by the discovery runner (plan 2):
         # callable(record) -> list of port dicts, or None.
         self.live_port_provider = None
+        self.suggestions = SuggestionsDB(self.conn, self.lock)
         # SQLite needs PRAGMA foreign_keys=ON for CASCADE to actually work.
         # The HistoryDB connection might not have it on; flip it now.
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -1092,6 +1100,131 @@ class InventoryDB:
             else:
                 out[f] = str(v).strip() if v is not None else None
         return out
+
+
+class SuggestionsDB:
+    """Discovery/migration suggestions (connection_suggestions table).
+
+    Shares InventoryDB's connection and lock. `*_locked` methods assume the
+    caller already holds the lock (so a migration or scan can write many
+    rows inside one transaction); the plain methods take it themselves.
+    """
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS connection_suggestions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind        TEXT NOT NULL,
+        source      TEXT NOT NULL,
+        subject_key TEXT NOT NULL UNIQUE,
+        payload     TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        first_seen  INTEGER NOT NULL,
+        last_seen   INTEGER NOT NULL,
+        decided_at  INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_sugg_status ON connection_suggestions(status);
+    """
+
+    _COLS = ("id, kind, source, subject_key, payload, fingerprint, status, "
+             "first_seen, last_seen, decided_at")
+
+    def __init__(self, conn, lock):
+        self.conn = conn
+        self.lock = lock
+        self.conn.executescript(self.SCHEMA)
+
+    @staticmethod
+    def _decode(cols, row):
+        rec = dict(zip(cols, row))
+        try:
+            rec["payload"] = json.loads(rec["payload"])
+        except (TypeError, ValueError):
+            rec["payload"] = {}
+        return rec
+
+    def upsert_locked(self, kind, source, subject_key, payload, fp, now):
+        row = self.conn.execute(
+            "SELECT id, status, fingerprint FROM connection_suggestions "
+            "WHERE subject_key = ?", (subject_key,)).fetchone()
+        blob = json.dumps(payload, sort_keys=True)
+        if row is None:
+            cur = self.conn.execute(
+                "INSERT INTO connection_suggestions (kind, source, subject_key, "
+                "payload, fingerprint, status, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+                (kind, source, subject_key, blob, fp, now, now))
+            return cur.lastrowid
+        sid, status, old_fp = row
+        if status in ("dismissed", "accepted") and old_fp == fp:
+            # The user already decided on exactly this proposal.
+            self.conn.execute(
+                "UPDATE connection_suggestions SET last_seen = ? WHERE id = ?",
+                (now, sid))
+        else:
+            self.conn.execute(
+                "UPDATE connection_suggestions SET kind = ?, source = ?, payload = ?, "
+                "fingerprint = ?, status = 'pending', last_seen = ?, decided_at = NULL "
+                "WHERE id = ?",
+                (kind, source, blob, fp, now, sid))
+        return sid
+
+    def upsert(self, kind, source, subject_key, payload, fp, now=None):
+        with self.lock:
+            return self.upsert_locked(kind, source, subject_key, payload, fp,
+                                      int(now or time.time()))
+
+    def get(self, sid):
+        with self.lock:
+            cur = self.conn.execute(
+                f"SELECT {self._COLS} FROM connection_suggestions WHERE id = ?", (sid,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return self._decode([d[0] for d in cur.description], row)
+
+    def list(self, status="pending"):
+        with self.lock:
+            cur = self.conn.execute(
+                f"SELECT {self._COLS} FROM connection_suggestions WHERE status = ? "
+                "ORDER BY kind, first_seen, id", (status,))
+            cols = [d[0] for d in cur.description]
+            return [self._decode(cols, r) for r in cur.fetchall()]
+
+    def count_pending(self):
+        with self.lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM connection_suggestions WHERE status = 'pending'"
+            ).fetchone()[0]
+
+    def set_status(self, sid, status, now=None):
+        with self.lock:
+            cur = self.conn.execute(
+                "UPDATE connection_suggestions SET status = ?, decided_at = ? WHERE id = ?",
+                (status, int(now or time.time()), sid))
+            return cur.rowcount > 0
+
+    def resolve_locked(self, subject_key, now):
+        cur = self.conn.execute(
+            "UPDATE connection_suggestions SET status = 'resolved', decided_at = ? "
+            "WHERE subject_key = ? AND status = 'pending'", (now, subject_key))
+        return cur.rowcount > 0
+
+    def resolve(self, subject_key, now=None):
+        with self.lock:
+            return self.resolve_locked(subject_key, int(now or time.time()))
+
+    def prune_decided(self, now=None, max_age_days=90):
+        """Delete decided rows that have been neither decided nor observed
+        for max_age_days. Still-observed dismissals are kept on purpose:
+        deleting them would resurface them as new pending suggestions."""
+        cutoff = int(now or time.time()) - max_age_days * 86400
+        with self.lock:
+            cur = self.conn.execute(
+                "DELETE FROM connection_suggestions WHERE status != 'pending' "
+                "AND decided_at IS NOT NULL AND decided_at < ? AND last_seen < ?",
+                (cutoff, cutoff))
+            return cur.rowcount
 
 
 class QuickLinksDB:

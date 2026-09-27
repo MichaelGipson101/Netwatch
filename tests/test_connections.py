@@ -222,3 +222,71 @@ def test_list_connections_for_device_keeps_direction_field():
         assert idb.list_connections_for_device(vm)[0]["direction"] == "out"
         assert idb.list_connections_for_device(host)[0]["direction"] == "in"
         hdb.close()
+
+
+DAY = 86400
+
+
+def test_suggestion_insert_get_list_count():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        s = idb.suggestions
+        sid = s.upsert("drift", "migration", "drift:x", {"msg": "hi"}, "fp1", now=100)
+        row = s.get(sid)
+        assert row["payload"] == {"msg": "hi"}
+        assert (row["status"], row["first_seen"], row["last_seen"]) == ("pending", 100, 100)
+        assert [r["id"] for r in s.list()] == [sid]
+        assert s.count_pending() == 1
+        assert s.get(99999) is None
+        hdb.close()
+
+
+def test_dismissed_stays_dismissed_at_same_fingerprint_and_reopens_on_change():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        s = idb.suggestions
+        sid = s.upsert("edge", "unifi", "edge:a", {"port": "7"}, "fp1", now=100)
+        assert s.set_status(sid, "dismissed", now=110)
+        s.upsert("edge", "unifi", "edge:a", {"port": "7"}, "fp1", now=200)
+        row = s.get(sid)
+        assert (row["status"], row["last_seen"], row["decided_at"]) == ("dismissed", 200, 110)
+        s.upsert("edge", "unifi", "edge:a", {"port": "9"}, "fp2", now=300)
+        row = s.get(sid)
+        assert (row["status"], row["payload"], row["decided_at"]) == ("pending", {"port": "9"}, None)
+        hdb.close()
+
+
+def test_resolve_only_touches_pending_and_resolved_rows_reopen_when_seen_again():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        s = idb.suggestions
+        a = s.upsert("drift", "migration", "k:a", {}, "fp", now=1)
+        b = s.upsert("drift", "migration", "k:b", {}, "fp", now=1)
+        s.set_status(b, "dismissed", now=2)
+        assert s.resolve("k:a", now=3) is True
+        assert s.resolve("k:b", now=3) is False
+        assert s.resolve("k:missing", now=3) is False
+        assert s.get(a)["status"] == "resolved"
+        assert s.get(b)["status"] == "dismissed"
+        s.upsert("drift", "migration", "k:a", {}, "fp", now=4)
+        assert s.get(a)["status"] == "pending"
+        hdb.close()
+
+
+def test_prune_keeps_pending_and_still_observed_dismissals():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        s = idb.suggestions
+        now = 1000 * DAY
+        old = now - 100 * DAY
+        pending = s.upsert("edge", "unifi", "k:pending", {}, "fp", now=old)
+        gone = s.upsert("edge", "unifi", "k:gone", {}, "fp", now=old)
+        s.set_status(gone, "dismissed", now=old)
+        watched = s.upsert("edge", "unifi", "k:watched", {}, "fp", now=old)
+        s.set_status(watched, "dismissed", now=old)
+        s.upsert("edge", "unifi", "k:watched", {}, "fp", now=now - DAY)  # still observed
+        assert s.prune_decided(now=now) == 1
+        assert s.get(gone) is None
+        assert s.get(pending) is not None
+        assert s.get(watched)["status"] == "dismissed"
+        hdb.close()
