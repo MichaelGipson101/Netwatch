@@ -66,6 +66,7 @@ _STATIC_FILES = {
     'apple-touch-icon.png':'image/png',
     'mira-avatar.png': 'image/png',
     'quicklinks.js':'application/javascript; charset=utf-8',
+    'connections.js': 'application/javascript; charset=utf-8',
 }
 
 

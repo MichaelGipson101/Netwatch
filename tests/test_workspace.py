@@ -376,3 +376,69 @@ def test_every_static_script_parses(name):
     r = subprocess.run(["node", "--check", os.path.join(STATIC, name)],
                        capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stderr
+
+
+# ── Task 5: workspace shell ─────────────────────────────────────────────────
+
+CX_JS = os.path.join(STATIC, "connections.js")
+CORE_JS = os.path.join(STATIC, "core.js")
+AUTH_JS = os.path.join(STATIC, "auth.js")
+
+# Every workspace panel renderer; cxRender() must call each one. Later
+# tasks append to this list as they add panels.
+CX_PANELS = ["renderCxStatus"]
+
+
+@needs_node
+def test_counts_text():
+    out = run_js([(CX_JS, "function cxCountsText")],
+                 "[cxCountsText({switches: 1, clients: 35}), cxCountsText({switches: 2}), cxCountsText(null)]")
+    assert out == ["35 clients · 1 switch", "2 switches", ""]
+
+
+@needs_node
+def test_source_chips():
+    status = ("{sources: {unifi: {configured: true, ok: true, error: null, at: 1000, counts: {switches: 1, clients: 3}},"
+              " proxmox: {configured: true, ok: false, error: 'HTTP 401', at: 900, counts: null},"
+              " inferred: {configured: false, ok: null},"
+              " later: {configured: true, ok: null, at: null}}, apply_error: 'RuntimeError'}")
+    out = run_js([(UTILS_JS, "function lastSeenStr"), (CX_JS, "const CX_SOURCE_LABELS"),
+                  (CX_JS, "function cxCountsText"), (CX_JS, "function cxSourceChips")],
+                 f"[cxSourceChips({status}, 1300), cxSourceChips(null, 0)]")
+    chips = out[0]
+    assert [c["name"] for c in chips] == ["later", "proxmox", "unifi", "apply"]
+    assert chips[0] == {"name": "later", "label": "later", "state": "pending", "when": None,
+                        "detail": "Waiting for the first scan"}
+    assert chips[1]["state"] == "warn" and chips[1]["detail"] == "HTTP 401" and chips[1]["when"] == "6m ago"
+    assert chips[2] == {"name": "unifi", "label": "UniFi", "state": "ok", "when": "5m ago",
+                        "detail": "3 clients · 1 switch"}
+    assert chips[3]["state"] == "warn" and "RuntimeError" in chips[3]["detail"]
+    assert out[1] == []
+
+
+def test_connections_tab_is_wired_in():
+    html = open(DASHBOARD, encoding="utf-8").read()
+    i_topo = html.index('data-tab="topology"')
+    i_conn = html.index('data-tab="connections"')
+    i_events = html.index('data-tab="events"')
+    assert i_topo < i_conn < i_events
+    for needle in ('id="conn-count"', 'id="view-connections"', 'id="cx-status"', 'id="cx-quick"',
+                   'id="cx-suggestions"', 'id="cx-ports-panel"', 'id="cx-table"',
+                   '<script src="/static/connections.js?v={{VERSION}}"></script>'):
+        assert needle in html, needle
+    from netwatch.server import _STATIC_FILES
+    assert _STATIC_FILES["connections.js"].startswith("application/javascript")
+    assert "mountConnectionsTab" in js_part(CORE_JS, "function setTab")
+    assert "updateConnectionsBadge(data.suggestions_pending)" in js_part(CORE_JS, "async function refresh")
+    assert "renderCxStatus" in js_part(AUTH_JS, "function updateAuthUI")
+
+
+def test_cx_render_fans_out_to_every_panel():
+    body = js_part(CX_JS, "function cxRender(")
+    for fn in CX_PANELS:
+        assert fn + "()" in body, fn
+
+
+def test_connections_changed_refreshes_workspace_and_drawer():
+    body = js_part(CX_JS, "function connectionsChanged")
+    assert "cxRefreshAll()" in body and "loadInventoryConnections(" in body

@@ -245,6 +245,7 @@
     <button class="tab" data-tab="overview" role="tab">Overview</button>
     <button class="tab" data-tab="hosts" role="tab">Hosts</button>
     <button class="tab" data-tab="topology" role="tab">Topology</button>
+    <button class="tab" data-tab="connections" role="tab">Connections <span class="tab-count" id="conn-count" style="display:none">0</span></button>
     <button class="tab" data-tab="events" role="tab">Events <span class="tab-count" id="events-count" style="display:none">0</span></button>
     <button class="tab" data-tab="inventory" role="tab">Inventory <span class="tab-count" id="inv-count" style="display:none">0</span></button>
     <button class="tab" data-tab="briefs" role="tab">Briefs <span class="tab-count" id="briefs-count" style="display:none">1</span></button>
@@ -398,6 +399,28 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-connections">
+    <div class="cx-grid">
+      <section class="cx-panel cx-area-status" id="cx-status" aria-label="Discovery sources"></section>
+      <section class="cx-panel cx-area-quick" aria-labelledby="cx-quick-title">
+        <div class="cx-panel-hdr"><h2 id="cx-quick-title">Add a connection</h2></div>
+        <div id="cx-quick"></div>
+      </section>
+      <section class="cx-panel cx-area-sugg" aria-labelledby="cx-sugg-title">
+        <div class="cx-panel-hdr"><h2 id="cx-sugg-title">Suggestions</h2><span class="cx-hdr-count" id="cx-sugg-count"></span></div>
+        <div id="cx-suggestions"></div>
+      </section>
+      <section class="cx-panel cx-area-ports" id="cx-ports-panel" aria-labelledby="cx-ports-title" hidden>
+        <div class="cx-panel-hdr"><h2 id="cx-ports-title">Switch ports</h2></div>
+        <div id="cx-ports"></div>
+      </section>
+      <section class="cx-panel cx-area-table" aria-labelledby="cx-table-title">
+        <div class="cx-panel-hdr"><h2 id="cx-table-title">All connections</h2></div>
+        <div id="cx-table"></div>
+      </section>
     </div>
   </div>
 
@@ -1087,6 +1110,7 @@
 <script src="/static/auth.js?v={{VERSION}}"></script>
 <script src="/static/inventory.js?v={{VERSION}}"></script>
 <script src="/static/quickadd.js?v={{VERSION}}"></script>
+<script src="/static/connections.js?v={{VERSION}}"></script>
 <script src="/static/ai-panel.js?v={{VERSION}}"></script>
 <script src="/static/nas.js?v={{VERSION}}"></script>
 <script src="/static/proxmox.js?v={{VERSION}}"></script>

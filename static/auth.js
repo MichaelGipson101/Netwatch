@@ -57,6 +57,12 @@ function updateAuthUI(){
   // Quick Links pencil lives in the Overview card header; only admins may edit.
   const qlEdit = document.getElementById('ql-page-edit-btn');
   if (qlEdit) qlEdit.style.display = (_authState.logged_in && _authState.admin) ? '' : 'none';
+  // Scan now and the Settings link in the Connections status strip are
+  // admin-only; repaint when admin state changes (login, logout, or auth
+  // resolving after the tab was already shown).
+  if (typeof renderCxStatus === 'function' && typeof _cxState !== 'undefined' && _cxState.mounted) {
+    renderCxStatus();
+  }
 }
 
 let _userMenuOutsideClick = null;

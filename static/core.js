@@ -66,6 +66,7 @@ function setTab(tab){
   if(tab === 'servers'   && typeof initServersTab === 'function') initServersTab();
   if(tab === 'briefs') fetchBriefs();
   if(tab === 'quicklinks' && typeof mountQuickLinksPage === 'function') mountQuickLinksPage();
+  if(tab === 'connections' && typeof mountConnectionsTab === 'function') mountConnectionsTab();
   // Re-fetch topology when switching to the tab (but only after D3 has loaded
   // at least once — initial load is handled by setTopoView on page boot).
   if(tab === 'topology' && _topoD3Loaded && typeof fetchAndRenderTopologyWeb === 'function') fetchAndRenderTopologyWeb();
@@ -462,6 +463,7 @@ async function refresh(){
       applyHostFilter();
     }
     renderEvents(data);
+    if(typeof updateConnectionsBadge === 'function') updateConnectionsBadge(data.suggestions_pending);
     if(openDrawerIp){
       const h = data.hosts.find(x => x.ip === openDrawerIp);
       if(h) renderDrawer(h, data);
