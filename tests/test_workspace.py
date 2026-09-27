@@ -820,3 +820,24 @@ def test_old_drawer_form_is_gone_and_fan_out_is_used():
         if name.endswith(".js"):
             text = open(os.path.join(STATIC, name), encoding="utf-8").read()
             assert "startAddConnection" not in text and "submitConnection(" not in text, name
+
+
+# ── Task 10: responsive + version ───────────────────────────────────────────
+
+def test_workspace_breakpoints_are_present():
+    css = open(os.path.join(STATIC, "main.css"), encoding="utf-8").read()
+    for needle in (
+        '@media (max-width:900px){.cx-grid{grid-template-columns:minmax(0,1fr)',
+        '@media (max-width:600px){.cx-table{min-width:640px}}',
+        '.cx-face-grid{grid-template-columns:repeat(9,minmax(0,1fr))',
+        '.cx-face-grid{grid-template-columns:repeat(6,minmax(0,1fr))',
+        '@media (max-width:380px){',
+        '[data-theme="dark"] .cx-panel{',
+        '[data-theme="dark"] .qa-list{',
+    ):
+        assert needle in css, needle
+
+
+def test_version_bumped_for_new_static_assets():
+    from netwatch import VERSION
+    assert VERSION == "3.77"
