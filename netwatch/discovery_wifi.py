@@ -6,7 +6,7 @@ isn't a Proxmox guest is presumed to be a wifi client of the gateway. The
 runner only calls this in a scan where UniFi succeeded; otherwise every wired
 device would look wireless.
 """
-from netwatch.connections import NETWORK_LINK_TYPES
+from netwatch.connections import NETWORK_LINK_TYPES, is_likely_guest_mac
 from netwatch.storage import InventoryDB
 
 _norm_mac = InventoryDB.normalize_mac
@@ -50,7 +50,10 @@ def find_gateway(records):
 
 def wifi_observations(hosts, arp, wired_macs, guest_macs, records, edges):
     """(observations, error). A linked always-on host that's down or missing
-    from ARP is held, so its inferred edge neither ages nor resolves."""
+    from ARP is held, so its inferred edge neither ages nor resolves.
+
+    guest_macs: the Proxmox guest MACs, or None when they're unknown this
+    scan - then a candidate with a likely-guest MAC is held, not edged."""
     gateway = find_gateway(records)
     if gateway is None:
         return [], NO_GATEWAY
@@ -75,13 +78,14 @@ def wifi_observations(hosts, arp, wired_macs, guest_macs, records, edges):
                 or rec.get("device_type") in _SKIP_TYPES):
             continue
         seen.add(rec["id"])
-        if mac in wired_macs or mac in guest_macs:
+        if mac in wired_macs or (guest_macs is not None and mac in guest_macs):
             continue
         # Already linked somewhere other than wifi-to-the-gateway: not ours to judge.
         if any(e["to_device_id"] != gateway["id"] or e["connection_type"] != "wifi"
                for e in links.get(rec["id"], [])):
             continue
-        if not h.get("is_up") or mac not in arp_macs:
+        if (not h.get("is_up") or mac not in arp_macs
+                or (guest_macs is None and is_likely_guest_mac(mac))):
             obs.append({"type": "held", "source": "inferred", "macs": [mac]})
             continue
         obs.append({

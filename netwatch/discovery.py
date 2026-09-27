@@ -23,9 +23,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from netwatch.connections import (
-    NETWORK_LINK_TYPES, canonical_port, fingerprint, normalize_port, orient_edge,
-    resolve_ports,
+from netwatch.connections import (  # noqa: F401 - PROXMOX_OUI/is_likely_guest_mac re-exported
+    NETWORK_LINK_TYPES, PROXMOX_OUI, canonical_port, fingerprint, is_likely_guest_mac,
+    normalize_port, orient_edge, resolve_ports,
 )
 from netwatch.discovery_proxmox import (
     ProxmoxUnavailable, fetch_proxmox as fetch_proxmox_snapshot, proxmox_observations,
@@ -33,23 +33,7 @@ from netwatch.discovery_proxmox import (
 from netwatch.discovery_wifi import read_arp as read_proc_arp, wifi_observations
 from netwatch.storage import InventoryDB
 
-PROXMOX_OUI = "bc:24:11"
-
 _norm_mac = InventoryDB.normalize_mac
-
-
-def is_likely_guest_mac(mac):
-    """Proxmox's default OUI, or a locally-administered MAC (the HAOS VM
-    uses one). Only a heuristic: used to hold judgement, never to decide."""
-    m = _norm_mac(mac)
-    if not m:
-        return False
-    if m.startswith(PROXMOX_OUI):
-        return True
-    try:
-        return bool(int(m[:2], 16) & 0x02)
-    except ValueError:
-        return False
 
 
 def _is_port_idx(value):
@@ -145,6 +129,12 @@ def unifi_observations(snapshot, guest_macs=None, guest_node_of=None, guests_com
         port = port_info["name"] if port_info else str(idx)
         held = {"type": "held", "source": "unifi",
                 "macs": sorted(c["mac"] for c in clients), "switch_mac": sw_mac, "port": port}
+        # A held port casts no node-port votes, so the nodes whose guests it
+        # carries can't have their node-port fact re-derived this scan.
+        held_nodes = sorted({guest_node_of[c["mac"]] for c in clients
+                             if c["mac"] in (guest_node_of or {})})
+        if held_nodes:
+            held["nodes"] = held_nodes
         if guest_macs is None and any(is_likely_guest_mac(c["mac"]) for c in clients):
             obs.append(held)
             continue
@@ -219,11 +209,11 @@ def _index_records(records):
 def _match_node(o, records, by_ip):
     """Proxmox node -> inventory record: node IP, then properties.proxmox_node.
 
-    Skips VM records in the properties.proxmox_node scan: on a VM that
-    property means "runs on node X", not "is node X" - matching it here
-    would misattribute the node-port edge to a guest (fix round 1, #1)."""
+    Never a VM record: a VM can't be a Proxmox node, and on a VM
+    properties.proxmox_node means "runs on node X", not "is node X" -
+    matching it would misattribute the node-port edge to a guest."""
     ip = str(o.get("ip") or "").strip()
-    if ip and ip in by_ip:
+    if ip and ip in by_ip and by_ip[ip].get("device_type") != "vm":
         return by_ip[ip]
     for r in records:
         if (r.get("device_type") != "vm"
@@ -232,9 +222,13 @@ def _match_node(o, records, by_ip):
     return None
 
 
-def _match_guest(o, records, by_mac):
+def _match_guest(o, records, by_mac, claimed=(), by_name=True):
     """Proxmox guest -> inventory record, first hit wins (spec §2.3): recorded
     vmid (and node, if recorded), then any of its MACs, then its name.
+
+    The name rule (skipped when by_name is False) only considers VM records
+    whose id isn't in `claimed` (records already bound to another guest this
+    scan).
 
     Returns (record, how) where how is "vmid", "mac" or "name" - callers use
     it to decide whether a match is trustworthy enough to fill properties
@@ -248,12 +242,34 @@ def _match_guest(o, records, by_mac):
     for m in o["macs"]:
         if m in by_mac:
             return by_mac[m], "mac"
-    name = str(o.get("name") or "").strip().lower()
+    name = str(o.get("name") or "").strip().lower() if by_name else ""
     if name:
         for r in records:
-            if str(r.get("system") or "").strip().lower() == name:
+            if (r.get("device_type") == "vm" and r["id"] not in claimed
+                    and str(r.get("system") or "").strip().lower() == name):
                 return r, "name"
     return None, None
+
+
+def _match_guests(guest_obs, records, by_mac):
+    """{(node, vmid): (record, how)} for every guest this scan. vmid/MAC
+    matches claim their records first; then name-only matches go in
+    (node, vmid) order, each record binding to at most one guest."""
+    guest_obs = sorted(guest_obs, key=lambda o: (str(o["node"]), o["vmid"]))
+    out, claimed = {}, set()
+    for o in guest_obs:
+        r, how = _match_guest(o, records, by_mac, by_name=False)
+        if how in ("vmid", "mac"):
+            out[(o["node"], o["vmid"])] = (r, how)
+            claimed.add(r["id"])
+    for o in guest_obs:
+        if (o["node"], o["vmid"]) in out:
+            continue
+        r, how = _match_guest(o, records, by_mac, claimed=claimed)
+        out[(o["node"], o["vmid"])] = (r, how)
+        if r is not None:
+            claimed.add(r["id"])
+    return out
 
 
 def _most_common_category(records, device_type):
@@ -375,6 +391,10 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             if port_name is not None:
                 held_ports.add((o["switch_mac"],
                                 port_key(port_name, ports_of(switch) if switch else None)))
+            for n in o.get("nodes", ()):
+                held_keys_extra.update({f"edge:unifi:node-port:{n}",
+                                        f"drift:unifi:node-port:{n}"})
+                stale_hold_keys.add(f"unifi:node-port:{n}")
 
     # ── Proxmox nodes: match to inventory, or ask which device each one is ──
     node_records, offline_nodes, node_names = {}, set(), set()
@@ -383,7 +403,9 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             continue
         name = o["name"]
         node_names.add(name)
-        if not o.get("online", True):
+        # offline_nodes: offline, or online but its guest list is unknown
+        # this scan - either way its guests (and node-port fact) are held.
+        if not o.get("online", True) or not o.get("guests_known", True):
             offline_nodes.add(name)
         node = _match_node(o, records, by_ip)
         if node is not None:
@@ -391,9 +413,11 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             continue
         cand_mac = _norm_mac((ip_macs or {}).get(str(o.get("ip") or "")))
         cand = by_mac.get(cand_mac) if cand_mac else None
+        if cand is not None and cand.get("device_type") == "vm":
+            cand = None                       # a VM is never a node candidate
         if cand is None:
-            cand = next((r for r in records
-                         if str(r.get("system") or "").strip().lower() == name.lower()), None)
+            cand = next((r for r in records if r.get("device_type") != "vm"
+                         and str(r.get("system") or "").strip().lower() == name.lower()), None)
         where = f" ({o['ip']})" if o.get("ip") else ""
         suggest("identity", o["source"], f"identity:proxmox-node:{name}", {
             "proxmox_node": name, "node_ip": o.get("ip"),
@@ -432,9 +456,30 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             return by_id.get(spec["inventory_id"])
         return by_mac.get(spec.get("mac"))
 
-    node_port_child_ids = {node_records[o["child"]["proxmox_node"]]["id"] for o in live
-                           if o["type"] == "edge"
-                           and o["child"].get("proxmox_node") in node_records}
+    node_port_obs = {o["child"]["proxmox_node"]: o for o in live
+                     if o["type"] == "edge" and o["child"].get("proxmox_node") in node_records}
+    node_port_child_ids = {node_records[n]["id"] for n in node_port_obs}
+
+    def split_node_macs(macs):
+        """(node MACs, other MACs) of a shared port, node = has a node-port obs."""
+        nodes = [m for m in macs if m in by_mac and by_mac[m]["id"] in node_port_child_ids]
+        return nodes, [m for m in macs if m not in nodes]
+
+    # A node sharing its port with another (non-guest) device stays in that
+    # shared_port suggestion, and its node-port observation for that same
+    # port is dropped: no direct edge alongside the shared port.
+    suppressed_node_ports = set()
+    for o in live:
+        if o["type"] != "shared_port":
+            continue
+        nmacs, others = split_node_macs(o["macs"])
+        if not (nmacs and others):
+            continue
+        ids = {by_mac[m]["id"] for m in nmacs}
+        for n, np in node_port_obs.items():
+            if (node_records[n]["id"] in ids and np["parent"].get("mac") == o["switch_mac"]
+                    and np["parent_port"] == o["port"]):
+                suppressed_node_ports.add(n)
 
     # F2(a): a neighbour already wired via the client path (a wired-client
     # `edge` observation resolving to the same inventory record) is never
@@ -476,14 +521,36 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             o["port"]))
         lldp_winner[switch_id] = candidates[0]
 
+    def behind_placeholder(child, parent, parent_port):
+        """child already links to something (an unmanaged switch placeholder)
+        that is itself linked to parent at the same port: that agrees with
+        the observation, so touch both edges instead of drifting."""
+        links = links_from(child["id"])
+        if any(e["to_device_id"] == parent["id"] for e in links):
+            return False              # a direct link: observe_edge handles it
+        ports = ports_of(parent)
+        pport = port_key(parent_port, ports)
+        for e in links:
+            for up in links_from(e["to_device_id"]):
+                if (up["to_device_id"] == parent["id"]
+                        and port_key(up["to_port"], ports) == pport):
+                    touch.setdefault(e["id"], None)
+                    touch.setdefault(up["id"], None)
+                    return True
+        return False
+
     def process_edge(o):
         parent = resolve_parent(o["parent"])
         if parent is None:
             return
         spec = o["child"]
         if "proxmox_node" in spec:
+            if spec["proxmox_node"] in suppressed_node_ports:
+                return
             child = node_records.get(spec["proxmox_node"])
             if child is not None and child["id"] != parent["id"]:
+                if behind_placeholder(child, parent, o["parent_port"]):
+                    return
                 observe_edge(child, parent, o["parent_port"], o.get("child_port"),
                              f"node-port:{spec['proxmox_node']}", o["external_key"],
                              o["connection_type"], o["source"])
@@ -509,12 +576,14 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                         "but isn't in inventory"),
         }, [mac, parent["id"], pport])
 
+    guest_matches = _match_guests([o for o in live if o["type"] == "guest"], records, by_mac)
+
     def process_guest(o):
         node = node_records.get(o["node"])
         if node is None or o["node"] in offline_nodes:
             return  # held above
         subject = f"{o['node']}:{o['vmid']}"
-        guest, how = _match_guest(o, records, by_mac)
+        guest, how = guest_matches[(o["node"], o["vmid"])]
         if guest is not None:
             if guest["id"] == node["id"]:
                 return
@@ -565,18 +634,12 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
             switch = by_mac.get(o["switch_mac"])
             if switch is None:
                 continue
-            macs = [m for m in o["macs"]
-                    if not (m in by_mac and by_mac[m]["id"] in node_port_child_ids)]
-            if len(macs) == 1:
-                # Only the node's own MAC made this port look shared.
-                process_edge({"type": "edge", "source": o["source"],
-                              "child": {"mac": macs[0], "ip": None, "name": None},
-                              "parent": {"mac": o["switch_mac"]}, "parent_port": o["port"],
-                              "child_port": None, "connection_type": "ethernet",
-                              "external_key": f"unifi:port:{macs[0]}"})
+            # Only node MACs here (superseded by their node-port edges):
+            # nothing to suggest. Otherwise the node stays in the set.
+            _nmacs, others = split_node_macs(o["macs"])
+            if not others:
                 continue
-            if not macs:
-                continue
+            macs = list(o["macs"])
             ports = ports_of(switch)
             pport = port_key(o["port"], ports)
             on_port = [e for e in edges if e["to_device_id"] == switch["id"]
@@ -914,9 +977,10 @@ class DiscoveryRunner:
                     for ip, mac in arp.items():
                         ip_macs.setdefault(ip, mac)
                     if self.inference_configured():
+                        # guest_macs is None when Proxmox gave no answer: the
+                        # guest set is unknown, so likely-guest MACs are held.
                         observations += self._infer(now, "unifi" in healthy, arp, wired_macs,
-                                                    guest_macs or set(), records, edges,
-                                                    healthy)
+                                                    guest_macs, records, edges, healthy)
                     changes = reconcile(
                         observations, records=records, edges=edges,
                         pending=self._db.suggestions.list("pending"),

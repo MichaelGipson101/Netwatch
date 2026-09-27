@@ -1649,7 +1649,8 @@ class InventoryDB:
         except (TypeError, ValueError):
             raise _SuggestionRejected("choose which device this is (overrides.device_id)")
         row = self.conn.execute(
-            "SELECT properties FROM inventory WHERE id = ?", (target,)).fetchone()
+            "SELECT properties, system, device_type FROM inventory WHERE id = ?",
+            (target,)).fetchone()
         if row is None:
             # A device_id the caller typed in themselves that doesn't exist is
             # their mistake (rejected); the suggestion's own candidate having
@@ -1665,6 +1666,11 @@ class InventoryDB:
             raise _SuggestionRejected("that device's properties are unreadable; fix them first")
         if p.get("proxmox_node"):
             name = str(p["proxmox_node"])
+            if row[2] == "vm":
+                raise _SuggestionRejected("a VM can't be a Proxmox node")
+            current = props.get("proxmox_node")
+            if current not in (None, "") and str(current) != name:
+                raise _SuggestionRejected(f"{row[1]} is already Proxmox node {current}")
             # A VM record carrying properties.proxmox_node means "runs on
             # node X", not "is node X" - it never blocks the node identity.
             for system, dtype, raw in self.conn.execute(

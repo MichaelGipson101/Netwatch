@@ -4,8 +4,8 @@
 - fetch_proxmox: I/O through ProxmoxPoller, reusing its credentials, TLS
   settings and node/guest cache (spec §2.3).
 
-A guest whose config can't be read, or any guest on an offline node, is
-never guessed at: it becomes a hold so its suggestions neither resolve nor
+A guest whose config can't be read, or any guest on an offline node or on
+a node whose guest list couldn't be fetched, is never guessed at: it becomes a hold so its suggestions neither resolve nor
 age until Proxmox answers again.
 """
 import re
@@ -55,8 +55,12 @@ def proxmox_snapshot(nodes, cluster_status, configs):
         if not name:
             continue
         online = n.get("status") == "online"
-        out_nodes.append({"name": name, "ip": ips.get(name), "online": online})
-        if not online:
+        # An online node whose guest list the poller couldn't fetch is, for
+        # guest purposes, as unknowable as an offline one: held, not "empty".
+        guests_known = online and n.get("guests_ok", True) is not False
+        out_nodes.append({"name": name, "ip": ips.get(name), "online": online,
+                          "guests_known": guests_known})
+        if not guests_known:
             continue
         for g in n.get("guests") or []:
             vmid, kind = _int(g.get("vmid")), g.get("type")
@@ -78,12 +82,13 @@ def proxmox_snapshot(nodes, cluster_status, configs):
                 "status": g.get("status"),
             })
     return {"nodes": out_nodes, "guests": guests, "failed": failed,
-            "complete": not failed and all(n["online"] for n in out_nodes)}
+            "complete": not failed and all(n["guests_known"] for n in out_nodes)}
 
 
 def proxmox_observations(snap):
     obs = [{"type": "node", "source": "proxmox", "name": n["name"], "ip": n["ip"],
-            "online": n["online"]} for n in snap["nodes"]]
+            "online": n["online"], "guests_known": n["guests_known"]}
+           for n in snap["nodes"]]
     for g in snap["guests"]:
         obs.append({
             "type": "guest", "source": "proxmox", "node": g["node"], "vmid": g["vmid"],
@@ -108,7 +113,7 @@ def fetch_proxmox(poller):
     configs = {}
     for n in nodes:
         name = n.get("name")
-        if not name or n.get("status") != "online":
+        if not name or n.get("status") != "online" or n.get("guests_ok", True) is False:
             continue
         for g in n.get("guests") or []:
             vmid, kind = _int(g.get("vmid")), g.get("type")

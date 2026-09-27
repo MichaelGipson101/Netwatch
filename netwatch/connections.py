@@ -28,6 +28,25 @@ NETWORK_ROLES = tuple(NETWORK_ROLE_RANK)
 # to power, USB, console, etc.) - a device has at most one of these per NIC.
 NETWORK_LINK_TYPES = ("ethernet", "fiber", "wifi")
 
+# Proxmox's default guest NIC OUI.
+PROXMOX_OUI = "bc:24:11"
+
+
+def is_likely_guest_mac(mac):
+    """Proxmox's default OUI, or a locally-administered MAC (the HAOS VM
+    uses one). Only a heuristic: used to hold judgement, never to decide.
+    Lives here (not netwatch.discovery) so discovery_wifi can use it
+    without a circular import; netwatch.discovery re-exports it."""
+    if not mac:
+        return False
+    hexes = "".join(c for c in str(mac).strip().lower() if c in "0123456789abcdef")
+    if len(hexes) != 12:
+        return False
+    if ":".join(hexes[i:i + 2] for i in range(0, 12, 2)).startswith(PROXMOX_OUI):
+        return True
+    return bool(int(hexes[:2], 16) & 0x02)
+
+
 # A port_count above this is treated as garbage rather than rendered as
 # thousands of dropdown entries.
 _MAX_PORT_COUNT = 512

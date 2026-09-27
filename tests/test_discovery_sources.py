@@ -190,9 +190,10 @@ def test_parse_net_macs_reads_qemu_and_lxc_entries():
 def test_proxmox_snapshot_joins_cache_status_and_configs():
     snap = proxmox_snapshot(pve_cache(), cluster_status(), CONFIGS)
     assert snap["nodes"] == [
-        {"name": "pve", "ip": "192.168.4.237", "online": True},
-        {"name": "prodesk1", "ip": "192.168.6.219", "online": True},
-        {"name": "NASMachineV3", "ip": "192.168.6.60", "online": False}]
+        {"name": "pve", "ip": "192.168.4.237", "online": True, "guests_known": True},
+        {"name": "prodesk1", "ip": "192.168.6.219", "online": True, "guests_known": True},
+        {"name": "NASMachineV3", "ip": "192.168.6.60", "online": False,
+         "guests_known": False}]
     assert [(g["node"], g["vmid"]) for g in snap["guests"]] == [
         ("pve", 108), ("pve", 116), ("prodesk1", 301)]
     assert snap["guests"][0] == {
@@ -217,7 +218,7 @@ def test_proxmox_observations_shapes():
     obs = proxmox_observations(proxmox_snapshot(pve_cache(), cluster_status(), CONFIGS))
     nodes = [o for o in obs if o["type"] == "node"]
     assert nodes[0] == {"type": "node", "source": "proxmox", "name": "pve",
-                        "ip": "192.168.4.237", "online": True}
+                        "ip": "192.168.4.237", "online": True, "guests_known": True}
     [mc] = [o for o in obs if o["type"] == "guest" and o["vmid"] == 301]
     assert mc == {"type": "guest", "source": "proxmox", "node": "prodesk1", "vmid": 301,
                   "name": "Minecraft", "guest_type": "lxc", "macs": [MC_MAC], "cores": 2,
@@ -992,4 +993,240 @@ def test_proxmox_alone_counts_as_a_configured_source():
         idle = DiscoveryRunner(types.SimpleNamespace(data={}), {}, idb,
                                proxmox_poller=FakePoller(False))
         assert idle.any_source_configured() is False
+        hdb.close()
+
+
+# ── Final review fix wave ────────────────────────────────────────────────────
+
+def failed_pve_cache():
+    """pve is online, but its /qemu or /lxc fetch failed this poll."""
+    cache = pve_cache()
+    cache[0]["guests"], cache[0]["guests_ok"] = [], False
+    return cache
+
+
+def test_poller_marks_a_node_whose_guest_fetch_failed():
+    """Finding 1: an online node whose guest list couldn't be fetched isn't
+    cached as 'online with zero guests' indistinguishable from the real thing."""
+    p = make_poller()
+
+    def fetch(url, user, token_id, token_secret, path):
+        if path == "/api2/json/nodes":
+            return [{"node": "pve", "status": "online"},
+                    {"node": "prodesk1", "status": "online"}]
+        if path == "/api2/json/nodes/pve/qemu":
+            raise OSError("timeout")
+        if path.endswith("/qemu"):
+            return [{"vmid": 301, "name": "Minecraft", "status": "running"}]
+        return []
+
+    p._fetch = fetch
+    nodes = {n["name"]: n for n in p.fresh_nodes()}
+    assert nodes["pve"]["guests_ok"] is False and nodes["pve"]["guests"] == []
+    assert nodes["prodesk1"]["guests_ok"] is True
+
+
+def test_snapshot_treats_a_failed_guest_list_as_unknown_guests():
+    snap = proxmox_snapshot(failed_pve_cache(), cluster_status(), CONFIGS)
+    assert snap["nodes"][0] == {"name": "pve", "ip": "192.168.4.237", "online": True,
+                                "guests_known": False}
+    assert snap["nodes"][1]["guests_known"] is True
+    assert [g["node"] for g in snap["guests"]] == ["prodesk1"]
+    assert snap["complete"] is False
+    online = proxmox_snapshot([n for n in failed_pve_cache() if n["name"] == "prodesk1"],
+                              cluster_status(), CONFIGS)
+    assert online["complete"] is True
+    [node] = [o for o in proxmox_observations(snap) if o["type"] == "node" and o["name"] == "pve"]
+    assert node == {"type": "node", "source": "proxmox", "name": "pve", "ip": "192.168.4.237",
+                    "online": True, "guests_known": False}
+
+
+def failed_pve_obs():
+    snap = proxmox_snapshot(failed_pve_cache(), cluster_status(), CONFIGS)
+    node_of = {m: g["node"] for g in snap["guests"] for m in g["macs"]}
+    return proxmox_observations(snap) + unifi_observations(
+        usw_snapshot(LAB_CLIENTS), guest_macs=set(node_of), guest_node_of=node_of,
+        guests_complete=snap["complete"])
+
+
+def test_failed_guest_list_holds_that_nodes_guests_node_port_and_port():
+    edges = [edge(60, 71, 11, ctype="virtual", source="proxmox", last_seen=NOW - 9 * DAY,
+                  external_key="proxmox:guest:pve:108"),
+             edge(44, 11, 1, to_port="Port 11", source="unifi", last_seen=NOW - 9 * DAY,
+                  external_key="unifi:node-port:pve")]
+    pending = pend(("edge:proxmox:pve:116", "proxmox"),
+                   ("edge:unifi:node-port:pve", "unifi"),
+                   (f"shared_port:{USW_MAC}:Port 11", "unifi"),
+                   ("device:proxmox:prodesk1:999", "proxmox"))
+    ch = run(failed_pve_obs(), guest_records(), edges=edges, pending=pending)
+    assert ch["resolve"] == ["device:proxmox:prodesk1:999"]
+    k = keys(ch)
+    assert "drift:stale:conn:60" not in k and "drift:stale:conn:44" not in k
+    assert not [x for x in k if x.startswith("shared_port:") or HA_MAC in x]
+    assert "identity:proxmox-node:pve" not in k              # still matched
+    assert "device:proxmox:prodesk1:301" in k                # other nodes still work
+    # an unidentified node with an unknown guest list can still be identified
+    k2 = keys(run(failed_pve_obs(), lab_records(), ip_macs={"192.168.4.237": NODE_PVE_MAC}))
+    assert k2["identity:proxmox-node:pve"]["payload"]["candidate_id"] == 11
+
+
+DESK_MAC = "aa:bb:cc:dd:ee:20"
+
+
+def port9_obs(clients):
+    return pve_obs() + unifi_observations(usw_snapshot(clients), guest_macs=set(PVE_GUESTS),
+                                          guest_node_of=PVE_GUESTS)
+
+
+def port9_records():
+    return lab_records() + [rec(20, "Desk PC", "host", DESK_MAC)]
+
+
+def test_node_sharing_a_port_with_another_device_stays_in_the_shared_port():
+    """Finding 2(a): node + one other device on a port is a shared port, not
+    two direct edges to the same switch port."""
+    obs = port9_obs([(NODE_PRODESK_MAC, 9, None, None), (DESK_MAC, 9, None, None),
+                     (MC_MAC, 9, None, None)])
+    k = keys(run(obs, port9_records()))
+    sp = k[f"shared_port:{USW_MAC}:Port 9"]["payload"]
+    assert sp["macs"] == sorted([NODE_PRODESK_MAC, DESK_MAC])
+    assert "edge:unifi:node-port:prodesk1" not in k
+    assert f"edge:unifi:{DESK_MAC}" not in k
+
+
+def placeholder_setup():
+    records = port9_records() + [rec(30, "Unmanaged switch (USW · Port 9)", "network",
+                                     network_role="switch")]
+    edges = [edge(90, 56, 30), edge(91, 20, 30), edge(92, 30, 1, to_port="Port 9")]
+    return records, edges
+
+
+def test_node_behind_an_accepted_placeholder_is_touched_not_drifted():
+    """Finding 2(b): the node sits behind an unmanaged switch on the port its
+    guests vote for - that's agreement, not drift."""
+    records, edges = placeholder_setup()
+    # desk is off: the port carries only the node and its guest
+    ch = run(port9_obs([(NODE_PRODESK_MAC, 9, None, None), (MC_MAC, 9, None, None)]),
+             records, edges=edges)
+    k = keys(ch)
+    assert "drift:unifi:node-port:prodesk1" not in k
+    assert "edge:unifi:node-port:prodesk1" not in k
+    touched = {t["id"] for t in ch["touch"]}
+    assert {90, 92} <= touched
+    # desk is on: shared port, still behind the placeholder, nothing drifts
+    ch = run(port9_obs([(NODE_PRODESK_MAC, 9, None, None), (DESK_MAC, 9, None, None),
+                        (MC_MAC, 9, None, None)]), records, edges=edges)
+    k = keys(ch)
+    assert not [x for x in k if x.startswith("drift:")], sorted(k)
+    assert {90, 91, 92} <= {t["id"] for t in ch["touch"]}
+
+
+def test_held_port_holds_node_port_of_the_nodes_whose_guests_it_carries():
+    """Finding 3: a held port casts no votes, so the nodes whose guests are on
+    it must have their node-port facts held, not resolved."""
+    clients = [(MC_MAC, 8, None, None), (MYSTERY_MAC, 8, None, None), (PI5_MAC, 7, None, None)]
+    uobs = unifi_observations(usw_snapshot(clients), guest_macs=set(PVE_GUESTS),
+                              guest_node_of=PVE_GUESTS, guests_complete=False)
+    [held] = [o for o in uobs if o["type"] == "held"]
+    assert held["nodes"] == ["prodesk1"]
+    edges = [edge(45, 56, 1, to_port="Port 8", source="unifi", last_seen=NOW - 9 * DAY,
+                  external_key="unifi:node-port:prodesk1")]
+    pending = pend(("edge:unifi:node-port:prodesk1", "unifi"),
+                   ("drift:unifi:node-port:prodesk1", "unifi"))
+    ch = run(pve_obs() + uobs, lab_records(), edges=edges, pending=pending)
+    assert ch["resolve"] == []
+    assert "drift:stale:conn:45" not in keys(ch)
+
+
+def test_node_ip_match_and_identity_candidates_skip_vm_records():
+    """Finding 4: a VM can't be a Proxmox node - not by IP, ip_macs or name."""
+    records = [r for r in lab_records() if r["id"] != 56] + [
+        rec(57, "Some VM", "vm", "bc:24:11:00:00:57", "192.168.6.219"),
+        rec(58, "pve", "vm")]
+    k = keys(run(pve_obs(), records, healthy=("proxmox",),
+                 ip_macs={"192.168.6.219": "bc:24:11:00:00:57"}))
+    assert k["identity:proxmox-node:prodesk1"]["payload"]["candidate_id"] is None
+    assert k["identity:proxmox-node:pve"]["payload"]["candidate_id"] is None
+
+
+def test_accept_node_identity_rejects_vms_and_devices_already_another_node():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        vm = add_device(idb, "Some VM", "vm")
+        other = add_device(idb, "HP Prodesk 405 G6 Mini", proxmox_node="prodesk1")
+        payload = {"proxmox_node": "pve", "node_ip": "192.168.4.237", "candidate_id": vm,
+                   "candidate_name": "Some VM", "message": "m"}
+        s = pending_suggestion(idb, "identity", "proxmox", "identity:proxmox-node:pve", payload)
+        ok, err, res = idb.accept_suggestion(s["id"], s["fingerprint"])
+        assert (ok, err) == (False, "rejected")
+        assert res["error"] == "a VM can't be a Proxmox node"
+        s2 = pending_suggestion(idb, "identity", "proxmox", "identity:proxmox-node:pve#2",
+                                dict(payload, candidate_id=other))
+        ok, err, res = idb.accept_suggestion(s2["id"], s2["fingerprint"])
+        assert (ok, err) == (False, "rejected")
+        assert res["error"] == "HP Prodesk 405 G6 Mini is already Proxmox node prodesk1"
+        assert idb.get(other)["properties"]["proxmox_node"] == "prodesk1"
+        hdb.close()
+
+
+def test_name_only_guest_match_is_vm_only_unclaimed_and_first_come():
+    """Finding 5."""
+    cache = pve_cache()
+    cache[0]["guests"] += [{"vmid": 130, "name": "dup", "type": "qemu"},
+                           {"vmid": 131, "name": "dup", "type": "qemu"}]
+    cache[1]["guests"].insert(0, {"vmid": 300, "name": "Minecraft", "type": "lxc"})
+    configs = dict(CONFIGS)
+    configs[("pve", 130)] = {"net0": "virtio=BC:24:11:00:01:30"}
+    configs[("pve", 131)] = {"net0": "virtio=BC:24:11:00:01:31"}
+    configs[("prodesk1", 300)] = {"net0": "name=eth0,hwaddr=BC:24:11:00:03:00"}
+    records = lab_records(pve_known=True) + [
+        rec(81, "dup", "vm"),
+        rec(82, "haos13.2", "host"),                 # not a VM: never a name match
+        rec(83, "Minecraft", "vm", MC_MAC)]          # claimed by guest 301's MAC
+    k = keys(run(pve_obs(configs=configs, cache=cache), records, healthy=("proxmox",)))
+    assert k["edge:proxmox:pve:130"]["payload"]["child_id"] == 81
+    assert "device:proxmox:pve:131" in k
+    assert "device:proxmox:pve:108" in k
+    assert k["edge:proxmox:prodesk1:301"]["payload"]["child_id"] == 83
+    assert "device:proxmox:prodesk1:300" in k
+
+
+def test_is_likely_guest_mac_is_shared_and_reexported():
+    from netwatch import connections, discovery
+    assert discovery.is_likely_guest_mac is connections.is_likely_guest_mac
+    assert discovery.PROXMOX_OUI == connections.PROXMOX_OUI
+
+
+def test_wifi_holds_likely_guest_macs_when_the_guest_set_is_unknown():
+    """Finding 6."""
+    odd = "02:00:00:00:00:99"
+    records = wifi_records() + [rec(99, "Mystery box", "host", odd)]
+    arp = dict(parse_arp(ARP_TEXT), **{"192.168.4.99": odd})
+    hosts = [host("Custom Desktop PC", "192.168.4.89"), host("Mystery box", "192.168.4.99")]
+    obs, err = wifi_observations(hosts, arp, set(), None, records, [])
+    assert err is None
+    assert [o["child"]["mac"] for o in obs if o["type"] == "edge"] == [DESKTOP_MAC]
+    assert [o["macs"] for o in obs if o["type"] == "held"] == [[odd]]
+    obs, _ = wifi_observations(hosts, arp, set(), set(), records, [])
+    assert {o["child"]["mac"] for o in obs if o["type"] == "edge"} == {DESKTOP_MAC, odd}
+
+
+def test_runner_passes_unknown_guest_set_to_inference_when_proxmox_fails():
+    from netwatch.discovery_proxmox import ProxmoxUnavailable
+
+    def boom(poller):
+        raise ProxmoxUnavailable()
+
+    odd = "02:00:00:00:00:99"
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = lab_idb(d)
+        add_device(idb, "Mystery box", mac=odd, ip="192.168.4.99")
+        r = make_runner(idb, proxmox=boom,
+                        hosts=[host("Custom Desktop PC", "192.168.4.89"),
+                               host("Mystery box", "192.168.4.99")],
+                        arp={"192.168.4.89": DESKTOP_MAC, "192.168.4.99": odd})
+        r.scan_once(now=NOW)
+        k = pending_keys(idb)
+        assert f"edge:inferred:{DESKTOP_MAC}" in k
+        assert f"edge:inferred:{odd}" not in k
         hdb.close()

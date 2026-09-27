@@ -547,6 +547,9 @@ class ProxmoxPoller:
                 # trying to reach it instead of failing fast, which blows
                 # past our 10s timeout and (if not isolated here) aborts the
                 # whole poll, wiping out the other, healthy nodes' data too.
+                # guests_ok=False: an online node whose guest list couldn't be
+                # read. Discovery must not mistake that for "no guests".
+                guests_ok = True
                 if raw.get("status") != "online":
                     qemu, lxc = [], []
                 else:
@@ -558,7 +561,10 @@ class ProxmoxPoller:
                     except Exception as e:
                         logging.warning(f"ProxmoxPoller: node '{name}' guest fetch failed: {e}")
                         qemu, lxc = [], []
-                nodes.append(self._build_node(raw, qemu, lxc))
+                        guests_ok = False
+                node = self._build_node(raw, qemu, lxc)
+                node["guests_ok"] = guests_ok
+                nodes.append(node)
             now_str = datetime.now().isoformat(timespec="seconds")
             with self._lock:
                 self._last_ok_at = time.time()
