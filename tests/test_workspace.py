@@ -612,15 +612,23 @@ def test_save_edit_diffs_against_the_edit_start_snapshot_not_the_live_connection
         "    {parent_port: 'Port 8', connection_type: 'wifi', notes: ''},\n"
         "    {parent_port: 'Port 3', connection_type: 'ethernet', notes: ''},\n"
         "    {id: 9, parent_port: 'Port 3', connection_type: 'ethernet', notes: ''});\n"
-        "  process.stdout.write(JSON.stringify([a, b, c]));\n"
+        # (d) already wifi on both ends of the edit, with a stale stored port
+        # ('WAN', migration drift) and no other change - Save must clear it
+        # explicitly since the server only auto-clears on a type change.
+        "  const dd = await run(\n"
+        "    {parent_port: 'WAN', connection_type: 'wifi', notes: ''},\n"
+        "    {parent_port: 'WAN', connection_type: 'wifi', notes: ''},\n"
+        "    {id: 9, parent_port: 'WAN', connection_type: 'wifi', notes: ''});\n"
+        "  process.stdout.write(JSON.stringify([a, b, c, dd]));\n"
         "})();"
     )
     r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stderr
-    a, b, c = json.loads(r.stdout)
+    a, b, c, dd = json.loads(r.stdout)
     assert a == {"posts": [], "cancelled": 1}
     assert b["posts"] == [["/api/connections/9", {"notes": "new note"}]]
     assert c["posts"] == [["/api/connections/9", {"connection_type": "wifi"}]]
+    assert dd["posts"] == [["/api/connections/9", {"parent_port": None}]]
 
 
 @needs_node

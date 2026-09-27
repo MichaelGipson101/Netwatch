@@ -389,6 +389,11 @@ function cxEditRowHtml(c, issues){
   // suggestion that flagged 'ambiguous_direction' disappears on refresh) -
   // otherwise a wrong swap can't be undone without reloading the page.
   const showSwap = ambiguous || !!(_cxState.swappedIds && _cxState.swappedIds[c.id]);
+  // A wifi draft with a stale stored port (migration drift, or an edge
+  // that's simply been wifi for a while with old data) can't clear it via
+  // the disabled port control - cxSaveEdit sends parent_port: null instead.
+  // Tell the user that's what Save will do.
+  const staleWifiPort = wifi && _cxState.editOrig && _cxState.editOrig.parent_port;
   return '<tr class="cx-edit-row" data-conn="' + c.id + '"><td colspan="6"><div class="cx-edit">'
     + '<div class="cx-edit-title">' + escapeHtml(c.child_name) + ' → ' + escapeHtml(c.parent_name) + '</div>'
     + '<label class="qa-field"><span>Port</span>' + portCtl + '</label>'
@@ -402,6 +407,9 @@ function cxEditRowHtml(c, issues){
       : '')
     + (ambiguous
       ? '<p class="cx-muted cx-edit-hint">Netwatch couldn\'t tell which end is upstream. If it\'s the wrong way round, swap it.</p>'
+      : '')
+    + (staleWifiPort
+      ? '<p class="cx-muted cx-edit-hint">Wifi links don\'t use a port — saving clears \'' + escapeHtml(_cxState.editOrig.parent_port) + '\'.</p>'
       : '')
     + '<div class="cx-edit-actions">'
       + (showSwap ? '<button type="button" class="btn" onclick="cxSwapConnection(' + c.id + ')">⇅ Swap direction</button>' : '')
@@ -549,7 +557,17 @@ async function cxSaveEdit(id){
   if(!c || !d || !orig) return;
   const body = {};
   if(d.connection_type !== orig.connection_type) body.connection_type = d.connection_type;
-  if(d.connection_type !== 'wifi' && (d.parent_port || '') !== (orig.parent_port || '')) body.parent_port = d.parent_port;
+  if(d.connection_type !== 'wifi' && (d.parent_port || '') !== (orig.parent_port || '')){
+    body.parent_port = d.parent_port;
+  } else if(d.connection_type === 'wifi' && orig.connection_type === 'wifi' && orig.parent_port){
+    // Already wifi on both ends of this edit, with a stale stored port (the
+    // port control stays disabled so the draft can't differ here) - the
+    // server only clears parent_port on a connection_type change, so send
+    // it explicitly. A fresh switch to wifi doesn't need this: the server's
+    // update_connection already clears the port when connection_type lands
+    // in the same request.
+    body.parent_port = null;
+  }
   if((d.notes || '') !== (orig.notes || '')) body.notes = d.notes;
   if(!Object.keys(body).length){ cxCancelEdit(); return; }
   const out = await cxPost('/api/connections/' + id, body);
