@@ -138,6 +138,7 @@ nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:
 .topo-web-toggle input{cursor:pointer}
 .topo-uncon-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint)}
 @media (max-width:768px){.topo-view-toolbar{flex-direction:column;align-items:stretch}.topo-web-controls{justify-content:space-between}}
+@media (max-width:380px){.topo-web-controls{gap:8px;font-size:11px}.topo-layout-toggle .topo-view-btn{padding:4px 8px}}
 
 .topo-web{position:relative;background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;height:min(78vh,1000px);min-height:540px;transition:height .3s cubic-bezier(.4,0,.2,1)}
 

@@ -187,3 +187,14 @@ def test_ghosts_are_drawn_toggled_and_open_the_inbox():
     assert "cxFlashSuggestion()" in render
     with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
         assert 'id="topo-ghost-toggle"' in f.read()
+
+
+# ── Task 7: responsive + version ─────────────────────────────────────────────
+
+def test_topology_toolbar_fits_small_screens_and_version_bumped():
+    with open(os.path.join(STATIC, "main.css"), encoding="utf-8") as f:
+        css = f.read()
+    assert ".topo-layout-toggle" in css
+    assert "@media (max-width:380px)" in css and ".topo-web-controls" in css
+    from netwatch import VERSION
+    assert VERSION == "3.78"

@@ -826,7 +826,7 @@ def test_workspace_breakpoints_are_present():
 
 def test_version_bumped_for_new_static_assets():
     from netwatch import VERSION
-    assert VERSION == "3.77"
+    assert VERSION == "3.78"
 
 
 # ── Whole-branch review fix wave (Minor findings 1, 3, 4, 6) ────────────────
