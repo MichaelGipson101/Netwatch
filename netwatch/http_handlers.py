@@ -111,10 +111,19 @@ def build_topology_payload(inventory_db, host_manager):
                     "status": d.get("status"),
                 }
 
+    records = inventory_db.list_all()
+    conns = inventory_db.list_all_connections()
+    parents, primary_ids = compute_primary_parents(records, conns)
+    children = {}
+    for pid in parents.values():
+        if pid is not None:
+            children[pid] = children.get(pid, 0) + 1
+
     nodes = []
-    for rec in inventory_db.list_all():
+    for rec in records:
         norm_mac = InventoryDB.normalize_mac(rec.get("mac")) if rec.get("mac") else ""
         linked = host_by_mac.get(norm_mac) if norm_mac else None
+        props = rec.get("properties") if isinstance(rec.get("properties"), dict) else {}
         nodes.append({
             "id":          rec["id"],
             "name":        rec.get("system") or "(unnamed)",
@@ -128,10 +137,14 @@ def build_topology_payload(inventory_db, host_manager):
             "is_up":       (linked["is_up"] if linked else None),
             "ip":          rec.get("ip"),
             "mac":         rec.get("mac"),
+            # Additive (spec §4.2) - hearthboard/tiger ignore unknown keys.
+            "network_role":      props.get("network_role"),
+            "primary_parent_id": parents.get(rec["id"]),
+            "children_count":    children.get(rec["id"], 0),
         })
 
     edges = []
-    for c in inventory_db.list_all_connections():
+    for c in conns:
         edges.append({
             "id":              c["id"],
             "source":          c["from_device_id"],
@@ -140,9 +153,31 @@ def build_topology_payload(inventory_db, host_manager):
             "to_port":         c["to_port"],
             "connection_type": c["connection_type"],
             "notes":           c.get("notes") or None,
+            # Provenance is "origin": "source" is already the D3 child id.
+            "origin":          c.get("source") or "manual",
+            "is_primary":      c["id"] in primary_ids,
         })
 
-    return {"nodes": nodes, "edges": edges}
+    # Pending edge suggestions as ghosts, kept OUT of `edges` so existing
+    # consumers never draw a suggestion as a real link (spec §4.2).
+    node_ids = {n["id"] for n in nodes}
+    suggested = []
+    try:
+        pending = inventory_db.suggestions.list("pending")
+    except Exception:
+        pending = []
+    for s in pending:
+        p = s.get("payload") or {}
+        if s.get("kind") != "edge":
+            continue
+        child, parent = p.get("child_id"), p.get("parent_id")
+        if child in node_ids and parent in node_ids:
+            suggested.append({"suggestion_id": s["id"], "source": child, "target": parent,
+                              "connection_type": p.get("connection_type"),
+                              "parent_port": p.get("parent_port"),
+                              "origin": s.get("source")})
+
+    return {"nodes": nodes, "edges": edges, "suggested_edges": suggested}
 
 
 # Settings keys safe to expose via /api/status. Everything else (API keys,
