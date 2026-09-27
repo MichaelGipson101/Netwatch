@@ -918,15 +918,19 @@ function cxPortTile(p){
   const occ = p.occupants || [];
   const link = p.up === true ? 'up' : p.up === false ? 'down' : 'unknown';
   const state = occ.length ? 'occupied' : (p.up === true ? 'up' : 'down');
+  // A device's own uplink occupies its port too (netwatch/storage.py
+  // ports_for_device); mark it visually so it doesn't look like a stray
+  // downlink to the same name.
+  const occLabel = o => (o.uplink ? '↑ ' : '') + o.name;
   let label = '';
-  if(occ.length === 1) label = occ[0].name;
+  if(occ.length === 1) label = occLabel(occ[0]);
   else if(occ.length > 1) label = '+' + occ.length;
   else if(p.up === true) label = '?';
   const bits = [p.name];
   if(p.up === true) bits.push('link up' + (p.speed_mbps ? ' · ' + cxFmtSpeed(p.speed_mbps) : ''));
   else if(p.up === false) bits.push('link down');
   if(p.poe) bits.push('PoE');
-  if(occ.length) bits.push(occ.map(o => o.name).join(', '));
+  if(occ.length) bits.push(occ.map(occLabel).join(', '));
   return {name: p.name, state: state, link: link, label: label, title: bits.join(' · '),
           conn_id: occ.length ? occ[0].connection_id : null};
 }

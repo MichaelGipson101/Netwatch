@@ -1112,11 +1112,24 @@ class InventoryDB:
                 "JOIN inventory i ON i.id = c.from_device_id WHERE c.to_device_id = ? "
                 "AND c.connection_type != 'wifi'",
                 (device_id,)).fetchall()
+            # A device's own uplink occupies its port too: the edge where this
+            # device is the CHILD (from_device_id), keyed by *its* from_port,
+            # joined to the parent it uplinks to.
+            uplink_rows = self.conn.execute(
+                "SELECT c.id, c.from_port, i.id, i.system FROM inventory_connections c "
+                "JOIN inventory i ON i.id = c.to_device_id WHERE c.from_device_id = ? "
+                "AND c.connection_type != 'wifi'",
+                (device_id,)).fetchall()
         for cid, port, iid, name in rows:
             p = canonical_port(port, ports)
             if p is not None:
                 occupants.setdefault(p, []).append(
-                    {"connection_id": cid, "device_id": iid, "name": name})
+                    {"connection_id": cid, "device_id": iid, "name": name, "uplink": False})
+        for cid, port, iid, name in uplink_rows:
+            p = canonical_port(port, ports)
+            if p is not None:
+                occupants.setdefault(p, []).append(
+                    {"connection_id": cid, "device_id": iid, "name": name, "uplink": True})
         for p in ports:
             p["occupants"] = occupants.get(p["name"], [])
         return ports, rec
@@ -1142,7 +1155,9 @@ class InventoryDB:
 
     def _port_in_use(self, parent_id, port, exclude_conn_id=None):
         """Another non-wifi edge already on this parent port? Ports are
-        compared canonically, so "8" and "Port 8" are the same port."""
+        compared canonically, so "8" and "Port 8" are the same port. A
+        device's own uplink (parent_id as the CHILD, from_port on that edge)
+        occupies its port too."""
         parent = self.get(parent_id)
         ports = resolve_ports(parent, self._live_ports_for(parent)) if parent else None
         want = canonical_port(port, ports)
@@ -1151,8 +1166,12 @@ class InventoryDB:
                 "SELECT id, to_port FROM inventory_connections "
                 "WHERE to_device_id = ? AND connection_type != 'wifi'",
                 (parent_id,)).fetchall()
+            uplink_rows = self.conn.execute(
+                "SELECT id, from_port FROM inventory_connections "
+                "WHERE from_device_id = ? AND connection_type != 'wifi'",
+                (parent_id,)).fetchall()
         return any(canonical_port(p, ports) == want and cid != exclude_conn_id
-                   for cid, p in rows)
+                   for cid, p in rows + uplink_rows)
 
     def _insert_connection_locked(self, child_id, parent_id, child_port, parent_port,
                                   ctype, notes, now, source="manual", external_key=None,

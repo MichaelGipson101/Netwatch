@@ -56,6 +56,35 @@ def test_port_occupancy_ignores_wifi_edges():
         hdb.close()
 
 
+def test_a_switchs_own_uplink_occupies_its_port():
+    # Live edge from the bug report: USW (child) -> Eero (parent), with USW's
+    # own from_port ('Port 13') recording where on the SWITCH the uplink
+    # cable lands. ports_for_device(USW) must show that port occupied by the
+    # uplink, and downlink occupancy elsewhere on the switch stays untouched.
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        eero = add_device(idb, "Eero Pro 6E", "network", network_role="gateway")
+        usw = add_device(idb, "USW", "network", network_role="switch", port_count=16)
+        wired = add_device(idb, "Wired")
+        idb.live_port_provider = lambda r: (
+            [{"name": f"Port {i}", "idx": i, "up": True, "speed_mbps": 1000, "poe": True}
+             for i in range(1, 17)] if r["id"] == usw else None)
+        insert_edge(idb, usw, eero, to_port="1", from_port="Port 13")   # the uplink
+        insert_edge(idb, wired, usw, to_port="2")                       # an ordinary downlink
+        ports, _ = idb.ports_for_device(usw)
+        by_name = {p["name"]: p["occupants"] for p in ports}
+        assert len(by_name["Port 13"]) == 1
+        up = by_name["Port 13"][0]
+        assert up["device_id"] == eero and up["name"] == "Eero Pro 6E" and up["uplink"] is True
+        assert len(by_name["Port 2"]) == 1
+        down = by_name["Port 2"][0]
+        assert down["device_id"] == wired and down["uplink"] is False
+        assert idb._port_in_use(usw, "Port 13")
+        assert idb._port_in_use(usw, "13")            # canonicalises like any other port
+        assert not idb._port_in_use(usw, "Port 5")
+        hdb.close()
+
+
 def test_changing_type_to_wifi_clears_the_parent_port():
     with tempfile.TemporaryDirectory() as d:
         hdb, idb = make_idb(d)
@@ -762,6 +791,16 @@ def test_port_tiles():
     assert out[2]["state"] == "down" and out[2]["link"] == "down" and out[2]["label"] == ""
     assert out[3]["label"] == "+2" and out[3]["conn_id"] == 1 and "100 Mbps" in out[3]["title"]
     assert out[4]["link"] == "unknown" and out[4]["state"] == "down"
+
+
+@needs_node
+def test_port_tile_marks_the_devices_own_uplink():
+    ports = ("[{name: 'Port 13', up: true, occupants: "
+             "[{name: 'Eero Pro 6E', connection_id: 9, uplink: true}]}]")
+    out = run_js(TILE_PARTS, f"{ports}.map(cxPortTile)")
+    assert out[0]["label"] == "↑ Eero Pro 6E"
+    assert out[0]["title"] == "Port 13 · link up · ↑ Eero Pro 6E"
+    assert out[0]["state"] == "occupied" and out[0]["conn_id"] == 9
 
 
 @needs_node
