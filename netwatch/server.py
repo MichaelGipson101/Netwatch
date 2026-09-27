@@ -313,7 +313,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
             if self.path == "/api/discovery/status":
                 if not self._require_auth(): return
-                self._send_json(*_h_get_discovery_status(discovery_runner))
+                self._send_json(*_h_get_discovery_status(discovery_runner, inventory_db))
                 return
             if (self.path.startswith("/api/inventory/") and self.path.endswith("/connections")):
                 if not self._require_auth(): return

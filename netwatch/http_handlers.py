@@ -981,7 +981,8 @@ def _h_get_ports(path: str, inventory_db) -> tuple:
     ports, record = inventory_db.ports_for_device(device_id)
     if record is None:
         return 404, {"error": "device not found"}
-    return 200, {"device_id": device_id, "device_name": record["system"], "ports": ports}
+    return 200, {"device_id": device_id, "device_name": record["system"], "ports": ports,
+                 "live": bool(inventory_db._live_ports_for(record))}
 
 
 def _h_get_suggestions(inventory_db) -> tuple:
@@ -989,10 +990,13 @@ def _h_get_suggestions(inventory_db) -> tuple:
     if gate:
         return gate
     items = inventory_db.suggestions.list("pending")
-    counts = {}
+    counts, by_source = {}, {}
     for it in items:
         counts[it["kind"]] = counts.get(it["kind"], 0) + 1
-    return 200, {"items": items, "counts": counts, "total": len(items)}
+        kind_sources = by_source.setdefault(it["kind"], {})
+        kind_sources[it["source"]] = kind_sources.get(it["source"], 0) + 1
+    return 200, {"items": items, "counts": counts, "counts_by_source": by_source,
+                 "total": len(items)}
 
 
 def _h_post_suggestion_dismiss(path: str, body: dict, inventory_db) -> tuple:
@@ -1045,10 +1049,28 @@ def _h_post_suggestions_accept_all(body: dict, inventory_db) -> tuple:
     return 200, {"results": inventory_db.accept_suggestions(items)}
 
 
-def _h_get_discovery_status(discovery_runner) -> tuple:
+def _port_map_devices(switch_macs, inventory_db):
+    """Inventory records that are switches from the last scan, matched by
+    MAC or MAC alias - the devices the workspace draws a port map for."""
+    wanted = {InventoryDB.normalize_mac(m) for m in (switch_macs or ())} - {""}
+    if not wanted or not inventory_db:
+        return []
+    out = []
+    for r in inventory_db.list_all():
+        aliases = (r.get("properties") or {}).get("mac_aliases") or []
+        macs = {InventoryDB.normalize_mac(r.get("mac"))} | {
+            InventoryDB.normalize_mac(m) for m in aliases if isinstance(m, str)}
+        if macs & wanted:
+            out.append({"device_id": r["id"], "name": r["system"]})
+    return sorted(out, key=lambda x: (x["name"] or "").lower())
+
+
+def _h_get_discovery_status(discovery_runner, inventory_db=None) -> tuple:
     if discovery_runner is None:
-        return 200, {"sources": {}, "last_scan": None, "scanning": False}
-    return 200, discovery_runner.status()
+        return 200, {"sources": {}, "last_scan": None, "scanning": False, "port_maps": []}
+    body = dict(discovery_runner.status())
+    body["port_maps"] = _port_map_devices(discovery_runner.switch_macs(), inventory_db)
+    return 200, body
 
 
 def _h_post_discovery_scan(discovery_runner) -> tuple:

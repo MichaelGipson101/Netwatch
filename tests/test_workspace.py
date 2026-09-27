@@ -143,3 +143,74 @@ def test_relint_failure_does_not_fail_a_record_edit(monkeypatch):
         assert idb.update(h, {"notes": "hello"}) == (True, None)
         assert idb.get(h)["notes"] == "hello"
         hdb.close()
+
+
+# ── Task 2: API fields ──────────────────────────────────────────────────────
+
+from netwatch.http_handlers import _h_get_suggestions, _h_get_ports, _h_get_discovery_status
+from netwatch.discovery import DiscoveryRunner
+
+USW_MAC = "74:fa:29:1d:a3:dc"
+
+
+def ready_idb(d):
+    hdb, idb = make_idb(d)
+    assert idb.migrate_connections_v2()[0]
+    return hdb, idb
+
+
+def test_suggestions_are_counted_by_kind_and_source():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = ready_idb(d)
+        idb.suggestions.upsert("edge", "unifi", "edge:unifi:a", {}, "f1")
+        idb.suggestions.upsert("edge", "proxmox", "edge:proxmox:b", {}, "f2")
+        idb.suggestions.upsert("drift", "unifi", "drift:unifi:c", {}, "f3")
+        code, body = _h_get_suggestions(idb)
+        assert code == 200
+        assert body["counts"] == {"edge": 2, "drift": 1}
+        assert body["counts_by_source"] == {"edge": {"unifi": 1, "proxmox": 1},
+                                            "drift": {"unifi": 1}}
+        hdb.close()
+
+
+def test_ports_say_whether_they_are_live():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = ready_idb(d)
+        sw = add_device(idb, "Switch", "network", network_role="switch", port_count=4)
+        code, body = _h_get_ports(f"/api/ports/{sw}", idb)
+        assert code == 200 and body["live"] is False and len(body["ports"]) == 4
+        idb.live_port_provider = lambda r: ([{"name": "Port 1", "idx": 1, "up": True,
+                                              "speed_mbps": 1000, "poe": False}]
+                                            if r["id"] == sw else None)
+        code, body = _h_get_ports(f"/api/ports/{sw}", idb)
+        assert body["live"] is True and [p["name"] for p in body["ports"]] == ["Port 1"]
+        hdb.close()
+
+
+def test_discovery_status_lists_inventory_switches_with_live_port_maps():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = ready_idb(d)
+        usw = add_device(idb, "USW Pro Max", "network", mac=USW_MAC, network_role="switch")
+        aliased = add_device(idb, "Aliased switch", "network", mac="aa:00:00:00:00:01",
+                             network_role="switch", mac_aliases=["aa:00:00:00:00:02"])
+        add_device(idb, "Unrelated", "network", mac="aa:00:00:00:00:09")
+        runner = types.SimpleNamespace(
+            status=lambda: {"sources": {}, "last_scan": 5, "scanning": False},
+            switch_macs=lambda: [USW_MAC.upper(), "aa:00:00:00:00:02", "ff:ff:ff:ff:ff:ff"])
+        code, body = _h_get_discovery_status(runner, idb)
+        assert code == 200 and body["last_scan"] == 5
+        assert body["port_maps"] == [{"device_id": aliased, "name": "Aliased switch"},
+                                     {"device_id": usw, "name": "USW Pro Max"}]
+        assert _h_get_discovery_status(None) == (200, {
+            "sources": {}, "last_scan": None, "scanning": False, "port_maps": []})
+        hdb.close()
+
+
+def test_runner_reports_switch_macs_from_the_last_scan():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        r = DiscoveryRunner(types.SimpleNamespace(data={}), {}, idb)
+        assert r.switch_macs() == []
+        r._switches = [{"mac": USW_MAC, "ports": []}]
+        assert r.switch_macs() == [USW_MAC]
+        hdb.close()

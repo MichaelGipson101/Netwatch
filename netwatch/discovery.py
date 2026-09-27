@@ -656,6 +656,11 @@ class DiscoveryRunner:
         return {"sources": {"unifi": unifi}, "last_scan": last, "scanning": scanning,
                 "apply_error": apply_error}
 
+    def switch_macs(self):
+        """MACs of the switches seen in the last successful UniFi scan."""
+        with self._lock:
+            return [sw["mac"] for sw in self._switches]
+
     def live_ports_for(self, rec):
         """Live port table for an inventory record that is a scanned switch."""
         macs = {_norm_mac(rec.get("mac"))} | {

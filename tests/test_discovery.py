@@ -1210,7 +1210,8 @@ def test_accept_all_handler_validates_items():
 
 
 def test_discovery_status_and_scan_handlers():
-    assert _h_get_discovery_status(None) == (200, {"sources": {}, "last_scan": None, "scanning": False})
+    assert _h_get_discovery_status(None) == (200, {"sources": {}, "last_scan": None,
+                                                   "scanning": False, "port_maps": []})
     assert _h_post_discovery_scan(None)[0] == 400
     with tempfile.TemporaryDirectory() as d:
         hdb, idb, ids, e = lab_db(d)
