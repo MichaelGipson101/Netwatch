@@ -537,13 +537,19 @@ class DiscoveryRunner:
         return since, last_ok
 
     def _record_success(self, source, now):
-        """Extend or restart `source`'s healthy streak (caller holds _lock)."""
-        prev = self._last_ok.get(source)
-        if prev is None or now - prev > self.OUTAGE_GRACE_SECONDS:
-            self._healthy_since[source] = now
-        self._last_ok[source] = now
-        blob = json.dumps({s: {"since": self._healthy_since[s], "last_ok": self._last_ok[s]}
-                           for s in self._last_ok})
+        """Extend or restart `source`'s healthy streak and persist it.
+
+        Never call with _lock held: persisting takes the DB lock, and the
+        accept path holds the DB lock while asking live_ports_for (which
+        takes _lock) - nesting them the other way round would deadlock."""
+        with self._lock:
+            prev = self._last_ok.get(source)
+            if prev is None or now - prev > self.OUTAGE_GRACE_SECONDS:
+                self._healthy_since[source] = now
+            self._last_ok[source] = now
+            blob = json.dumps({s: {"since": self._healthy_since[s],
+                                   "last_ok": self._last_ok[s]}
+                               for s in self._last_ok})
         try:
             self._db.set_meta(self._STREAKS_META_KEY, blob)
         except Exception as e:
@@ -578,7 +584,7 @@ class DiscoveryRunner:
                     healthy.add("unifi")
                     with self._lock:
                         self._switches = snap["switches"]
-                        self._record_success("unifi", now)
+                    self._record_success("unifi", now)
                     self._set_health("unifi", True, None, now,
                                      {"switches": len(snap["switches"]),
                                       "clients": len(snap["clients"])})

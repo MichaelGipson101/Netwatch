@@ -1385,6 +1385,15 @@ class InventoryDB:
             "identity": self._accept_identity_locked,
             "shared_port": self._accept_shared_port_locked,
         }
+        # Live ports come from the discovery runner, which takes its own
+        # lock - so fetch them before taking self.lock, never inside it.
+        # A payload that changes in between fails the fingerprint check.
+        peek = self.suggestions.get(sid)
+        if peek is not None and peek["kind"] == "shared_port":
+            switch = self.get((peek["payload"] or {}).get("switch_id"))
+            live = self._live_ports_for(switch) if switch else None
+            handlers["shared_port"] = (
+                lambda *a: self._accept_shared_port_locked(*a, live_ports=live))
         relint = set()
         with self.lock:
             self.conn.execute("BEGIN")
@@ -1609,7 +1618,8 @@ class InventoryDB:
             (json.dumps(props), now, target))
         return {"device_id": target}
 
-    def _accept_shared_port_locked(self, p, overrides, action, now, relint):
+    def _accept_shared_port_locked(self, p, overrides, action, now, relint,
+                                   live_ports=None):
         switch_row = self.conn.execute(
             "SELECT mac, properties FROM inventory WHERE id = ?",
             (p["switch_id"],)).fetchone()
@@ -1623,7 +1633,7 @@ class InventoryDB:
         if not isinstance(props, dict):
             props = {}
         switch_rec = {"id": p["switch_id"], "mac": mac, "properties": props}
-        ports = resolve_ports(switch_rec, self._live_ports_for(switch_rec))
+        ports = resolve_ports(switch_rec, live_ports)
         want_port = canonical_port(p["port"], ports) if ports else p["port"]
         rows = self.conn.execute(
             f"SELECT to_port FROM inventory_connections WHERE to_device_id = ? AND "

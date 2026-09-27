@@ -1394,3 +1394,38 @@ def test_clients_on_uplink_ports_are_ignored():
     obs = unifi_observations(parse_unifi(devices, clients))
     assert not [o for o in obs if o.get("port") == "Port 13" and o["type"] != "lldp"]
     assert not [o for o in obs if o["type"] == "edge" and o["parent_port"] == "Port 13"]
+
+
+# ── Lock ordering: the runner's lock and the DB lock are never nested ───────
+
+def test_scan_never_touches_the_db_while_holding_the_runner_lock():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        r = runner_for(idb, ok_fetch())
+        held_during_db_call = []
+        real_set_meta = idb.set_meta
+
+        def spy(key, value):
+            held_during_db_call.append(r._lock.locked())
+            return real_set_meta(key, value)
+        idb.set_meta = spy
+        r.scan_once(now=NOW)
+        assert held_during_db_call == [False]
+        hdb.close()
+
+
+def test_accept_never_calls_the_live_port_provider_under_the_db_lock():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        real = idb.live_port_provider
+        db_lock_held = []
+
+        def provider(rec):
+            db_lock_held.append(idb.lock.locked())
+            return real(rec)
+        idb.live_port_provider = provider
+        ok, err, res = accept(idb, f"shared_port:{USW_MAC}:Port 9")
+        assert ok, err
+        assert db_lock_held and not any(db_lock_held)
+        hdb.close()
