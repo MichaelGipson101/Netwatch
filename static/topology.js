@@ -19,6 +19,166 @@ let _flowRaf = null;             // requestAnimationFrame id for flow dots
 let _topoEdgeSel = null;         // d3 selection of edge groups; set by renderTopologyWeb
 const _reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+// ── Layout state (plan 5) ───────────────────────────────────────────────────
+const TOPO_LAYOUT_KEY = 'nw-topo-layout';
+const TOPO_COLLAPSED_KEY = 'nw-topo-collapsed';
+const TOPO_GHOSTS_KEY = 'nw-topo-ghosts';
+let _topoLayout = localStorage.getItem(TOPO_LAYOUT_KEY) === 'tree' ? 'tree' : 'force';
+let _topoShowGhosts = localStorage.getItem(TOPO_GHOSTS_KEY) !== '0';
+let _topoTreeOrient = null;
+let _topoRelayoutTimer = null;
+
+// ── Pure helpers (unit-tested in node; keep brackets balanced in literals) ──
+// guestCollapseMin: more than 6 guests under one parent starts collapsed as
+// "+N guests". spacing: [sibling, level] px per orientation.
+const TOPO_TREE_RULES = {guestCollapseMin: 7, spacing: {down: [84, 130], right: [60, 190]}};
+
+function topoPortLabel(port){
+  if(port === null || port === undefined) return '';
+  const s = String(port).trim();
+  if(!s) return '';
+  const m = /^(?:port\s*)?0*([0-9]+)$/i.exec(s);
+  return ':' + (m ? m[1] : s);
+}
+
+function topoTreeOrientation(w, h){
+  return (w || 0) >= (h || 0) ? 'down' : 'right';
+}
+
+function topoParseCollapsed(raw){
+  // {id: true|false}. A legacy array means "these ids are collapsed".
+  try {
+    const v = JSON.parse(raw || '{}');
+    if(Array.isArray(v)){
+      const o = {};
+      v.forEach(id => { o[String(id)] = true; });
+      return o;
+    }
+    return (v && typeof v === 'object') ? v : {};
+  } catch(e){ return {}; }
+}
+
+function topoIsCollapsed(id, guestKids, prefs){
+  const k = String(id);
+  if(prefs && Object.prototype.hasOwnProperty.call(prefs, k)) return !!prefs[k];
+  return guestKids >= TOPO_TREE_RULES.guestCollapseMin;
+}
+
+function topoScene(data, opts){
+  const nodes = (data && data.nodes) || [];
+  const edges = (data && data.edges) || [];
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const ghostsAll = ((opts && opts.showGhosts && data && data.suggested_edges) || [])
+    .filter(g => nodeIds.has(g.source) && nodeIds.has(g.target));
+  const idOf = v => (v !== null && typeof v === 'object') ? v.id : v;
+  const connected = new Set();
+  edges.forEach(e => { connected.add(idOf(e.source)); connected.add(idOf(e.target)); });
+  ghostsAll.forEach(g => { connected.add(g.source); connected.add(g.target); });
+  const shown = (opts && opts.includeUnconnected) ? nodes : nodes.filter(n => connected.has(n.id));
+  const ids = new Set(shown.map(n => n.id));
+  return {
+    nodes: shown,
+    edges: edges.filter(e => ids.has(idOf(e.source)) && ids.has(idOf(e.target))),
+    ghosts: ghostsAll.filter(g => ids.has(g.source) && ids.has(g.target)),
+    unconnected: nodes.filter(n => !connected.has(n.id)).length,
+  };
+}
+
+function topoBuildForest(nodes, edges, prefs){
+  prefs = prefs || {};
+  const items = {};
+  nodes.forEach(n => {
+    items[n.id] = {id: n.id, name: n.name || '', gateway: n.network_role === 'gateway', kids: []};
+  });
+  const primaryType = {};
+  (edges || []).forEach(e => {
+    const s = (e.source !== null && typeof e.source === 'object') ? e.source.id : e.source;
+    if(e.is_primary) primaryType[s] = e.connection_type;
+  });
+  const hasParent = {};
+  nodes.forEach(n => {
+    const p = n.primary_parent_id;
+    if(p !== null && p !== undefined && items[p] && p !== n.id){
+      items[p].kids.push(items[n.id]);
+      hasParent[n.id] = true;
+    }
+  });
+  Object.keys(items).forEach(k => items[k].kids.sort((a, b) => a.name.localeCompare(b.name)));
+  const sizeSeen = {};
+  function size(it){
+    if(sizeSeen[it.id]) return 0;
+    sizeSeen[it.id] = true;
+    return 1 + it.kids.reduce((acc, c) => acc + size(c), 0);
+  }
+  const seen = {}, visible = [], info = {};
+  function countHidden(it){
+    if(seen[it.id]) return 0;
+    seen[it.id] = true;
+    return 1 + it.kids.reduce((acc, c) => acc + countHidden(c), 0);
+  }
+  function build(it){
+    seen[it.id] = true;
+    visible.push(it.id);
+    const kids = it.kids.filter(c => !seen[c.id]);
+    const guests = kids.filter(c => primaryType[c.id] === 'virtual').length;
+    const collapsed = kids.length > 0 && topoIsCollapsed(it.id, guests, prefs);
+    const out = {id: it.id, children: []};
+    const meta = {collapsible: kids.length > 0, collapsed: collapsed, hidden: 0,
+                  guestPill: kids.length > 0 && guests === kids.length};
+    if(collapsed) kids.forEach(c => { meta.hidden += countHidden(c); });
+    else out.children = kids.map(build);
+    info[it.id] = meta;
+    return out;
+  }
+  function rootOf(it){
+    const guard = {};
+    let cur = it;
+    while(!guard[cur.id]){
+      guard[cur.id] = true;
+      const n = nodes.find(x => x.id === cur.id);
+      const p = n ? n.primary_parent_id : null;
+      if(p === null || p === undefined || !items[p] || !hasParent[cur.id]) return cur;
+      cur = items[p];
+    }
+    return cur;
+  }
+  const gw = Object.keys(items).map(k => items[k]).find(it => it.gateway);
+  const gwRoot = gw ? rootOf(gw) : null;
+  const rootIds = nodes.filter(n => !hasParent[n.id]).map(n => n.id);
+  const roots = rootIds.map(id => items[id]);
+  const sizes = {};
+  roots.forEach(r => { sizes[r.id] = size(r); });
+  roots.sort((a, b) => {
+    if(gwRoot && a.id === gwRoot.id) return -1;
+    if(gwRoot && b.id === gwRoot.id) return 1;
+    return (sizes[b.id] - sizes[a.id]) || a.name.localeCompare(b.name);
+  });
+  const trees = roots.map(build);
+  // Anything unreachable (a cycle in bad data) becomes its own root.
+  nodes.forEach(n => { if(!seen[n.id]) trees.push(build(items[n.id])); });
+  return {trees: trees, visible: visible, info: info};
+}
+
+function topoTreePositions(trees, orient){
+  const spacing = TOPO_TREE_RULES.spacing[orient] || TOPO_TREE_RULES.spacing.down;
+  const sib = spacing[0], lvl = spacing[1];
+  const pos = {};
+  let offset = 0;
+  trees.forEach(tree => {
+    const root = d3.hierarchy(tree, t => t.children);
+    d3.tree().nodeSize([sib, lvl])(root);
+    let min = Infinity, max = -Infinity;
+    root.each(nd => { min = Math.min(min, nd.x); max = Math.max(max, nd.x); });
+    const shift = offset - min;
+    root.each(nd => {
+      const along = nd.x + shift;
+      pos[nd.data.id] = orient === 'down' ? {x: along, y: nd.y} : {x: nd.y, y: along};
+    });
+    offset += (max - min) + sib * 1.5;
+  });
+  return pos;
+}
+
 // Flow-dot speeds (fraction of path per second) per connection type.
 // Defined at module level so the flow loop can be restarted without a full re-render.
 const _FLOW_SPEEDS = {ethernet:.10, fiber:.16, wifi:.06, virtual:.07, power:.05, usb:.13, console:.065, other:.10};
