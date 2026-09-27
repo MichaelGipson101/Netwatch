@@ -9,6 +9,7 @@ from netwatch import VERSION
 from netwatch.connections import (
     fingerprint, plan_connections_migration, orient_edge, default_connection_type,
     normalize_port, resolve_ports, validate_parent_port, lint_edge, migration_drift_key,
+    canonical_port,
 )
 
 
@@ -1077,7 +1078,7 @@ class InventoryDB:
                 "JOIN inventory i ON i.id = c.from_device_id WHERE c.to_device_id = ?",
                 (device_id,)).fetchall()
         for cid, port, iid, name in rows:
-            p = normalize_port(port)
+            p = canonical_port(port, ports)
             if p is not None:
                 occupants.setdefault(p, []).append(
                     {"connection_id": cid, "device_id": iid, "name": name})
@@ -1105,13 +1106,17 @@ class InventoryDB:
         }, None
 
     def _port_in_use(self, parent_id, port, exclude_conn_id=None):
-        """Another non-wifi edge already on this parent port?"""
+        """Another non-wifi edge already on this parent port? Ports are
+        compared canonically, so "8" and "Port 8" are the same port."""
+        parent = self.get(parent_id)
+        ports = resolve_ports(parent, self._live_ports_for(parent)) if parent else None
+        want = canonical_port(port, ports)
         with self.lock:
             rows = self.conn.execute(
                 "SELECT id, to_port FROM inventory_connections "
                 "WHERE to_device_id = ? AND connection_type != 'wifi'",
                 (parent_id,)).fetchall()
-        return any(normalize_port(p) == port and cid != exclude_conn_id
+        return any(canonical_port(p, ports) == want and cid != exclude_conn_id
                    for cid, p in rows)
 
     def _insert_connection(self, child_id, parent_id, child_port, parent_port,
@@ -1151,6 +1156,7 @@ class InventoryDB:
         perr = validate_parent_port(parent, parent_port, ports)
         if perr:
             return None, [], perr
+        parent_port = canonical_port(parent_port, ports)
         warnings = []
         if (parent_port is not None and ctype != "wifi"
                 and self._port_in_use(parent["id"], parent_port)):
@@ -1248,6 +1254,7 @@ class InventoryDB:
                 perr = validate_parent_port(parent, parent_port, ports)
                 if perr:
                     return False, perr, []
+                parent_port = canonical_port(parent_port, ports)
             if (parent_port is not None and ctype != "wifi"
                     and self._port_in_use(parent_id, normalize_port(parent_port), conn_id)):
                 warnings.append("port_in_use")

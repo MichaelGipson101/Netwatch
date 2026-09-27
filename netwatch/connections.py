@@ -97,6 +97,30 @@ def normalize_port(value):
     return s
 
 
+def canonical_port(port, ports):
+    """Map a port as typed or stored onto its name in `ports`.
+
+    "8" -> "Port 8" when a live port has idx 8; "port 8" -> "Port 8"
+    (case-insensitive name match). Anything that can't be mapped comes back
+    normalised but otherwise unchanged, so callers can still compare or
+    reject it."""
+    p = normalize_port(port)
+    if p is None or not ports:
+        return p
+    names = [x["name"] for x in ports]
+    if p in names:
+        return p
+    if p.isascii() and p.isdigit():
+        for x in ports:
+            if x.get("idx") == int(p):
+                return x["name"]
+    low = p.lower()
+    for name in names:
+        if name.lower() == low:
+            return name
+    return p
+
+
 def resolve_ports(parent, live_ports=None):
     """A parent's port list, or None when its ports are free text.
 
@@ -122,7 +146,7 @@ def validate_parent_port(parent, port, ports):
     port = normalize_port(port)
     if port is None or ports is None:
         return None
-    if port in {p["name"] for p in ports}:
+    if canonical_port(port, ports) in {p["name"] for p in ports}:
         return None
     return f"'{port}' is not a port on {parent.get('system') or 'this device'}"
 
