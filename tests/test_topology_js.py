@@ -101,3 +101,34 @@ def test_tree_positions_down_and_right():
     assert down["2"]["y"] > down["1"]["y"] and down["2"]["y"] == down["3"]["y"]
     assert down["2"]["x"] < down["3"]["x"] and down["9"]["x"] > down["3"]["x"]  # tree 2 to the right
     assert right["2"]["x"] > right["1"]["x"] and right["9"]["y"] > right["3"]["y"]  # tree 2 below
+
+
+# ── Task 4: renderer split ───────────────────────────────────────────────────
+
+def _src():
+    with open(TOPO_JS, encoding="utf-8") as f:
+        return f.read()
+
+
+def test_renderer_is_split_into_scene_and_layouts():
+    src = _src()
+    for name in ("function _topoBuildScene(", "function _topoPositionAll(",
+                 "function _layoutForce(", "function _topoArcPath(",
+                 "function _topoObserveResize(", "function _topoStartFlow("):
+        assert name in src, name
+    body = src[src.index("function renderTopologyWeb("):src.index("function _topoBuildScene(")]
+    assert "d3.forceSimulation" not in body          # the simulation lives in _layoutForce
+    assert "topoScene(_topoData" in body
+    assert "_topoSimulation.stop()" in body          # no leaked simulation on re-render
+    force = src[src.index("function _layoutForce("):src.index("function _topoArcPath(")]
+    for needle in ("d3.forceSimulation", "saveTopoLastLayout", "saveTopoPosition",
+                   "d3.drag()", "fitTopologyToView", "spreadOverlappingLabels"):
+        assert needle in force, needle
+
+
+def test_empty_state_links_to_connections_and_reset_button_has_an_id():
+    assert "Open Connections</a>" in _src()
+    with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
+        html = f.read()
+    assert 'id="topo-reset-btn"' in html
+    assert "getElementById('topo-reset-btn')" in _src()

@@ -285,6 +285,8 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 .topo-edge-console  .topo-edge-flow{fill:var(--edge-console)}
 .topo-edge-other    .topo-edge-line{stroke:var(--muted)}
 .topo-edge-other    .topo-edge-flow{fill:var(--muted)}
+.topo-edge-port{font-size:9px;fill:var(--muted);pointer-events:none;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
+.topo-empty-link{color:var(--blue)}
 
 /* Status-aware edge states */
 .topo-edge-alive    .topo-edge-line{opacity:.85}

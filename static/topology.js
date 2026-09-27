@@ -308,30 +308,28 @@ async function fetchAndRenderTopologyWeb(){
 function renderTopologyWeb(){
   const container = document.getElementById('topo-web-svg-host');
   if(!container) return;
-
-  // Filter nodes by connection presence (unless "include all" is on)
-  const connectedIds = new Set();
-  _topoData.edges.forEach(e => {
-    connectedIds.add(typeof e.source === 'object' ? e.source.id : e.source);
-    connectedIds.add(typeof e.target === 'object' ? e.target.id : e.target);
-  });
-  let nodes = _topoData.nodes;
-  let edges = _topoData.edges;
-  if(!_topoIncludeUnconnected){
-    nodes = nodes.filter(n => connectedIds.has(n.id));
-  }
-  // Update unconnected count badge
-  const unconCount = _topoData.nodes.length - connectedIds.size;
+  const scene = topoScene(_topoData, {includeUnconnected: _topoIncludeUnconnected,
+                                      showGhosts: _topoShowGhosts && _topoLayoutReady()});
   const unconLabel = document.getElementById('topo-uncon-count');
-  if(unconLabel) unconLabel.textContent = unconCount > 0 ? '(' + unconCount + ')' : '';
-
-  if(nodes.length === 0){
-    container.innerHTML = '<div class="topo-web-loading">No connections recorded yet. Open an inventory record to add connections, then come back here.</div>';
+  if(unconLabel) unconLabel.textContent = scene.unconnected > 0 ? '(' + scene.unconnected + ')' : '';
+  if(_topoSimulation){ _topoSimulation.stop(); _topoSimulation = null; }
+  if(scene.nodes.length === 0){
+    container.innerHTML = '<div class="topo-web-loading">No connections recorded yet. '
+      + '<a href="#" class="topo-empty-link" onclick="setTab(\'connections\');return false;">'
+      + 'Open Connections</a> to add some.</div>';
     return;
   }
-
   _topoUserAdjusted = false;
+  const ctx = _topoBuildScene(container, scene.nodes, scene.edges, scene.ghosts);
+  _layoutForce(ctx);
+  _topoLastStatus = {};
+  ctx.renderNodes.forEach(n => { _topoLastStatus[n.id] = n.status; });
+}
 
+// Task 6 turns ghosts on; until then the scene never asks for them.
+function _topoLayoutReady(){ return false; }
+
+function _topoBuildScene(container, nodes, edges, ghosts){
   // Stable copies + restore pinned positions from localStorage
   const positions = loadTopoPositions();
   const nodeMap = {};
@@ -350,10 +348,15 @@ function renderTopologyWeb(){
     nodeMap[copy.id] = copy;
     return copy;
   });
-  // d3 mutates link source/target into refs; we need fresh objects each render
+  // Fresh edge objects each render, with ends resolved to the node copies
+  // (d3.forceLink accepts object ends as-is; the tree layout needs them too).
+  const idOf = v => (v !== null && typeof v === 'object') ? v.id : v;
   const renderEdges = edges
-    .filter(e => nodeMap[e.source] && nodeMap[e.target])
-    .map(e => Object.assign({}, e));
+    .filter(e => nodeMap[idOf(e.source)] && nodeMap[idOf(e.target)])
+    .map(e => Object.assign({}, e, {source: nodeMap[idOf(e.source)], target: nodeMap[idOf(e.target)]}));
+  const ghostEdges = (ghosts || [])
+    .filter(g => nodeMap[g.source] && nodeMap[g.target])
+    .map(g => Object.assign({}, g, {source: nodeMap[g.source], target: nodeMap[g.target]}));
 
   container.innerHTML = '';
   const width  = container.clientWidth  || 800;
@@ -377,41 +380,6 @@ function renderTopologyWeb(){
     });
   svg.call(_topoZoom);
 
-  // Resize observer: keeps SVG viewBox + simulation centered when the
-  // container dimensions change (fullscreen toggle, window resize, etc).
-  // Disconnect any prior observer first - we re-create on every render.
-  if(_topoResizeObserver){
-    try { _topoResizeObserver.disconnect(); } catch(e){}
-  }
-  if(typeof ResizeObserver !== 'undefined'){
-    _topoResizeObserver = new ResizeObserver(entries => {
-      for(const entry of entries){
-        const newW = entry.contentRect.width;
-        const newH = entry.contentRect.height;
-        if(newW <= 0 || newH <= 0) continue;
-        // Update the SVG's viewBox to actually match the container.
-        // This eliminates the letterboxing that preserveAspectRatio=meet
-        // causes when the aspect ratio shifts.
-        svg.attr('viewBox', '0 0 ' + newW + ' ' + newH);
-        // Update the center force so the simulation re-balances around
-        // the new midpoint, and warm the simulation gently so nodes
-        // ease toward their new equilibrium without jumping.
-        if(_topoSimulation){
-          const cf = _topoSimulation.force('center');
-          if(cf){
-            cf.x(newW / 2).y(newH / 2);
-            _topoSimulation.alphaTarget(0.05).restart();
-            // Cool back down after a moment
-            setTimeout(() => {
-              if(_topoSimulation) _topoSimulation.alphaTarget(0);
-            }, 800);
-          }
-        }
-      }
-    });
-    _topoResizeObserver.observe(container);
-  }
-
   // Background dot pattern + status glow filters
   const defs = svg.append('defs');
   defs.append('pattern')
@@ -421,7 +389,6 @@ function renderTopologyWeb(){
     .append('circle')
       .attr('cx', 1).attr('cy', 1).attr('r', 1)
       .attr('class', 'topo-grid-dot');
-
 
   // Two vignettes; CSS picks the right one per theme.
   [['topo-vignette-dark','rgba(0,0,0,0.4)'],['topo-vignette-light','rgba(15,18,24,0.07)']].forEach(([id,edge]) => {
@@ -437,35 +404,21 @@ function renderTopologyWeb(){
     .attr('class', 'topo-grid-bg')
     .style('pointer-events', 'none');
   // Vignette overlay - sits ABOVE the zoom group so it stays anchored to
-  // the viewport rather than zooming/panning with content. Added later.
+  // the viewport rather than zooming/panning with content.
   svg.append('rect')
     .attr('class', 'topo-vignette-rect')
     .attr('x', 0).attr('y', 0)
     .attr('width', '100%').attr('height', '100%')
     .style('pointer-events', 'none');
 
-  // Force simulation
-  const sim = d3.forceSimulation(renderNodes)
-    .force('link', d3.forceLink(renderEdges).id(d => d.id)
-      .distance(d => d.connection_type === 'virtual' ? 50 : 110)
-      .strength(d => d.connection_type === 'virtual' ? 0.9 : 0.5))
-    .force('charge', d3.forceManyBody().strength(-450))
-    .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collide', d3.forceCollide().radius(d => nodeRadiusFor(d) + 10));
-  _topoSimulation = sim;
-  sim.on('end', () => saveTopoLastLayout(renderNodes));
-
   // Edges
   _topoEdgeSel = null;  // clear until rebuilt below
   const edgeG = zoomG.append('g').attr('class', 'topo-edges');
-  // Helper: classify an edge based on its endpoints' current statuses.
-  // Returns one of: 'alive' (both up or up+unknown), 'degraded' (at least
-  // one degraded but no down/idle), or 'dead' (at least one down/idle).
+  // Classify an edge by its endpoints' current statuses: 'alive' (both up
+  // or up+unknown), 'degraded' (one degraded, none down/idle), 'dead'.
   function edgeState(edge){
-    const s = nodeMap[typeof edge.source === 'object' ? edge.source.id : edge.source];
-    const t = nodeMap[typeof edge.target === 'object' ? edge.target.id : edge.target];
-    const ss = (s && s.status) || 'UNKNOWN';
-    const ts = (t && t.status) || 'UNKNOWN';
+    const ss = (edge.source && edge.source.status) || 'UNKNOWN';
+    const ts = (edge.target && edge.target.status) || 'UNKNOWN';
     if(ss === 'DOWN' || ss === 'IDLE' || ts === 'DOWN' || ts === 'IDLE') return 'dead';
     if(ss === 'DEGRADED' || ts === 'DEGRADED' || ss === 'MAINTENANCE' || ts === 'MAINTENANCE') return 'degraded';
     return 'alive';
@@ -478,11 +431,16 @@ function renderTopologyWeb(){
   edgeSel.append('path').attr('class', 'topo-edge-hit');
   edgeSel.append('path').attr('class', 'topo-edge-line');
   // Two flow dots - one each direction - to represent bidirectional traffic.
-  // The "fwd" dot animates source -> target; the "rev" dot animates
-  // target -> source. They travel at the same speed but offset by 0.5
-  // along the path so they don't overlap visually.
   edgeSel.append('circle').attr('class', 'topo-edge-flow topo-edge-flow-fwd').attr('r', 2);
   edgeSel.append('circle').attr('class', 'topo-edge-flow topo-edge-flow-rev').attr('r', 2);
+  // Parent-side port label (":11"), both layouts (spec §6.3)
+  edgeSel.filter(d => !!topoPortLabel(d.to_port)).append('text')
+    .attr('class', 'topo-edge-port').text(d => topoPortLabel(d.to_port));
+
+  // Ghost (suggested) edges: rendered, never part of any layout force/tree.
+  const ghostG = zoomG.append('g').attr('class', 'topo-ghosts');
+  const ghostSel = ghostG.selectAll('g.topo-ghost').data(ghostEdges).join('g')
+    .attr('class', 'topo-ghost');
 
   // Nodes
   const nodeG = zoomG.append('g').attr('class', 'topo-nodes');
@@ -496,38 +454,18 @@ function renderTopologyWeb(){
       openInventoryDrawer(d.id);
     })
     .on('mouseenter', (ev, d) => highlightNode(d, true))
-    .on('mouseleave', () => highlightNode(null, false))
-    .call(d3.drag()
-      .on('start', dragStart)
-      .on('drag',  dragMove)
-      .on('end',   dragEnd));
+    .on('mouseleave', () => highlightNode(null, false));
 
-  // Compute the set of VM node IDs. A node is treated as a VM if EITHER:
-  //   1. Its device_type is 'vm' (the explicit, modern way), OR
-  //   2. It's the source of a virtual edge (legacy implicit detection,
-  //      kept for backward compatibility with VMs you created before the
-  //      vm device_type existed)
+  // A node is a VM if its device_type is 'vm' or (legacy) it's the child
+  // end of a virtual edge.
   const vmIds = new Set();
-  renderNodes.forEach(n => {
-    if(n.device_type === 'vm') vmIds.add(n.id);
-  });
-  renderEdges.forEach(e => {
-    if(e.connection_type === 'virtual'){
-      vmIds.add(typeof e.source === 'object' ? e.source.id : e.source);
-    }
-  });
+  renderNodes.forEach(n => { if(n.device_type === 'vm') vmIds.add(n.id); });
+  renderEdges.forEach(e => { if(e.connection_type === 'virtual') vmIds.add(e.source.id); });
 
-
-  // Render the node body as a dimensional icon. There is no longer
-  // a backdrop shape; status is conveyed by the parent .topo-status-*
-  // class (drives both `color:` for the icon's LED and the drop-
-  // shadow halo on .topo-node-icon) plus the breathing/pulse
-  // animations defined in CSS.
+  // Render the node body as a dimensional icon; status is conveyed by the
+  // parent .topo-status-* class plus the CSS breathing/pulse animations.
   nodeSel.each(function(d){
     const sel = d3.select(this);
-    // iconSize: rendered px width/height of the sprite. hitR: radius
-    // of the invisible hit-target circle (covers the icon + a bit of
-    // breathing room so drag/click still feels generous).
     let iconSize, hitR;
     if(d.device_type === 'network'){
       iconSize = 64; hitR = 30;
@@ -542,38 +480,21 @@ function renderTopologyWeb(){
     } else if(d.device_type === 'printer'){
       iconSize = 44; hitR = 22;
     } else {
-      // tablet, phone, peripheral, and any fallback
       iconSize = 40; hitR = 20;
     }
     const iconHref = '#topo-icon-' + (d.device_type || 'host');
-
-    // Invisible hit target sits first so the icon paints over it
-    sel.append('circle')
-      .attr('class', 'topo-node-hit')
-      .attr('r', hitR);
-
-    // The dimensional sprite
+    sel.append('circle').attr('class', 'topo-node-hit').attr('r', hitR);
     sel.append('use')
       .attr('class', 'topo-node-icon')
       .attr('href', iconHref)
       .attr('x', -iconSize/2).attr('y', -iconSize/2)
       .attr('width', iconSize).attr('height', iconSize);
-
-    // Label sits below the icon for every type now
     sel.append('text')
       .attr('class', 'topo-node-label-below')
       .attr('y', iconSize/2 + 14)
       .text(truncateLabel(d.name, 20));
-
-    // VM-class marker (still used by tooltip + isVm detection
-    // elsewhere). No more pill badge — the VM icon carries its own
-    // "VM" mark.
-    if(vmIds.has(d.id)){
-      sel.classed('topo-node-vm', true);
-    }
-
-    // Stagger the ambient breathing so the network doesn't pulse
-    // in unison. Hash the node id into a delay between 0–4s.
+    if(vmIds.has(d.id)) sel.classed('topo-node-vm', true);
+    // Stagger the ambient breathing so the network doesn't pulse in unison.
     const iconEl = sel.select('.topo-node-icon');
     if(!iconEl.empty()){
       const delay = ((d.id * 1.7) % 4).toFixed(2);
@@ -581,40 +502,11 @@ function renderTopologyWeb(){
     }
   });
 
-  // Tooltip
+  // Tooltip (shared positioning for nodes and edges)
   const tip = d3.select(container).append('div').attr('class', 'topo-tip').style('display', 'none');
-
-  nodeSel.on('mousemove', function(ev, d){
+  function placeTip(ev, html){
     const rect = container.getBoundingClientRect();
-    // First render so we can measure
-    tip.style('display', 'block').html(buildNodeTip(d));
-    const tipNode = tip.node();
-    const tipW = tipNode ? tipNode.offsetWidth : 240;
-    const tipH = tipNode ? tipNode.offsetHeight : 60;
-    const cx = ev.clientX - rect.left;
-    const cy = ev.clientY - rect.top;
-    const margin = 14;
-    // Default: down-and-right of cursor
-    let x = cx + 12;
-    let y = cy + 12;
-    // Flip to LEFT if would clip right edge
-    if(x + tipW + margin > rect.width){
-      x = cx - tipW - 12;
-    }
-    // Flip ABOVE if would clip bottom edge
-    if(y + tipH + margin > rect.height){
-      y = cy - tipH - 12;
-    }
-    // Final clamp so we never go off the left/top either
-    x = Math.max(8, x);
-    y = Math.max(8, y);
-    tip.style('left', x + 'px').style('top', y + 'px');
-  }).on('mouseleave.tip', () => tip.style('display', 'none'));
-
-  // Edge hover tooltips - same positioning logic as nodes, just on edges
-  edgeSel.on('mousemove', function(ev, e){
-    const rect = container.getBoundingClientRect();
-    tip.style('display', 'block').html(buildEdgeTip(e, nodeMap));
+    tip.style('display', 'block').html(html);
     const tipNode = tip.node();
     const tipW = tipNode ? tipNode.offsetWidth : 240;
     const tipH = tipNode ? tipNode.offsetHeight : 60;
@@ -622,73 +514,20 @@ function renderTopologyWeb(){
     const cy = ev.clientY - rect.top;
     const margin = 14;
     let x = cx + 12, y = cy + 12;
-    if(x + tipW + margin > rect.width)  x = cx - tipW - 12;
-    if(y + tipH + margin > rect.height) y = cy - tipH - 12;
+    if(x + tipW + margin > rect.width)  x = cx - tipW - 12;   // flip left
+    if(y + tipH + margin > rect.height) y = cy - tipH - 12;   // flip above
     x = Math.max(8, x); y = Math.max(8, y);
     tip.style('left', x + 'px').style('top', y + 'px');
-    // Highlight this edge a bit while hovered
+  }
+  nodeSel.on('mousemove', function(ev, d){ placeTip(ev, buildNodeTip(d)); })
+    .on('mouseleave.tip', () => tip.style('display', 'none'));
+  edgeSel.on('mousemove', function(ev, e){
+    placeTip(ev, buildEdgeTip(e, nodeMap));
     d3.select(this).classed('topo-edge-hovered', true);
   }).on('mouseleave.tip', function(){
     tip.style('display', 'none');
     d3.select(this).classed('topo-edge-hovered', false);
   });
-
-  // Tick handler: update positions + curved edges + cache flow path lengths
-  sim.on('tick', () => {
-    nodeSel.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
-    const edgePath = d => {
-      const dx = d.target.x - d.source.x;
-      const dy = d.target.y - d.source.y;
-      const dr = Math.sqrt(dx*dx + dy*dy) * 1.8;
-      return 'M' + d.source.x + ',' + d.source.y
-        + 'A' + dr + ',' + dr + ' 0 0,1 ' + d.target.x + ',' + d.target.y;
-    };
-    edgeSel.select('path.topo-edge-line').attr('d', edgePath);
-    edgeSel.select('path.topo-edge-hit').attr('d', edgePath);
-    edgeSel.each(function(){
-      const path = this.querySelector('path.topo-edge-line');
-      this._flowLen = path ? path.getTotalLength() : 0;   // cache while geometry changes
-    });
-  });
-
-  // Flow dots: time-based rAF loop using the module-level _flowFrame/_FLOW_SPEEDS.
-  // Pauses when the browser tab is hidden; disabled under prefers-reduced-motion.
-  if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }
-  if(!_reducedMotion.matches) _flowRaf = requestAnimationFrame(_flowFrame);
-
-  // Cool the simulation gradually
-  sim.alpha(1).restart();
-  setTimeout(() => {
-    sim.alphaTarget(0);              // decay below alphaMin -> tick loop stops
-    if(_topoView === 'web' && !_topoUserAdjusted) fitTopologyToView();
-  }, 4000);
-  // Run label collision pass after the simulation has had time to settle.
-  // This nudges overlapping labels apart so dense areas read more clearly.
-  setTimeout(() => spreadOverlappingLabels(nodeSel), 4500);
-  // And re-run after a longer settle, in case nodes are still adjusting
-  setTimeout(() => spreadOverlappingLabels(nodeSel), 6500);
-
-  // Capture _topoLastStatus for change detection
-  _topoLastStatus = {};
-  renderNodes.forEach(n => { _topoLastStatus[n.id] = n.status; });
-
-  function dragStart(ev, d){
-    if(!ev.active) sim.alphaTarget(0.3).restart();
-    d.fx = d.x; d.fy = d.y;
-    _topoUserAdjusted = true;
-    if(_topoSvg) _topoSvg.classed('topo-dragging', true);
-  }
-  function dragMove(ev, d){
-    d.fx = ev.x; d.fy = ev.y;
-  }
-  function dragEnd(ev, d){
-    if(!ev.active) sim.alphaTarget(0);
-    // Persist the pinned position so it survives reloads
-    saveTopoPosition(d.id, d.fx, d.fy);
-    // Re-run label collision since the dragged node's neighborhood changed
-    setTimeout(() => spreadOverlappingLabels(nodeSel), 600);
-    if(_topoSvg) _topoSvg.classed('topo-dragging', false);
-  }
 
   function highlightNode(target, on){
     const id = target ? target.id : null;
@@ -696,26 +535,126 @@ function renderTopologyWeb(){
     if(id !== null){
       linked.add(id);
       renderEdges.forEach(e => {
-        const sId = typeof e.source === 'object' ? e.source.id : e.source;
-        const tId = typeof e.target === 'object' ? e.target.id : e.target;
-        if(sId === id) linked.add(tId);
-        if(tId === id) linked.add(sId);
+        if(e.source.id === id) linked.add(e.target.id);
+        if(e.target.id === id) linked.add(e.source.id);
       });
     }
-    nodeSel.classed('dim',   on && id !== null && !linked.has(id));
-    nodeSel.classed('focus', on && id !== null);
     nodeSel.each(function(n){
       d3.select(this).classed('dim',   on && !linked.has(n.id));
       d3.select(this).classed('focus', on && linked.has(n.id));
     });
     edgeSel.each(function(e){
-      const sId = typeof e.source === 'object' ? e.source.id : e.source;
-      const tId = typeof e.target === 'object' ? e.target.id : e.target;
-      const inv = on && !(sId === id || tId === id);
-      d3.select(this).classed('dim',   inv);
-      d3.select(this).classed('focus', on && (sId === id || tId === id));
+      const touches = e.source.id === id || e.target.id === id;
+      d3.select(this).classed('dim',   on && !touches);
+      d3.select(this).classed('focus', on && touches);
     });
   }
+
+  return {container: container, svg: svg, zoomG: zoomG, width: width, height: height,
+          renderNodes: renderNodes, renderEdges: renderEdges, ghostEdges: ghostEdges,
+          nodeMap: nodeMap, nodeSel: nodeSel, edgeSel: edgeSel, ghostSel: ghostSel,
+          tip: tip, placeTip: placeTip, edgePath: _topoArcPath};
+}
+
+function _topoPositionAll(ctx){
+  ctx.nodeSel.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+  ctx.edgeSel.select('path.topo-edge-line').attr('d', ctx.edgePath);
+  ctx.edgeSel.select('path.topo-edge-hit').attr('d', ctx.edgePath);
+  ctx.edgeSel.select('text.topo-edge-port')
+    .attr('x', d => d.source.x + (d.target.x - d.source.x) * 0.72)
+    .attr('y', d => d.source.y + (d.target.y - d.source.y) * 0.72 - 4);
+  ctx.edgeSel.each(function(){
+    const path = this.querySelector('path.topo-edge-line');
+    this._flowLen = path ? path.getTotalLength() : 0;   // cache while geometry changes
+  });
+  ctx.ghostSel.select('path.topo-ghost-line')
+    .attr('d', d => 'M' + d.source.x + ',' + d.source.y + 'L' + d.target.x + ',' + d.target.y);
+  ctx.ghostSel.select('text.topo-ghost-q')
+    .attr('x', d => (d.source.x + d.target.x) / 2)
+    .attr('y', d => (d.source.y + d.target.y) / 2);
+}
+
+function _topoStartFlow(){
+  // Time-based rAF loop; pauses when the tab is hidden, off under reduced motion.
+  if(_flowRaf){ cancelAnimationFrame(_flowRaf); _flowRaf = null; }
+  if(!_reducedMotion.matches) _flowRaf = requestAnimationFrame(_flowFrame);
+}
+
+function _topoObserveResize(ctx, onResize){
+  // Keeps the SVG viewBox matching the container (fullscreen toggle, window
+  // resize...). Re-created every render, so disconnect the previous one.
+  if(_topoResizeObserver){
+    try { _topoResizeObserver.disconnect(); } catch(e){}
+  }
+  if(typeof ResizeObserver === 'undefined') return;
+  _topoResizeObserver = new ResizeObserver(entries => {
+    for(const entry of entries){
+      const newW = entry.contentRect.width;
+      const newH = entry.contentRect.height;
+      if(newW <= 0 || newH <= 0) continue;
+      ctx.svg.attr('viewBox', '0 0 ' + newW + ' ' + newH);
+      onResize(newW, newH);
+    }
+  });
+  _topoResizeObserver.observe(ctx.container);
+}
+
+function _layoutForce(ctx){
+  const sim = d3.forceSimulation(ctx.renderNodes)
+    .force('link', d3.forceLink(ctx.renderEdges).id(d => d.id)
+      .distance(d => d.connection_type === 'virtual' ? 50 : 110)
+      .strength(d => d.connection_type === 'virtual' ? 0.9 : 0.5))
+    .force('charge', d3.forceManyBody().strength(-450))
+    .force('center', d3.forceCenter(ctx.width / 2, ctx.height / 2))
+    .force('collide', d3.forceCollide().radius(d => nodeRadiusFor(d) + 10));
+  _topoSimulation = sim;
+  sim.on('end', () => saveTopoLastLayout(ctx.renderNodes));
+  ctx.edgePath = _topoArcPath;
+  sim.on('tick', () => _topoPositionAll(ctx));
+
+  _topoObserveResize(ctx, (newW, newH) => {
+    // Re-centre the simulation and warm it gently so nodes ease over.
+    if(!_topoSimulation) return;
+    const cf = _topoSimulation.force('center');
+    if(cf){
+      cf.x(newW / 2).y(newH / 2);
+      _topoSimulation.alphaTarget(0.05).restart();
+      setTimeout(() => { if(_topoSimulation) _topoSimulation.alphaTarget(0); }, 800);
+    }
+  });
+
+  ctx.nodeSel.call(d3.drag()
+    .on('start', (ev, d) => {
+      if(!ev.active) sim.alphaTarget(0.3).restart();
+      d.fx = d.x; d.fy = d.y;
+      _topoUserAdjusted = true;
+      if(_topoSvg) _topoSvg.classed('topo-dragging', true);
+    })
+    .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+    .on('end', (ev, d) => {
+      if(!ev.active) sim.alphaTarget(0);
+      saveTopoPosition(d.id, d.fx, d.fy);   // survives reloads
+      setTimeout(() => spreadOverlappingLabels(ctx.nodeSel), 600);
+      if(_topoSvg) _topoSvg.classed('topo-dragging', false);
+    }));
+
+  _topoStartFlow();
+  // Cool the simulation gradually, then frame it and untangle labels.
+  sim.alpha(1).restart();
+  setTimeout(() => {
+    sim.alphaTarget(0);
+    if(_topoView === 'web' && !_topoUserAdjusted) fitTopologyToView();
+  }, 4000);
+  setTimeout(() => spreadOverlappingLabels(ctx.nodeSel), 4500);
+  setTimeout(() => spreadOverlappingLabels(ctx.nodeSel), 6500);
+}
+
+function _topoArcPath(d){
+  const dx = d.target.x - d.source.x;
+  const dy = d.target.y - d.source.y;
+  const dr = Math.sqrt(dx*dx + dy*dy) * 1.8;
+  return 'M' + d.source.x + ',' + d.source.y
+    + 'A' + dr + ',' + dr + ' 0 0,1 ' + d.target.x + ',' + d.target.y;
 }
 
 function nodeRadiusFor(d){
@@ -841,8 +780,7 @@ function updateTopologyWebStatus(statusData){
 
 let _resetArmTimer = null;
 function topologyResetPositions(){
-  const btn = document.querySelector('.topo-web-controls .topo-view-btn-ghost:last-child')
-    || document.querySelector('[onclick="topologyResetPositions()"]');
+  const btn = document.getElementById('topo-reset-btn');
   if(!btn) return;
   if(btn.dataset.armed !== '1'){
     btn.dataset.armed = '1';
