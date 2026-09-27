@@ -905,10 +905,10 @@ def _h_post_connection_update(path: str, body: dict, inventory_db) -> tuple:
         conn_id = int(path.split("/")[-1])
     except ValueError:
         return 400, {"error": "invalid id"}
-    ok, err = inventory_db.update_connection(conn_id, body)
+    ok, err, warnings = inventory_db.update_connection(conn_id, body or {})
     if not ok:
-        return 400, {"error": err}
-    return 200, {"ok": True}
+        return (404 if err == "connection not found" else 400), {"error": err}
+    return 200, {"ok": True, "warnings": warnings}
 
 
 def _h_post_connection_delete(path: str, inventory_db) -> tuple:

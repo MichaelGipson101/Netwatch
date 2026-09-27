@@ -474,3 +474,139 @@ def test_migrate_does_not_overwrite_malformed_properties_blob():
                 "SELECT properties FROM inventory WHERE id = ?", (eero,)).fetchone()[0]
         assert raw == "{not json"
         hdb.close()
+
+
+# ── Task 5: order-agnostic create, preview, ports, validated update, drift re-lint ──
+
+def _lab_ready(d):
+    hdb, idb = make_idb(d)
+    ids, e = _home_lab(idb)
+    ok, _ = idb.migrate_connections_v2()
+    assert ok
+    return hdb, idb, ids, e
+
+
+def test_preview_orients_and_lists_ports_with_occupancy():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        p, err = idb.preview_connection(ids["usw"], ids["desktop"])
+        assert err is None
+        assert (p["child_id"], p["parent_id"], p["ambiguous"]) == (ids["desktop"], ids["usw"], False)
+        assert p["default_type"] == "ethernet"
+        port8 = next(x for x in p["ports"] if x["name"] == "8")
+        assert {o["device_id"] for o in port8["occupants"]} == {ids["prodesk"], ids["nas"]}
+        assert idb.preview_connection(ids["usw"], ids["usw"])[1] == "cannot connect a device to itself"
+        assert idb.preview_connection(ids["usw"], 99999)[1] == "one or both devices do not exist"
+        hdb.close()
+
+
+def test_quick_add_orients_validates_ports_and_warns_on_taken_port():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        new_id, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["usw"], "b_id": ids["desktop"], "parent_port": " 015 "}, now=700)
+        assert err is None and warnings == []
+        c = idb.get_connection(new_id)
+        assert (c["child_id"], c["parent_id"], c["parent_port"]) == (ids["desktop"], ids["usw"], "15")
+        assert (c["connection_type"], c["source"], c["updated_at"]) == ("ethernet", "manual", 700)
+
+        _, warnings, err = idb.quick_add_connection(
+            {"a_id": ids["pi4"], "b_id": ids["usw"], "parent_port": 15})
+        assert err is None and warnings == ["port_in_use"]
+
+        _, _, err = idb.quick_add_connection(
+            {"a_id": ids["pi4"], "b_id": ids["usw"], "parent_port": "etho0"})
+        assert "not a port on" in err
+        assert idb.quick_add_connection({"a_id": "x", "b_id": ids["usw"]})[2] == "a_id and b_id required"
+        hdb.close()
+
+
+def test_quick_add_default_type_and_swap():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        vm_edge, _, err = idb.quick_add_connection({"a_id": ids["nas"], "b_id": ids["owui"]})
+        c = idb.get_connection(vm_edge)
+        assert (c["child_id"], c["parent_id"], c["connection_type"]) == (ids["owui"], ids["nas"], "virtual")
+
+        # host <-> host is ambiguous: kept as given unless swap is passed.
+        plain, _, _ = idb.quick_add_connection({"a_id": ids["pi4"], "b_id": ids["xps"], "connection_type": "usb"})
+        swapped, _, _ = idb.quick_add_connection({"a_id": ids["pi4"], "b_id": ids["xps"], "connection_type": "usb", "swap": True})
+        assert idb.get_connection(plain)["child_id"] == ids["pi4"]
+        assert idb.get_connection(swapped)["child_id"] == ids["xps"]
+        hdb.close()
+
+
+def test_legacy_create_from_parent_drawer_is_stored_oriented():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        # Today's drawer: opened on the SWITCH, "connect to" the desktop,
+        # from_port = switch side, to_port = desktop side.
+        new_id, err = idb.create_connection({
+            "from_device_id": ids["usw"], "to_device_id": ids["desktop"],
+            "from_port": "4", "to_port": "eth0", "connection_type": "ethernet"})
+        assert err is None
+        c = idb.get_connection(new_id)
+        assert (c["child_id"], c["parent_id"]) == (ids["desktop"], ids["usw"])
+        assert (c["child_port"], c["parent_port"]) == ("eth0", "4")
+        hdb.close()
+
+
+def test_update_validates_port_converts_sourced_to_manual_and_404s():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        with idb.lock:
+            idb.conn.execute("UPDATE inventory_connections SET source = 'unifi' WHERE id = ?", (e["prodesk_usw"],))
+        ok, err, warnings = idb.update_connection(e["prodesk_usw"], {"parent_port": "SFP+ 9"})
+        assert not ok and "not a port on" in err
+        ok, err, warnings = idb.update_connection(e["prodesk_usw"], {"parent_port": "6"}, now=800)
+        assert ok and err is None and warnings == []
+        c = idb.get_connection(e["prodesk_usw"])
+        assert (c["parent_port"], c["source"], c["updated_at"]) == ("6", "manual", 800)
+        assert idb.update_connection(99999, {"notes": "x"})[1] == "connection not found"
+        assert idb.update_connection(e["prodesk_usw"], {})[1] == "no fields to update"
+        hdb.close()
+
+
+def test_fixing_one_duplicate_resolves_both_drifts_and_delete_resolves_its_own():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        s = idb.suggestions
+        keys = {migration_drift_key(e["prodesk_usw"]), migration_drift_key(e["nas_dup"])}
+        assert keys <= {r["subject_key"] for r in s.list()}
+        ok, _, _ = idb.update_connection(e["nas_dup"], {"parent_port": "14"})
+        assert ok
+        pending = {r["subject_key"] for r in s.list()}
+        assert not (keys & pending)
+
+        bad = migration_drift_key(e["bad_port"])
+        assert bad in pending
+        ok, _ = idb.delete_connection(e["bad_port"])
+        assert ok
+        assert bad not in {r["subject_key"] for r in s.list()}
+        assert idb.delete_connection(e["bad_port"]) == (False, "connection not found")
+        hdb.close()
+
+
+def test_ports_for_device_free_text_and_missing():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        ports, record = idb.ports_for_device(ids["desktop"])
+        assert ports is None and record["id"] == ids["desktop"]
+        assert idb.ports_for_device(99999) == (None, None)
+        hdb.close()
+
+
+def test_live_port_provider_overrides_port_count_and_failures_fall_back():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = _lab_ready(d)
+        idb.live_port_provider = lambda r: (
+            [{"name": "SFP+ 1", "up": True, "speed_mbps": 10000, "poe": None}]
+            if r["id"] == ids["usw"] else None)
+        ports, _ = idb.ports_for_device(ids["usw"])
+        assert [p["name"] for p in ports] == ["SFP+ 1"]
+        def broken(_r):
+            raise RuntimeError("boom")
+        idb.live_port_provider = broken
+        ports, _ = idb.ports_for_device(ids["usw"])
+        assert len(ports) == 16
+        hdb.close()

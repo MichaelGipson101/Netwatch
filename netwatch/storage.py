@@ -6,7 +6,10 @@ import sqlite3
 import threading
 
 from netwatch import VERSION
-from netwatch.connections import fingerprint, plan_connections_migration
+from netwatch.connections import (
+    fingerprint, plan_connections_migration, orient_edge, default_connection_type,
+    normalize_port, resolve_ports, validate_parent_port, lint_edge, migration_drift_key,
+)
 
 
 def _column_exists(conn: "sqlite3.Connection", table: str, column: str) -> bool:
@@ -1020,8 +1023,107 @@ class InventoryDB:
         logging.info(f"InventoryDB: connections v2 migration done: {msg}")
         return True, msg
 
+    def ports_for_device(self, device_id):
+        """(ports, record). ports is None when the device's ports are free
+        text; each port dict gains an `occupants` list."""
+        rec = self.get(device_id)
+        if rec is None:
+            return None, None
+        ports = resolve_ports(rec, self._live_ports_for(rec))
+        if ports is None:
+            return None, rec
+        occupants = {}
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT c.id, c.to_port, i.id, i.system FROM inventory_connections c "
+                "JOIN inventory i ON i.id = c.from_device_id WHERE c.to_device_id = ?",
+                (device_id,)).fetchall()
+        for cid, port, iid, name in rows:
+            p = normalize_port(port)
+            if p is not None:
+                occupants.setdefault(p, []).append(
+                    {"connection_id": cid, "device_id": iid, "name": name})
+        for p in ports:
+            p["occupants"] = occupants.get(p["name"], [])
+        return ports, rec
+
+    def preview_connection(self, a_id, b_id, connection_type=None):
+        """How an edge between a and b would be stored. (preview, error)."""
+        if a_id == b_id:
+            return None, "cannot connect a device to itself"
+        a, b = self.get(a_id), self.get(b_id)
+        if a is None or b is None:
+            return None, "one or both devices do not exist"
+        child, parent, ambiguous = orient_edge(a, b, connection_type)
+        ports, _ = self.ports_for_device(parent["id"])
+        return {
+            "child_id": child["id"], "child_name": child["system"],
+            "child_type": child.get("device_type") or "host",
+            "parent_id": parent["id"], "parent_name": parent["system"],
+            "parent_type": parent.get("device_type") or "host",
+            "ambiguous": ambiguous,
+            "default_type": default_connection_type(child, parent),
+            "ports": ports,
+        }, None
+
+    def _port_in_use(self, parent_id, port, exclude_conn_id=None):
+        """Another non-wifi edge already on this parent port?"""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT id, to_port FROM inventory_connections "
+                "WHERE to_device_id = ? AND connection_type != 'wifi'",
+                (parent_id,)).fetchall()
+        return any(normalize_port(p) == port and cid != exclude_conn_id
+                   for cid, p in rows)
+
+    def _insert_connection(self, child_id, parent_id, child_port, parent_port,
+                           ctype, notes, now, source="manual", external_key=None):
+        with self.lock:
+            cur = self.conn.execute(
+                "INSERT INTO inventory_connections "
+                "(from_device_id, to_device_id, from_port, to_port, connection_type, "
+                "notes, created_at, source, external_key, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (child_id, parent_id, child_port, parent_port, ctype, notes,
+                 now, source, external_key, now))
+            return cur.lastrowid
+
+    def quick_add_connection(self, data, now=None):
+        """Order-agnostic create: the server decides which end is the child.
+        Returns (id, warnings, error)."""
+        try:
+            a_id, b_id = int(data.get("a_id")), int(data.get("b_id"))
+        except (TypeError, ValueError):
+            return None, [], "a_id and b_id required"
+        requested = data.get("connection_type")
+        ctype = self._normalize_conn_type(requested) if requested else None
+        preview, err = self.preview_connection(a_id, b_id, ctype)
+        if err:
+            return None, [], err
+        child, parent = self.get(preview["child_id"]), self.get(preview["parent_id"])
+        ports = preview["ports"]
+        if data.get("swap"):
+            child, parent = parent, child
+            ports, _ = self.ports_for_device(parent["id"])
+        ctype = ctype or default_connection_type(child, parent)
+        parent_port = normalize_port(data.get("parent_port"))
+        perr = validate_parent_port(parent, parent_port, ports)
+        if perr:
+            return None, [], perr
+        warnings = []
+        if (parent_port is not None and ctype != "wifi"
+                and self._port_in_use(parent["id"], parent_port)):
+            warnings.append("port_in_use")
+        now = int(now or time.time())
+        new_id = self._insert_connection(
+            child["id"], parent["id"], normalize_port(data.get("child_port")),
+            parent_port, ctype, (data.get("notes") or "").strip() or None, now)
+        return new_id, warnings, None
+
     def create_connection(self, data):
-        """Create a new connection row. Returns (id, error_msg)."""
+        """Legacy create (POST /api/inventory/<id>/connections): the caller's
+        from/to order is a hint only; the edge is stored oriented, with the
+        port fields following their devices. Returns (id, error)."""
         try:
             from_id = int(data.get("from_device_id"))
             to_id   = int(data.get("to_device_id"))
@@ -1029,64 +1131,109 @@ class InventoryDB:
             return None, "from_device_id and to_device_id required"
         if from_id == to_id:
             return None, "cannot connect a device to itself"
-        # Verify both ends exist
-        with self.lock:
-            cur = self.conn.execute(
-                "SELECT id FROM inventory WHERE id IN (?, ?)", (from_id, to_id)
-            )
-            ids = {r[0] for r in cur.fetchall()}
-            if from_id not in ids or to_id not in ids:
-                return None, "one or both devices do not exist"
+        a, b = self.get(from_id), self.get(to_id)
+        if a is None or b is None:
+            return None, "one or both devices do not exist"
         ctype = self._normalize_conn_type(data.get("connection_type"))
         from_port = (data.get("from_port") or "").strip() or None
         to_port   = (data.get("to_port") or "").strip() or None
-        notes     = (data.get("notes") or "").strip() or None
-        ts = int(time.time())
-        with self.lock:
-            cur = self.conn.execute(
-                "INSERT INTO inventory_connections "
-                "(from_device_id, to_device_id, from_port, to_port, "
-                "connection_type, notes, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (from_id, to_id, from_port, to_port, ctype, notes, ts),
-            )
-            return cur.lastrowid, None
+        child, parent, _ambiguous = orient_edge(a, b, ctype)
+        if child is a:
+            child_port, parent_port = from_port, to_port
+        else:
+            child_port, parent_port = to_port, from_port
+        notes = (data.get("notes") or "").strip() or None
+        new_id = self._insert_connection(
+            child["id"], parent["id"], child_port, normalize_port(parent_port),
+            ctype, notes, int(time.time()))
+        return new_id, None
 
-    def update_connection(self, conn_id, data):
-        """Update fields of an existing connection. Returns (ok, error_msg)."""
-        fields, values = [], []
-        if "from_port" in data:
-            fields.append("from_port = ?")
-            values.append((data.get("from_port") or "").strip() or None)
-        if "to_port" in data:
-            fields.append("to_port = ?")
-            values.append((data.get("to_port") or "").strip() or None)
+    def update_connection(self, conn_id, data, now=None):
+        """Edit ports/type/notes, or swap ends. A hand edit of a discovered
+        edge makes it manual. Returns (ok, error, warnings)."""
+        existing = self.get_connection(conn_id)
+        if existing is None:
+            return False, "connection not found", []
+        child_id, parent_id = existing["from_device_id"], existing["to_device_id"]
+        child_port, parent_port = existing["from_port"], existing["to_port"]
+        ctype, notes = existing["connection_type"], existing["notes"]
+        changed = False
+        if data.get("swap"):
+            child_id, parent_id = parent_id, child_id
+            child_port, parent_port = parent_port, child_port
+            changed = True
+        for key in ("parent_port", "to_port"):
+            if key in data:
+                parent_port = normalize_port(data.get(key))
+                changed = True
+                break
+        for key in ("child_port", "from_port"):
+            if key in data:
+                child_port = (str(data.get(key) or "")).strip() or None
+                changed = True
+                break
         if "connection_type" in data:
-            fields.append("connection_type = ?")
-            values.append(self._normalize_conn_type(data.get("connection_type")))
+            ctype = self._normalize_conn_type(data.get("connection_type"))
+            changed = True
         if "notes" in data:
-            fields.append("notes = ?")
-            values.append((data.get("notes") or "").strip() or None)
-        if not fields:
-            return False, "no fields to update"
-        values.append(conn_id)
+            notes = (data.get("notes") or "").strip() or None
+            changed = True
+        if not changed:
+            return False, "no fields to update", []
+        ports, parent = self.ports_for_device(parent_id)
+        perr = validate_parent_port(parent, parent_port, ports)
+        if perr:
+            return False, perr, []
+        warnings = []
+        if (parent_port is not None and ctype != "wifi"
+                and self._port_in_use(parent_id, normalize_port(parent_port), conn_id)):
+            warnings.append("port_in_use")
+        now = int(now or time.time())
         with self.lock:
-            cur = self.conn.execute(
-                "UPDATE inventory_connections SET " + ", ".join(fields)
-                + " WHERE id = ?", tuple(values)
-            )
-            if cur.rowcount == 0:
-                return False, "connection not found"
-        return True, None
+            self.conn.execute(
+                "UPDATE inventory_connections SET from_device_id = ?, to_device_id = ?, "
+                "from_port = ?, to_port = ?, connection_type = ?, notes = ?, "
+                "source = 'manual', updated_at = ? WHERE id = ?",
+                (child_id, parent_id, child_port, parent_port, ctype, notes, now, conn_id))
+        self.relint_parent(parent_id, now)
+        if parent_id != existing["to_device_id"]:
+            self.relint_parent(existing["to_device_id"], now)
+        return True, None, warnings
 
     def delete_connection(self, conn_id):
+        existing = self.get_connection(conn_id)
         with self.lock:
             cur = self.conn.execute(
-                "DELETE FROM inventory_connections WHERE id = ?", (conn_id,)
-            )
+                "DELETE FROM inventory_connections WHERE id = ?", (conn_id,))
             if cur.rowcount == 0:
                 return False, "connection not found"
+        now = int(time.time())
+        self.suggestions.resolve(migration_drift_key(conn_id), now)
+        if existing is not None:
+            self.relint_parent(existing["to_device_id"], now)
         return True, None
+
+    def relint_parent(self, parent_id, now=None):
+        """Resolve migration drift for edges on this parent that are now
+        clean. Only resolves; new drift comes from migration/discovery."""
+        now = int(now or time.time())
+        parent = self.get(parent_id)
+        if parent is None:
+            return
+        ports = resolve_ports(parent, self._live_ports_for(parent))
+        for row in self.list_connections_for_device(parent_id):
+            if row["to_device_id"] != parent_id:
+                continue
+            child = self.get(row["from_device_id"])
+            issues = lint_edge(row, child, parent, ports)
+            if orient_edge(child, parent, row["connection_type"])[2]:
+                issues.append("ambiguous_direction")
+            port = normalize_port(row["to_port"])
+            if (port is not None and row["connection_type"] != "wifi"
+                    and self._port_in_use(parent_id, port, row["id"])):
+                issues.append("duplicate_parent_port")
+            if not issues:
+                self.suggestions.resolve(migration_drift_key(row["id"]), now)
 
     def delete(self, inv_id):
         with self.lock:
