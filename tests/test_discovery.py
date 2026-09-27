@@ -249,3 +249,177 @@ def test_parse_unifi_skips_malformed_rows():
     assert sw["lldp"] == [{"local_port_idx": 1, "local_port_name": "Port 1",
                            "chassis_mac": EERO_LLDP_MAC, "mgmt_ips": [], "remote_port": "1"}]
     assert {c["mac"] for c in snap["clients"]} == {PI5_MAC}
+
+
+# ── Task 3: reconciler ───────────────────────────────────────────────────────
+
+from netwatch.discovery import reconcile, STALE_AFTER_SECONDS
+
+
+def rec(id_, system, device_type="host", mac=None, ip=None, **props):
+    return {"id": id_, "system": system, "device_type": device_type, "mac": mac,
+            "ip": ip, "role": None, "properties": dict(props)}
+
+
+def edge(id_, child, parent, to_port=None, ctype="ethernet", source="manual",
+         from_port=None, last_seen=None):
+    return {"id": id_, "from_device_id": child, "to_device_id": parent,
+            "from_port": from_port, "to_port": to_port, "connection_type": ctype,
+            "source": source, "external_key": None, "last_seen": last_seen,
+            "updated_at": None}
+
+
+def lab_records():
+    return [
+        rec(1, "USW Pro Max 16 PoE", "network", USW_MAC, network_role="switch", port_count=16),
+        rec(2, "Eero Pro 6E — Gateway", "network", EERO_MAC, "192.168.4.1",
+            network_role="gateway", port_count=2),
+        rec(3, "Raspberry Pi 5", "host", PI5_MAC),
+        rec(4, "Mystery printer", "printer", SHARED_A),
+        rec(5, "Old NAS", "host", "00:11:22:33:44:55"),
+        rec(6, "VisionFive 2", "host", VF2_MAC),
+    ]
+
+
+def lab_edges():
+    return [
+        edge(10, 1, 2, to_port="eth0", from_port="13"),        # USW -> eero, bad parent port
+        edge(11, 3, 2, ctype="wifi"),                          # Pi 5 drawn on wifi
+        edge(12, 5, 1, to_port="Port 3", source="unifi", last_seen=NOW - 8 * DAY),
+    ]
+
+
+def live_for(records_by_mac=USW_MAC):
+    ports = snapshot()["switches"][0]["ports"]
+    return lambda r: [dict(p) for p in ports] if r.get("mac") == records_by_mac else None
+
+
+def run(records=None, edges=None, pending=(), healthy=("unifi",), guest_macs=None):
+    return reconcile(unifi_observations(snapshot(), guest_macs),
+                     records=records if records is not None else lab_records(),
+                     edges=edges if edges is not None else lab_edges(),
+                     pending=list(pending), healthy_sources=set(healthy), now=NOW,
+                     live_ports_for=live_for())
+
+
+def by_key(changes):
+    return {u["subject_key"]: u for u in changes["upserts"]}
+
+
+def test_reconcile_produces_the_expected_suggestions():
+    ch = by_key(run())
+    assert set(ch) == {
+        f"drift:unifi:{PI5_MAC}", f"edge:unifi:{VF2_MAC}", f"device:unifi:{WORKBENCH_MAC}",
+        f"shared_port:{USW_MAC}:Port 9", f"identity:lldp:{EERO_LLDP_MAC}",
+        f"drift:unifi:{USW_MAC}", "drift:stale:conn:12",
+    }
+    assert all(u["source"] == "unifi" and len(u["fp"]) == 16 for u in ch.values())
+
+
+def test_reconcile_pi5_wifi_edge_becomes_replace_drift():
+    u = by_key(run())[f"drift:unifi:{PI5_MAC}"]
+    p = u["payload"]
+    assert u["kind"] == "drift" and p["action"] == "replace" and p["connection_id"] == 11
+    assert p["current"] == {"parent_id": 2, "parent_name": "Eero Pro 6E — Gateway",
+                            "parent_port": None, "connection_type": "wifi"}
+    assert (p["proposed"]["parent_id"], p["proposed"]["parent_port"],
+            p["proposed"]["connection_type"], p["proposed"]["external_key"]) == (
+        1, "Port 7", "ethernet", f"unifi:port:{PI5_MAC}")
+    assert "UniFi" in p["message"]
+
+
+def test_reconcile_new_edge_and_new_device_payloads():
+    ch = by_key(run())
+    e = ch[f"edge:unifi:{VF2_MAC}"]["payload"]
+    assert (e["child_id"], e["parent_id"], e["parent_port"], e["source"]) == (6, 1, "Port 4", "unifi")
+    d = ch[f"device:unifi:{WORKBENCH_MAC}"]["payload"]
+    assert d["device"] == {"system": "WORKBENCH-PC", "mac": WORKBENCH_MAC, "ip": "192.168.6.45",
+                           "device_type": "host", "category": None}
+    assert (d["edge"]["parent_id"], d["edge"]["parent_port"]) == (1, "Port 10")
+
+
+def test_reconcile_lldp_matches_eero_by_ip_and_flags_port_drift():
+    ch = by_key(run())
+    ident = ch[f"identity:lldp:{EERO_LLDP_MAC}"]["payload"]
+    assert (ident["candidate_id"], ident["switch_id"], ident["port"]) == (2, 1, "Port 13")
+    d = ch[f"drift:unifi:{USW_MAC}"]["payload"]
+    assert d["connection_id"] == 10
+    assert (d["proposed"]["parent_id"], d["proposed"]["parent_port"],
+            d["proposed"]["child_port"]) == (2, "1", "Port 13")
+
+
+def test_reconcile_lldp_by_alias_needs_no_identity():
+    records = lab_records()
+    records[1]["properties"]["mac_aliases"] = [EERO_LLDP_MAC]
+    assert f"identity:lldp:{EERO_LLDP_MAC}" not in by_key(run(records=records))
+
+
+def test_reconcile_unknown_lldp_neighbour_asks_which_device():
+    records = lab_records()
+    records[1]["ip"] = "10.0.0.1"  # no longer matches mgmt_ips
+    u = by_key(run(records=records))[f"identity:lldp:{EERO_LLDP_MAC}"]["payload"]
+    assert u["candidate_id"] is None and u["mgmt_ips"][-1] == "192.168.4.1"
+
+
+def test_reconcile_shared_port_lists_matched_devices():
+    p = by_key(run())[f"shared_port:{USW_MAC}:Port 9"]["payload"]
+    assert p["macs"] == [SHARED_A, SHARED_B]
+    assert p["matched"] == [{"id": 4, "name": "Mystery printer", "mac": SHARED_A}]
+
+
+def test_reconcile_touches_matching_edges_and_refreshes_sourced_ports():
+    edges = lab_edges() + [
+        edge(13, 6, 1, to_port="4"),                               # manual "4" == "Port 4"
+        edge(14, 3, 1, to_port="Port 5", source="unifi"),          # sourced, re-cabled to 7
+    ]
+    edges = [e for e in edges if e["id"] != 11]
+    ch = run(edges=edges)
+    touch = {t["id"]: t["parent_port"] for t in ch["touch"]}
+    assert touch[13] is None and touch[14] == "Port 7" and touch[10] is None
+    keys = set(by_key(ch))
+    assert f"edge:unifi:{VF2_MAC}" not in keys and f"drift:unifi:{VF2_MAC}" not in keys
+    assert f"drift:unifi:{PI5_MAC}" not in keys
+
+
+def test_reconcile_manual_edge_on_other_port_is_drift_not_touch_of_port():
+    edges = [e for e in lab_edges() if e["id"] != 11] + [edge(13, 6, 1, to_port="12")]
+    ch = run(edges=edges)
+    assert {t["id"]: t["parent_port"] for t in ch["touch"]}[13] is None
+    p = by_key(ch)[f"drift:unifi:{VF2_MAC}"]["payload"]
+    assert (p["current"]["parent_port"], p["proposed"]["parent_port"]) == ("12", "Port 4")
+
+
+def test_reconcile_stale_edges_only_when_old_and_not_held():
+    p = by_key(run())["drift:stale:conn:12"]["payload"]
+    assert p["action"] == "remove" and p["connection_id"] == 12 and p["last_seen"] == NOW - 8 * DAY
+    fresh = [e if e["id"] != 12 else dict(e, last_seen=NOW - DAY) for e in lab_edges()]
+    assert "drift:stale:conn:12" not in by_key(run(edges=fresh))
+    records = lab_records() + [rec(7, "Minecraft", "vm", GUEST_MC)]
+    held_edge = lab_edges() + [edge(15, 7, 1, to_port="Port 8", source="unifi", last_seen=NOW - 30 * DAY)]
+    assert "drift:stale:conn:15" not in by_key(run(records=records, edges=held_edge))
+
+
+def test_reconcile_resolution_rules():
+    pending = [
+        {"subject_key": "edge:unifi:ff:ff:ff:ff:ff:01", "source": "unifi"},
+        {"subject_key": f"edge:unifi:{GUEST_MC}", "source": "unifi"},       # held
+        {"subject_key": "drift:migration:conn:10", "source": "migration"},
+        {"subject_key": f"drift:unifi:{PI5_MAC}", "source": "unifi"},      # re-produced
+    ]
+    assert run(pending=pending)["resolve"] == ["edge:unifi:ff:ff:ff:ff:ff:01"]
+    unhealthy = reconcile([], records=lab_records(), edges=lab_edges(), pending=pending,
+                          healthy_sources=set(), now=NOW)
+    assert unhealthy == {"upserts": [], "resolve": [], "touch": []}
+
+
+def test_reconcile_fingerprint_ignores_renames():
+    a = by_key(run())[f"edge:unifi:{VF2_MAC}"]["fp"]
+    records = lab_records()
+    records[5]["system"] = "VF2 renamed"
+    assert by_key(run(records=records))[f"edge:unifi:{VF2_MAC}"]["fp"] == a
+
+
+def test_reconcile_ignores_switch_missing_from_inventory():
+    records = [r for r in lab_records() if r["id"] != 1]
+    edges = [e for e in lab_edges() if 1 not in (e["from_device_id"], e["to_device_id"])]
+    assert run(records=records, edges=edges)["upserts"] == []

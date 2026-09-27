@@ -12,7 +12,11 @@ Layers, outermost last:
 Discovery never edits manual edges or inventory records - it files
 suggestions (spec §2). Accepting them is InventoryDB.accept_suggestion.
 """
-from netwatch.connections import normalize_port
+import time
+
+from netwatch.connections import (
+    canonical_port, fingerprint, normalize_port, orient_edge, resolve_ports,
+)
 from netwatch.storage import InventoryDB
 
 PROXMOX_OUI = "bc:24:11"
@@ -140,3 +144,202 @@ def unifi_observations(snapshot, guest_macs=None):
                 "remote_port": n["remote_port"],
             })
     return obs
+
+
+STALE_AFTER_SECONDS = 7 * 86400
+NETWORK_LINK_TYPES = ("ethernet", "fiber", "wifi")
+SOURCE_LABELS = {"unifi": "UniFi", "proxmox": "Proxmox", "inferred": "Inference"}
+
+
+def _index_records(records):
+    by_id, by_mac, by_ip = {}, {}, {}
+    for r in records:
+        by_id[r["id"]] = r
+        props = r.get("properties") or {}
+        for m in [r.get("mac")] + list(props.get("mac_aliases") or []):
+            n = _norm_mac(m)
+            if n:
+                by_mac[n] = r
+        if r.get("ip"):
+            by_ip[str(r["ip"]).strip()] = r
+    return by_id, by_mac, by_ip
+
+
+def reconcile(observations, *, records, edges, pending, healthy_sources, now,
+              live_ports_for=None):
+    """Pure: decide what one scan means. See spec §2.5 for the rules."""
+    if not healthy_sources:
+        return {"upserts": [], "resolve": [], "touch": []}
+    by_id, by_mac, by_ip = _index_records(records)
+    upserts, touch, held_macs = {}, {}, set()
+
+    def suggest(kind, source, key, payload, fp_basis):
+        upserts[key] = {"kind": kind, "source": source, "subject_key": key,
+                        "payload": payload, "fp": fingerprint([kind] + list(fp_basis))}
+
+    def ports_of(rec):
+        return resolve_ports(rec, live_ports_for(rec) if live_ports_for else None)
+
+    def port_key(port, ports):
+        return canonical_port(port, ports) if ports else normalize_port(port)
+
+    def links_from(child_id):
+        return [e for e in edges if e["from_device_id"] == child_id
+                and e["connection_type"] in NETWORK_LINK_TYPES]
+
+    def observe_edge(child, parent, parent_port, child_port, subject_mac, ext_key,
+                     ctype, source):
+        ports = ports_of(parent)
+        pport = port_key(parent_port, ports)
+        proposed = {"child_id": child["id"], "child_name": child["system"],
+                    "parent_id": parent["id"], "parent_name": parent["system"],
+                    "parent_port": pport, "child_port": child_port,
+                    "connection_type": ctype, "source": source, "external_key": ext_key}
+        links = links_from(child["id"])
+        same = [e for e in links if e["to_device_id"] == parent["id"]]
+        if same:
+            current = same[0]
+            stored = port_key(current["to_port"], ports)
+            if current.get("source", "manual") != "manual":
+                touch[current["id"]] = pport if (pport and stored != pport) else None
+                return
+            touch[current["id"]] = None
+            if pport is None or stored == pport:
+                return
+        elif links:
+            current = links[0]
+        else:
+            where = f"{parent['system']} · {pport}" if pport else parent["system"]
+            suggest("edge", source, f"edge:{source}:{subject_mac}",
+                    dict(proposed, message=f"{child['system']} is wired to {where}"),
+                    [child["id"], parent["id"], pport, ctype])
+            return
+        cur_parent = by_id.get(current["to_device_id"], {}).get("system") or "?"
+        cur_port = current.get("to_port")
+        cur_desc = f"{cur_parent}{' · ' + cur_port if cur_port else ''} ({current['connection_type']})"
+        new_desc = f"{parent['system']}{' · ' + pport if pport else ''} ({ctype})"
+        label = SOURCE_LABELS.get(source, source)
+        suggest("drift", source, f"drift:{source}:{subject_mac}", {
+            "connection_id": current["id"], "action": "replace",
+            "child_id": child["id"], "child_name": child["system"],
+            "current": {"parent_id": current["to_device_id"], "parent_name": cur_parent,
+                        "parent_port": cur_port,
+                        "connection_type": current["connection_type"]},
+            "proposed": proposed,
+            "message": f"Your graph: {child['system']} → {cur_desc}. {label} sees: {new_desc}",
+        }, [current["id"], parent["id"], pport, ctype])
+
+    for o in observations:
+        if o["source"] not in healthy_sources:
+            continue
+        t = o["type"]
+        if t == "held":
+            held_macs.update(o["macs"])
+        elif t == "edge":
+            parent = by_mac.get(o["parent"]["mac"])
+            if parent is None:
+                continue
+            mac = o["child"]["mac"]
+            child = by_mac.get(mac)
+            if child is not None:
+                observe_edge(child, parent, o["parent_port"], o.get("child_port"), mac,
+                             o["external_key"], o["connection_type"], o["source"])
+                continue
+            name = o["child"].get("name") or f"Unknown device {mac}"
+            pport = port_key(o["parent_port"], ports_of(parent))
+            suggest("device", o["source"], f"device:{o['source']}:{mac}", {
+                "device": {"system": name, "mac": mac, "ip": o["child"].get("ip"),
+                           "device_type": "host", "category": None},
+                "edge": {"parent_id": parent["id"], "parent_name": parent["system"],
+                         "parent_port": pport, "child_port": o.get("child_port"),
+                         "connection_type": o["connection_type"],
+                         "source": o["source"], "external_key": o["external_key"]},
+                "message": (f"{name} ({mac}) is wired to {parent['system']} · {pport} "
+                            "but isn't in inventory"),
+            }, [mac, parent["id"], pport])
+        elif t == "shared_port":
+            switch = by_mac.get(o["switch_mac"])
+            if switch is None:
+                continue
+            ports = ports_of(switch)
+            pport = port_key(o["port"], ports)
+            on_port = [e for e in edges if e["to_device_id"] == switch["id"]
+                       and e["connection_type"] in NETWORK_LINK_TYPES
+                       and port_key(e["to_port"], ports) == pport]
+            if on_port:
+                behind = {e["from_device_id"] for e in on_port}
+                for e in edges:
+                    if e in on_port or e["to_device_id"] in behind:
+                        touch.setdefault(e["id"], None)
+                continue
+            matched = [{"id": by_mac[m]["id"], "name": by_mac[m]["system"], "mac": m}
+                       for m in o["macs"] if m in by_mac]
+            suggest("shared_port", o["source"], f"shared_port:{o['switch_mac']}:{pport}", {
+                "switch_id": switch["id"], "switch_name": switch["system"], "port": pport,
+                "macs": o["macs"], "matched": matched,
+                "message": (f"{len(o['macs'])} devices share {switch['system']} · {pport}. "
+                            "Unmanaged switch or AP behind it?"),
+            }, [switch["id"], pport, o["macs"]])
+        elif t == "lldp":
+            switch = by_mac.get(o["switch_mac"])
+            if switch is None:
+                continue
+            neighbour, via_ip = by_mac.get(o["chassis_mac"]), None
+            if neighbour is None:
+                for ip in o["mgmt_ips"]:
+                    if ip in by_ip:
+                        neighbour, via_ip = by_ip[ip], ip
+                        break
+            if neighbour is None or via_ip:
+                suggest("identity", o["source"], f"identity:lldp:{o['chassis_mac']}", {
+                    "chassis_mac": o["chassis_mac"], "mgmt_ips": o["mgmt_ips"],
+                    "switch_id": switch["id"], "switch_name": switch["system"],
+                    "port": o["port"],
+                    "candidate_id": neighbour["id"] if neighbour else None,
+                    "candidate_name": neighbour["system"] if neighbour else None,
+                    "message": (
+                        f"Is LLDP neighbour {o['chassis_mac']} on {switch['system']} · "
+                        f"{o['port']} your {neighbour['system']}? (it answers on {via_ip})"
+                        if neighbour else
+                        f"Unknown LLDP neighbour {o['chassis_mac']} on {switch['system']} · "
+                        f"{o['port']}: which device is it?"),
+                }, [o["chassis_mac"], neighbour["id"] if neighbour else None])
+            if neighbour is None or neighbour["id"] == switch["id"]:
+                continue
+            ext = f"unifi:lldp:{o['switch_mac']}:{o['port']}"
+            child, _parent, _ambiguous = orient_edge(switch, neighbour)
+            if child is switch:
+                observe_edge(switch, neighbour, o["remote_port"], o["port"],
+                             o["switch_mac"], ext, "ethernet", o["source"])
+            else:
+                observe_edge(neighbour, switch, o["port"], o["remote_port"],
+                             o["chassis_mac"], ext, "ethernet", o["source"])
+
+    for e in edges:
+        if (e.get("source") not in healthy_sources or e["id"] in touch):
+            continue
+        child = by_id.get(e["from_device_id"])
+        if child is None or _norm_mac(child.get("mac")) in held_macs:
+            continue
+        seen = e.get("last_seen") or e.get("updated_at") or 0
+        if seen >= now - STALE_AFTER_SECONDS:
+            continue
+        parent = by_id.get(e["to_device_id"], {})
+        label = SOURCE_LABELS.get(e["source"], e["source"])
+        when = time.strftime("%Y-%m-%d", time.localtime(seen)) if seen else "never"
+        suggest("drift", e["source"], f"drift:stale:conn:{e['id']}", {
+            "connection_id": e["id"], "action": "remove",
+            "child_id": child["id"], "child_name": child["system"],
+            "parent_id": e["to_device_id"], "parent_name": parent.get("system"),
+            "parent_port": e.get("to_port"), "last_seen": seen,
+            "message": (f"{child['system']} → {parent.get('system') or '?'} hasn't been "
+                        f"seen by {label} since {when}. Remove it?"),
+        }, ["stale", e["id"]])
+
+    held_keys = {f"{kind}:{src}:{m}" for m in held_macs for src in healthy_sources
+                 for kind in ("edge", "device", "drift")}
+    resolve = [s["subject_key"] for s in pending
+               if s["source"] in healthy_sources and s["subject_key"] not in upserts
+               and s["subject_key"] not in held_keys]
+    return {"upserts": list(upserts.values()), "resolve": resolve,
+            "touch": [{"id": k, "parent_port": v} for k, v in touch.items()]}
