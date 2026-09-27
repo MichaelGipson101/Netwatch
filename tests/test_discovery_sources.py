@@ -767,3 +767,91 @@ def test_scan_fills_missing_guest_properties_without_overwriting():
         props = idb.get(vm)["properties"]
         assert props == {"proxmox_vmid": 116, "proxmox_node": "prodesk1", "guest_type": "qemu"}
         hdb.close()
+
+
+# ── Task 7: wifi inference ───────────────────────────────────────────────────
+
+from netwatch.discovery_wifi import NO_GATEWAY, parse_arp, wifi_observations
+
+DESKTOP_MAC, DECK_MAC = "d8:bb:c1:03:ac:0e", "14:d4:24:63:3b:b5"
+LAPTOP_MAC, NAS_MAC, TPL_CLIENT_MAC = "aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:10", "aa:bb:cc:dd:ee:08"
+
+ARP_TEXT = """IP address       HW type     Flags       HW address            Mask     Device
+192.168.4.1      0x1         0x2         d4:3f:32:eb:2a:f2     *        eth0
+192.168.4.89     0x1         0x2         d8:bb:c1:03:ac:0e     *        eth0
+192.168.4.26     0x1         0x2         14:d4:24:63:3b:b5     *        eth0
+192.168.6.91     0x1         0x0         00:00:00:00:00:00     *        eth0
+192.168.4.50     0x1         0x2         aa:bb:cc:dd:ee:01     *        eth0
+192.168.4.71     0x1         0x2         aa:bb:cc:dd:ee:08     *        eth0
+192.168.6.90     0x1         0x2         d8:3a:dd:ad:2d:b7     *        eth0
+"""
+
+
+def host(name, ip, mac=None, always_on=True, is_up=True):
+    return {"name": name, "ip": ip, "always_on": always_on, "is_up": is_up,
+            "specs": {"mac": mac} if mac else {}}
+
+
+def wifi_records():
+    return lab_records() + [
+        rec(4, "Custom Desktop PC", "host", DESKTOP_MAC, "192.168.4.89"),
+        rec(7, "Valve Steam Deck", "host", DECK_MAC),
+        rec(9, "Laptop", "host", LAPTOP_MAC),
+        rec(10, "Old NAS", "host", NAS_MAC),
+        rec(8, "Behind the TP-Link", "host", TPL_CLIENT_MAC),
+        rec(45, "TP Link 24-port", "network", "aa:bb:cc:00:00:45", network_role="switch"),
+    ]
+
+
+def wifi_edges():
+    return [edge(80, 7, 2, ctype="wifi"),                  # Deck already drawn on the eero
+            edge(81, 8, 45, ctype="ethernet", to_port="3")]
+
+
+def wifi_hosts():
+    return [host("Custom Desktop PC", "192.168.4.89"),         # MAC via ARP
+            host("Steam Deck", "192.168.4.26", DECK_MAC),
+            host("Laptop", "192.168.4.50", LAPTOP_MAC, always_on=False),
+            host("Old NAS", "192.168.4.99", NAS_MAC, is_up=False),
+            host("TP-Link client", "192.168.4.71"),
+            host("ApplePi5", "192.168.6.90", PI5_MAC)]
+
+
+def test_parse_arp_keeps_complete_entries_only():
+    arp = parse_arp(ARP_TEXT)
+    assert arp["192.168.4.89"] == DESKTOP_MAC and arp["192.168.4.1"] == GW_MAC
+    assert "192.168.6.91" not in arp
+    assert parse_arp("") == {} and parse_arp(None) == {}
+
+
+def test_wifi_observations_pick_up_live_unwired_hosts():
+    obs, err = wifi_observations(wifi_hosts(), parse_arp(ARP_TEXT), wired_macs={PI5_MAC},
+                                 guest_macs={HA_MAC}, records=wifi_records(),
+                                 edges=wifi_edges())
+    assert err is None
+    edges_ = {o["child"]["mac"]: o for o in obs if o["type"] == "edge"}
+    assert set(edges_) == {DESKTOP_MAC, DECK_MAC}
+    assert edges_[DESKTOP_MAC] == {
+        "type": "edge", "source": "inferred",
+        "child": {"mac": DESKTOP_MAC, "ip": "192.168.4.89", "name": "Custom Desktop PC"},
+        "parent": {"inventory_id": 2}, "parent_port": None, "child_port": None,
+        "connection_type": "wifi", "external_key": f"inferred:wifi:{DESKTOP_MAC}"}
+    assert [o["macs"] for o in obs if o["type"] == "held"] == [[NAS_MAC]]
+
+
+def test_wifi_inference_needs_a_gateway():
+    records = [r for r in wifi_records() if r["id"] != 2]
+    assert wifi_observations(wifi_hosts(), parse_arp(ARP_TEXT), set(), set(), records,
+                             []) == ([], NO_GATEWAY)
+
+
+def test_reconcile_turns_inferred_observations_into_wifi_suggestions():
+    obs, _ = wifi_observations(wifi_hosts(), parse_arp(ARP_TEXT), {PI5_MAC}, set(),
+                               wifi_records(), wifi_edges())
+    pending = pend((f"edge:inferred:{NAS_MAC}", "inferred"))
+    ch = run(obs, wifi_records(), edges=wifi_edges(), pending=pending, healthy=("inferred",))
+    k = keys(ch)
+    assert k[f"edge:inferred:{DESKTOP_MAC}"]["payload"]["message"] == (
+        "Custom Desktop PC connects over wifi to Eero Pro 6E — Gateway")
+    assert {"id": 80, "parent_port": None} in ch["touch"]     # manual Deck edge confirmed
+    assert ch["resolve"] == []                                # the down NAS is held
