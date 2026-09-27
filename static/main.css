@@ -1846,11 +1846,13 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .qa-error{color:var(--red-text);font-size:12px}
 .qa-error:empty{display:none}
 .qa-compact .qa-row,.qa-compact .qa-foot{flex-direction:column;align-items:stretch}
+.qa-compact .qa-picker,.qa-compact .qa-row-opts .qa-field,.qa-compact .qa-sentence{flex:0 0 auto}
 .qa-compact .qa-link{align-self:center;padding:0;transform:rotate(90deg)}
 .qa-compact .qa-swap{order:-1}
 .qa-compact .qa-add{width:100%}
 @media (max-width:600px){
   .qa-row,.qa-foot{flex-direction:column;align-items:stretch}
+  .qa-picker,.qa-row-opts .qa-field,.qa-sentence{flex:0 0 auto}
   .qa-link{align-self:center;padding:0;transform:rotate(90deg)}
   .qa-swap{order:-1}
   .qa-add{width:100%}

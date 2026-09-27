@@ -79,11 +79,16 @@ function qaSentence(orient, port, type){
 function qaLoadInventory(){
   const now = Date.now();
   if(_qaInvCache && now - _qaInvCache.at < 30000) return _qaInvCache.promise;
+  const entry = {at: now, promise: null};
   const promise = fetch('/api/inventory')
-    .then(r => r.ok ? r.json() : {items: []})
+    .then(r => {
+      if(!r.ok){ if(_qaInvCache === entry) _qaInvCache = null; return {items: []}; }
+      return r.json();
+    })
     .then(j => (j.items || []).slice().sort((a, b) => String(a.system).localeCompare(String(b.system))))
-    .catch(() => []);
-  _qaInvCache = {at: now, promise: promise};
+    .catch(() => { if(_qaInvCache === entry) _qaInvCache = null; return []; });
+  entry.promise = promise;
+  _qaInvCache = entry;
   return promise;
 }
 
@@ -115,7 +120,9 @@ function renderQuickAdd(container, opts){
   opts = opts || {};
   const uid = 'qa' + (++_qaSeq);
   const st = {a: null, b: null, preview: null, ports: null, swapped: false,
-              typeChosen: null, port: opts.parent_port || '', busy: false, seq: 0};
+              typeChosen: null, port: opts.parent_port || '',
+              portParent: opts.parent_port && opts.b_id != null ? Number(opts.b_id) : null,
+              busy: false, seq: 0};
   container.innerHTML =
     '<div class="qa' + (opts.compact ? ' qa-compact' : '') + '" id="' + uid + '">'
     + '<div class="qa-row">'
@@ -152,6 +159,11 @@ function renderQuickAdd(container, opts){
 
   function showError(msg){ errEl.textContent = msg || ''; }
 
+  function currentParentId(){
+    const o = qaOrient(st.preview, st.swapped);
+    return o ? o.parent_id : null;
+  }
+
   function paintSentence(){
     const o = qaOrient(st.preview, st.swapped);
     const wifi = typeSel.value === 'wifi';
@@ -167,19 +179,31 @@ function renderQuickAdd(container, opts){
     const opts2 = qaPortOptions(st.ports);
     if(opts2){
       const cur = qaMatchPortOption(opts2, st.port);
+      let extraOption = '';
       if(cur) st.port = cur;
+      else if(st.port) extraOption = '<option value="' + escapeHtml(st.port) + '" selected>'
+        + escapeHtml(st.port) + ' (not a port on this device)</option>';
       portSlot.innerHTML = '<select class="qa-port"' + (wifi ? ' disabled' : '') + '>'
         + '<option value="">— no port —</option>'
         + opts2.map(p => '<option value="' + escapeHtml(p.value) + '"' + (p.value === cur ? ' selected' : '') + '>'
           + escapeHtml(p.label) + (p.taken ? ' (in use)' : '') + '</option>').join('')
+        + extraOption
         + '</select>';
-      portSlot.querySelector('.qa-port').addEventListener('change', e => { st.port = e.target.value; paintSentence(); });
+      portSlot.querySelector('.qa-port').addEventListener('change', e => {
+        st.port = e.target.value;
+        st.portParent = currentParentId();
+        paintSentence();
+      });
     } else {
       portSlot.innerHTML = '<input type="text" class="qa-port" autocomplete="off" spellcheck="false"'
         + ' placeholder="' + (wifi ? 'n/a for wifi' : 'optional') + '"' + (wifi ? ' disabled' : '') + '>';
       const inp = portSlot.querySelector('.qa-port');
       inp.value = st.port;
-      inp.addEventListener('input', e => { st.port = e.target.value.trim(); paintSentence(); });
+      inp.addEventListener('input', e => {
+        st.port = e.target.value.trim();
+        st.portParent = currentParentId();
+        paintSentence();
+      });
     }
     swapBtn.hidden = !(st.preview && st.preview.ambiguous);
     addBtn.disabled = !st.preview || st.busy;
@@ -190,8 +214,12 @@ function renderQuickAdd(container, opts){
   async function onPairChanged(){
     st.preview = null; st.swapped = false; st.ports = null;
     const seq = ++st.seq;
+    if(!st.a || !st.b || st.a.id === st.b.id){
+      showError('');
+      paint();
+      return;
+    }
     paint();
-    if(!st.a || !st.b || st.a.id === st.b.id) return;
     const typeQ = st.typeChosen ? '&type=' + encodeURIComponent(st.typeChosen) : '';
     try {
       const res = await fetch('/api/connections/preview?a=' + st.a.id + '&b=' + st.b.id + typeQ);
@@ -200,6 +228,7 @@ function renderQuickAdd(container, opts){
       if(!res.ok){ showError(body.error || ('Preview failed (HTTP ' + res.status + ')')); return; }
       st.preview = body;
       st.ports = body.ports;
+      if(currentParentId() !== st.portParent) st.port = '';
       showError('');
       paint();
     } catch(e){ if(seq === st.seq) showError('Network error'); }
@@ -213,6 +242,7 @@ function renderQuickAdd(container, opts){
     let active = -1;
     async function show(){
       const items = await qaLoadInventory();
+      if(document.activeElement !== input) return;
       const other = which === 'a' ? st.b : st.a;
       matches = qaMatchDevices(items, input.value, other ? [other.id] : [], 8);
       active = matches.length ? 0 : -1;
@@ -256,7 +286,7 @@ function renderQuickAdd(container, opts){
     return {
       input: input,
       set: it => { st[which] = it; input.value = it ? it.system : ''; },
-      lock: () => { input.disabled = true; },
+      lock: () => { input.disabled = true; hide(); },
     };
   }
 
@@ -269,6 +299,7 @@ function renderQuickAdd(container, opts){
     if(!st.preview || !st.preview.ambiguous) return;
     st.swapped = !st.swapped;
     const o = qaOrient(st.preview, st.swapped);
+    if(o.parent_id !== st.portParent) st.port = '';
     st.ports = null;
     const seq = ++st.seq;
     paint();
@@ -295,6 +326,7 @@ function renderQuickAdd(container, opts){
     const body = {a_id: st.a.id, b_id: st.b.id, connection_type: typeSel.value,
                   parent_port: wifi ? '' : st.port, child_port: childPortEl.value.trim(),
                   swap: st.swapped};
+    let added = null;
     try {
       const res = await apiFetch('/api/connections', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
@@ -307,26 +339,32 @@ function renderQuickAdd(container, opts){
       _qaChildPorts = null;
       // Keep A (adding several links to one device is the common case); clear the rest.
       pickB.set(null);
-      st.port = ''; st.typeChosen = null; childPortEl.value = '';
+      st.port = ''; st.portParent = null; st.typeChosen = null; typeSel.value = 'ethernet'; childPortEl.value = '';
       st.preview = null; st.ports = null; st.swapped = false;
-      if(opts.onAdded) opts.onAdded(out);
+      added = out;
     } catch(e){
       showError('Network error');
     } finally {
       st.busy = false;
       paint();
     }
+    if(added){
+      pickB.input.focus();
+      if(opts.onAdded) opts.onAdded(added);
+    }
   });
 
   paint();
+  let prefillDone = null;
   if(opts.a_id || opts.b_id){
-    qaLoadInventory().then(items => {
-      const find = id => items.find(i => i.id === id) || null;
-      if(opts.a_id) pickA.set(find(opts.a_id));
-      if(opts.b_id) pickB.set(find(opts.b_id));
+    prefillDone = qaLoadInventory().then(items => {
+      const find = id => items.find(i => i.id === Number(id)) || null;
+      // Don't clobber text the user already typed while the prefill was in flight.
+      if(opts.a_id && !pickA.input.value) pickA.set(find(opts.a_id));
+      if(opts.b_id && !pickB.input.value) pickB.set(find(opts.b_id));
       if(opts.lockA && st.a) pickA.lock();
       onPairChanged();
     });
   }
-  return {focus: () => (st.a ? pickB : pickA).input.focus()};
+  return {focus: () => Promise.resolve(prefillDone).then(() => (st.a ? pickB : pickA).input.focus())};
 }

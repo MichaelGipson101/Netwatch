@@ -301,6 +301,7 @@ def test_inventory_form_uses_prop_defs_everywhere():
                "function renderInventoryDrawer"):
         assert "invPropDefs(" in js_part(INV_JS, fn), fn
     assert "invParseMacList(" in js_part(INV_JS, "async function submitInventory")
+    assert "p.type === \"select\"" in js_part(INV_JS, "function onInvTypeChange")
 
 
 # ── Task 4: quick add ───────────────────────────────────────────────────────
@@ -375,4 +376,3 @@ def test_every_static_script_parses(name):
     r = subprocess.run(["node", "--check", os.path.join(STATIC, name)],
                        capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stderr
-    assert "p.type === \"select\"" in js_part(INV_JS, "function onInvTypeChange")
