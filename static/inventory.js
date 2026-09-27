@@ -500,6 +500,9 @@ document.addEventListener('input', e => {
 });
 
 // Editor
+const INV_NETWORK_ROLES = [
+  ['gateway', 'Gateway / router'], ['switch', 'Switch'], ['ap', 'Access point'], ['other', 'Other'],
+];
 const INVENTORY_TYPE_PROPERTIES = {
   host: [],
   vm: [
@@ -511,6 +514,7 @@ const INVENTORY_TYPE_PROPERTIES = {
     {key:"proxmox_vmid",  type:"int",    label:"Proxmox VMID"},
   ],
   network: [
+    {key:"network_role",   type:"select", label:"Network role", options: INV_NETWORK_ROLES, dflt:"other"},
     {key:"port_count",     type:"int",    label:"Port count"},
     {key:"poe_watts",      type:"int",    label:"PoE budget (W)"},
     {key:"managed",        type:"bool",   label:"Managed"},
@@ -547,6 +551,41 @@ const INVENTORY_TYPE_PROPERTIES = {
   ],
 };
 
+// Properties every device type can carry, shown after the type's own fields.
+const INVENTORY_COMMON_PROPERTIES = [
+  {key: 'mac_aliases', type: 'maclist', label: 'MAC aliases (comma-separated)', drawerLabel: 'MAC aliases'},
+];
+
+function invPropDefs(type){
+  return (INVENTORY_TYPE_PROPERTIES[type] || []).concat(INVENTORY_COMMON_PROPERTIES);
+}
+
+// "D4-3F-32-EB-2A-E0, d43f32eb2ae0" -> {macs: ["d4:3f:32:eb:2a:e0"], bad: []}
+function invParseMacList(text){
+  const macs = [];
+  const bad = [];
+  String(text || '').split(/[\s,;]+/).forEach(tok => {
+    if(!tok) return;
+    const hex = tok.toLowerCase().replace(/[^0-9a-f]/g, '');
+    if(hex.length !== 12 || !/^[0-9a-f:.-]+$/i.test(tok)){ bad.push(tok); return; }
+    const mac = hex.match(/../g).join(':');
+    if(macs.indexOf(mac) === -1) macs.push(mac);
+  });
+  return {macs: macs, bad: bad};
+}
+
+function invFormatPropValue(def, val){
+  if(val === undefined || val === null || val === '') return null;
+  if(def.type === 'bool') return val ? 'Yes' : 'No';
+  if(def.type === 'int') return Number(val).toLocaleString();
+  if(def.type === 'select'){
+    const opt = (def.options || []).find(o => o[0] === val);
+    return opt ? opt[1] : String(val);
+  }
+  if(def.type === 'maclist') return Array.isArray(val) && val.length ? val.join(', ') : null;
+  return String(val);
+}
+
 function onInvTypeChange(newType){
   const hostFields = document.querySelector(".inv-host-fields");
   const typeSlot   = document.getElementById("inv-type-fields");
@@ -556,13 +595,8 @@ function onInvTypeChange(newType){
   // the VM-specific properties.
   const hostLikeTypes = (newType === "host" || newType === "vm");
   hostFields.style.display = hostLikeTypes ? "contents" : "none";
-  // Render type-specific fields (if any)
-  const props = INVENTORY_TYPE_PROPERTIES[newType] || [];
-  if(props.length === 0){
-    typeSlot.innerHTML = "";
-    typeSlot.style.display = "none";
-    return;
-  }
+  // Type-specific fields, then the ones every type has (MAC aliases).
+  const props = invPropDefs(newType);
   typeSlot.style.display = "contents";
   typeSlot.innerHTML = props.map(p => {
     if(p.type === "bool"){
@@ -570,6 +604,14 @@ function onInvTypeChange(newType){
         '<input type="checkbox" class="inv-p-' + p.key + '" style="width:auto"> ' + escapeHtml(p.label) + '</span></label>';
     } else if(p.type === "int"){
       return '<label>' + escapeHtml(p.label) + '<input type="number" step="1" class="inv-p-' + p.key + '"></label>';
+    } else if(p.type === "select"){
+      return '<label>' + escapeHtml(p.label) + '<select class="inv-p-' + p.key + '">'
+        + p.options.map(o => '<option value="' + o[0] + '"' + (o[0] === p.dflt ? ' selected' : '') + '>'
+          + escapeHtml(o[1]) + '</option>').join('')
+        + '</select></label>';
+    } else if(p.type === "maclist"){
+      return '<label class="full">' + escapeHtml(p.label)
+        + '<input type="text" class="inv-p-' + p.key + '" placeholder="e.g. d4:3f:32:eb:2a:e0" autocomplete="off" spellcheck="false"></label>';
     } else {
       return '<label>' + escapeHtml(p.label) + '<input type="text" class="inv-p-' + p.key + '"></label>';
     }
@@ -612,6 +654,7 @@ async function openInventoryEditor(existingId){
           const el = document.querySelector('.inv-p-' + k);
           if(!el) return;
           if(el.type === 'checkbox') el.checked = !!props[k];
+          else if(Array.isArray(props[k])) el.value = props[k].join(', ');
           else el.value = props[k];
         });
       }
@@ -779,8 +822,9 @@ async function submitInventory(ev){
   const typeEl = document.querySelector('.inv-f-device_type');
   const dtype = typeEl ? typeEl.value : 'host';
   data.device_type = dtype;
-  const propDefs = INVENTORY_TYPE_PROPERTIES[dtype] || [];
+  const propDefs = invPropDefs(dtype);
   const props = {};
+  let badMacs = [];
   propDefs.forEach(p => {
     const el = document.querySelector('.inv-p-' + p.key);
     if(!el) return;
@@ -789,6 +833,10 @@ async function submitInventory(ev){
     } else if(p.type === 'int'){
       const v = el.value.trim();
       if(v !== '') props[p.key] = parseInt(v, 10);
+    } else if(p.type === 'maclist'){
+      const parsed = invParseMacList(el.value);
+      badMacs = badMacs.concat(parsed.bad);
+      props[p.key] = parsed.macs;  // [] explicitly clears the aliases
     } else {
       const v = el.value.trim();
       if(v !== '') props[p.key] = v;
@@ -798,6 +846,7 @@ async function submitInventory(ev){
   const err = document.getElementById('inv-edit-error');
   err.textContent = '';
   if(!data.system){ err.textContent = 'System name is required'; return; }
+  if(badMacs.length){ err.textContent = 'Not a MAC address: ' + badMacs.join(', '); return; }
   try {
     const url = _editingInvId ? '/api/inventory/' + _editingInvId : '/api/inventory';
     const res = await apiFetch(url, {
@@ -864,6 +913,7 @@ function renderInventoryDrawer(rec){
       ['Max TDP',       rec.tdp_watts ? rec.tdp_watts + ' W' : null],
       ['TPM version',   rec.tpm],
       ['MAC',           rec.mac],
+      ['MAC aliases',   invFormatPropValue(INVENTORY_COMMON_PROPERTIES[0], (rec.properties || {}).mac_aliases)],
       ['IP',            rec.ip],
       ['Serial',        rec.serial],
     ];
@@ -872,13 +922,9 @@ function renderInventoryDrawer(rec){
     fields = [['Role / status', rec.role]];
     // Type-specific properties
     const props = rec.properties || {};
-    const propDefs = INVENTORY_TYPE_PROPERTIES[dtype] || [];
-    propDefs.forEach(p => {
-      let val = props[p.key];
-      if(val === undefined || val === null || val === '') return;
-      if(p.type === 'bool') val = val ? 'Yes' : 'No';
-      else if(p.type === 'int') val = Number(val).toLocaleString();
-      fields.push([p.label, val]);
+    invPropDefs(dtype).forEach(p => {
+      const val = invFormatPropValue(p, props[p.key]);
+      if(val !== null) fields.push([p.drawerLabel || p.label, val]);
     });
     fields.push(['MAC', rec.mac]);
     fields.push(['IP', rec.ip]);

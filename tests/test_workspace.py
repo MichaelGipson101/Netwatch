@@ -214,3 +214,91 @@ def test_runner_reports_switch_macs_from_the_last_scan():
         r._switches = [{"mac": USW_MAC, "ports": []}]
         assert r.switch_macs() == [USW_MAC]
         hdb.close()
+
+
+# ── JS helper harness (pure functions run in node) ──────────────────────────
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+INV_JS = os.path.join(STATIC, "inventory.js")
+UTILS_JS = os.path.join(STATIC, "utils.js")
+
+
+def js_part(path, marker):
+    """Source of the top-level `function name(...)` or `const NAME = ...` that
+    starts at `marker`, found by bracket matching. Helpers tested this way
+    keep brackets balanced inside string and regex literals."""
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    start = src.index(marker)
+    opens = [i for i in (src.find("{", start), src.find("[", start)) if i != -1]
+    i = min(opens)
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] in "{[":
+            depth += 1
+        elif src[j] in "}]":
+            depth -= 1
+            if depth == 0:
+                end = j + 1
+                break
+    if src[end:end + 1] == ";":
+        end += 1
+    return src[start:end]
+
+
+def run_js(parts, expr, prelude=""):
+    src = prelude + "\n" + "\n".join(js_part(p, m) for p, m in parts)
+    script = src + f"\nprocess.stdout.write(JSON.stringify({expr}));"
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+# ── Task 3: inventory form ──────────────────────────────────────────────────
+
+INV_DEFS = [(INV_JS, "const INV_NETWORK_ROLES"), (INV_JS, "const INVENTORY_TYPE_PROPERTIES"),
+            (INV_JS, "const INVENTORY_COMMON_PROPERTIES"), (INV_JS, "function invPropDefs")]
+
+
+@needs_node
+def test_prop_defs_add_network_role_and_mac_aliases():
+    out = run_js(INV_DEFS, "[invPropDefs('network').map(p => p.key), "
+                           "invPropDefs('host').map(p => p.key), "
+                           "invPropDefs('toaster').map(p => p.key), "
+                           "invPropDefs('network')[0]]")
+    assert out[0][0] == "network_role" and "port_count" in out[0] and out[0][-1] == "mac_aliases"
+    assert out[1] == ["mac_aliases"] and out[2] == ["mac_aliases"]
+    role = out[3]
+    assert role["type"] == "select" and role["dflt"] == "other"
+    assert [o[0] for o in role["options"]] == ["gateway", "switch", "ap", "other"]
+
+
+@needs_node
+def test_parse_mac_list_normalises_dedupes_and_reports_bad_tokens():
+    out = run_js([(INV_JS, "function invParseMacList")],
+                 "[invParseMacList('D4-3F-32-EB-2A-E0, d43f32eb2ae0 bogus;aa:bb'), "
+                 "invParseMacList(''), invParseMacList('  ')]")
+    assert out[0] == {"macs": ["d4:3f:32:eb:2a:e0"], "bad": ["bogus", "aa:bb"]}
+    assert out[1] == {"macs": [], "bad": []} and out[2] == {"macs": [], "bad": []}
+
+
+@needs_node
+def test_format_prop_value_for_the_drawer():
+    out = run_js([(INV_JS, "const INV_NETWORK_ROLES"), (INV_JS, "function invFormatPropValue")],
+                 "[invFormatPropValue({type: 'select', options: INV_NETWORK_ROLES}, 'ap'), "
+                 "invFormatPropValue({type: 'select', options: INV_NETWORK_ROLES}, 'weird'), "
+                 "invFormatPropValue({type: 'maclist'}, ['a', 'b']), "
+                 "invFormatPropValue({type: 'maclist'}, []), "
+                 "invFormatPropValue({type: 'bool'}, false), "
+                 "invFormatPropValue({type: 'int'}, 16), "
+                 "invFormatPropValue({type: 'string'}, '')]")
+    assert out == ["Access point", "weird", "a, b", None, "No", "16", None]
+
+
+def test_inventory_form_uses_prop_defs_everywhere():
+    src = open(INV_JS, encoding="utf-8").read()
+    for fn in ("function onInvTypeChange", "async function submitInventory",
+               "function renderInventoryDrawer"):
+        assert "invPropDefs(" in js_part(INV_JS, fn), fn
+    assert "invParseMacList(" in js_part(INV_JS, "async function submitInventory")
+    assert "p.type === \"select\"" in js_part(INV_JS, "function onInvTypeChange")
