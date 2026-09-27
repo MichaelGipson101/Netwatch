@@ -132,3 +132,31 @@ def test_empty_state_links_to_connections_and_reset_button_has_an_id():
         html = f.read()
     assert 'id="topo-reset-btn"' in html
     assert "getElementById('topo-reset-btn')" in _src()
+
+
+# ── Task 5: tree layout wiring ───────────────────────────────────────────────
+
+def test_tree_layout_is_wired():
+    src = _src()
+    for name in ("function _layoutTree(", "function _topoTreePath(",
+                 "function _topoAddCollapseControls(", "function setTopoLayout(",
+                 "function syncTopoLayoutControls(", "function topologyToggleCollapse(",
+                 "function topoLoadCollapsed("):
+        assert name in src, name
+    render = src[src.index("function renderTopologyWeb("):src.index("function _topoBuildScene(")]
+    assert "topoBuildForest(" in render and "_layoutTree(ctx)" in render
+    tree = src[src.index("function _layoutTree("):src.index("function _topoTreePath(")]
+    for needle in ("topoTreePositions(", "topoTreeOrientation(", "_topoObserveResize(",
+                   "fitTopologyToView"):
+        assert needle in tree, needle
+    for forbidden in ("d3.drag", "saveTopoPosition", "saveTopoLastLayout", "forceSimulation"):
+        assert forbidden not in tree, forbidden          # tree never pins or overwrites Force state
+    init = src[src.index("async function initTopologyWeb("):src.index("async function fetchAndRenderTopologyWeb(")]
+    assert "syncTopoLayoutControls()" in init
+
+
+def test_toolbar_has_the_segmented_layout_control():
+    with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
+        html = f.read()
+    assert 'id="topo-layout-force"' in html and 'id="topo-layout-tree"' in html
+    assert "setTopoLayout('tree')" in html and "setTopoLayout('force')" in html

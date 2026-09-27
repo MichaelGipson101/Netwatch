@@ -274,6 +274,7 @@ function setTopoView(view){
 }
 
 async function initTopologyWeb(){
+  syncTopoLayoutControls();
   const container = document.getElementById('topo-web-svg-host');
   if(!container) return;
   // Show a loading message while D3 loads + data fetches
@@ -320,8 +321,15 @@ function renderTopologyWeb(){
     return;
   }
   _topoUserAdjusted = false;
-  const ctx = _topoBuildScene(container, scene.nodes, scene.edges, scene.ghosts);
-  _layoutForce(ctx);
+  let nodes = scene.nodes, forest = null;
+  if(_topoLayout === 'tree'){
+    forest = topoBuildForest(nodes, scene.edges, topoLoadCollapsed());
+    const vis = new Set(forest.visible);
+    nodes = nodes.filter(n => vis.has(n.id));   // collapsed subtrees aren't drawn
+  }
+  const ctx = _topoBuildScene(container, nodes, scene.edges, scene.ghosts);
+  ctx.forest = forest;
+  if(forest) _layoutTree(ctx); else _layoutForce(ctx);
   _topoLastStatus = {};
   ctx.renderNodes.forEach(n => { _topoLastStatus[n.id] = n.status; });
 }
@@ -655,6 +663,102 @@ function _topoArcPath(d){
   const dr = Math.sqrt(dx*dx + dy*dy) * 1.8;
   return 'M' + d.source.x + ',' + d.source.y
     + 'A' + dr + ',' + dr + ' 0 0,1 ' + d.target.x + ',' + d.target.y;
+}
+
+function topoLoadCollapsed(){
+  return topoParseCollapsed(localStorage.getItem(TOPO_COLLAPSED_KEY));
+}
+
+function topologyToggleCollapse(id, collapsed){
+  const prefs = topoLoadCollapsed();
+  prefs[String(id)] = !!collapsed;
+  localStorage.setItem(TOPO_COLLAPSED_KEY, JSON.stringify(prefs));
+  renderTopologyWeb();
+}
+
+function setTopoLayout(layout){
+  _topoLayout = layout === 'tree' ? 'tree' : 'force';
+  localStorage.setItem(TOPO_LAYOUT_KEY, _topoLayout);
+  syncTopoLayoutControls();
+  if(_topoView === 'web') renderTopologyWeb();
+}
+
+function syncTopoLayoutControls(){
+  const f = document.getElementById('topo-layout-force');
+  const t = document.getElementById('topo-layout-tree');
+  if(f){ f.classList.toggle('active', _topoLayout === 'force'); f.setAttribute('aria-pressed', String(_topoLayout === 'force')); }
+  if(t){ t.classList.toggle('active', _topoLayout === 'tree');  t.setAttribute('aria-pressed', String(_topoLayout === 'tree')); }
+  const reset = document.getElementById('topo-reset-btn');
+  if(reset) reset.style.display = _topoLayout === 'tree' ? 'none' : '';   // pinning is Force-only
+}
+
+function _layoutTree(ctx){
+  const orient = topoTreeOrientation(ctx.width, ctx.height);
+  _topoTreeOrient = orient;
+  const pos = topoTreePositions(ctx.forest.trees, orient);
+  ctx.renderNodes.forEach(n => {
+    const p = pos[n.id];
+    if(p){ n.x = p.x; n.y = p.y; }
+    n.fx = null; n.fy = null;           // Force pins don't apply here (and aren't touched)
+  });
+  ctx.edgeSel.classed('topo-edge-cross', d => !d.is_primary);
+  ctx.edgePath = _topoTreePath(orient);
+  _topoAddCollapseControls(ctx);
+  _topoPositionAll(ctx);
+  _topoStartFlow();
+  _topoObserveResize(ctx, (newW, newH) => {
+    if(topoTreeOrientation(newW, newH) !== _topoTreeOrient){
+      clearTimeout(_topoRelayoutTimer);   // phone rotated: lay the tree out again
+      _topoRelayoutTimer = setTimeout(() => { if(_topoView === 'web') renderTopologyWeb(); }, 250);
+    } else if(!_topoUserAdjusted){
+      fitTopologyToView();
+    }
+  });
+  requestAnimationFrame(() => { if(!_topoUserAdjusted) fitTopologyToView(); });
+  setTimeout(() => spreadOverlappingLabels(ctx.nodeSel), 120);
+}
+
+function _topoTreePath(orient){
+  // Primary edges curve along the tree's flow; cross-links (non-primary)
+  // are straight and styled faint/dashed via .topo-edge-cross.
+  return d => {
+    const s = d.source, t = d.target;
+    if(!d.is_primary) return 'M' + s.x + ',' + s.y + 'L' + t.x + ',' + t.y;
+    if(orient === 'down'){
+      const my = (s.y + t.y) / 2;
+      return 'M' + s.x + ',' + s.y + 'C' + s.x + ',' + my + ' ' + t.x + ',' + my + ' ' + t.x + ',' + t.y;
+    }
+    const mx = (s.x + t.x) / 2;
+    return 'M' + s.x + ',' + s.y + 'C' + mx + ',' + s.y + ' ' + mx + ',' + t.y + ' ' + t.x + ',' + t.y;
+  };
+}
+
+function _topoAddCollapseControls(ctx){
+  const info = ctx.forest.info;
+  ctx.nodeSel.each(function(d){
+    const f = info[d.id];
+    if(!f || !f.collapsible) return;
+    const sel = d3.select(this);
+    const r = nodeRadiusFor(d);
+    const btn = sel.append('g')
+      .attr('class', 'topo-collapse-btn')
+      .attr('transform', 'translate(' + (r - 2) + ',' + (-r + 2) + ')')
+      .attr('role', 'button')
+      .attr('aria-label', f.collapsed ? 'Expand' : 'Collapse')
+      .on('click', ev => { ev.stopPropagation(); topologyToggleCollapse(d.id, !f.collapsed); });
+    btn.append('circle').attr('r', 9);
+    btn.append('text').attr('dy', '0.35em').text(f.collapsed ? '⊞' : '⊟');
+    if(f.collapsed && f.hidden > 0){
+      const label = '+' + f.hidden + (f.guestPill ? ' guests' : '');
+      const pill = sel.append('g')
+        .attr('class', 'topo-hidden-pill')
+        .attr('transform', 'translate(0,' + (r + 34) + ')')
+        .on('click', ev => { ev.stopPropagation(); topologyToggleCollapse(d.id, false); });
+      const w = 12 + label.length * 6.2;
+      pill.append('rect').attr('x', -w / 2).attr('y', -9).attr('width', w).attr('height', 18).attr('rx', 9);
+      pill.append('text').attr('dy', '0.35em').text(label);
+    }
+  });
 }
 
 function nodeRadiusFor(d){

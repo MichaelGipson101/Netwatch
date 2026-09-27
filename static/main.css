@@ -118,6 +118,16 @@ nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:
 .topo-view-btn-ghost{border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;padding:5px 10px}
 .topo-view-btn-ghost:hover{background:var(--subtle);color:var(--text)}
 .topo-web-controls{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--muted)}
+.topo-layout-toggle{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.topo-layout-toggle .topo-view-btn{border:0;border-radius:0}
+.topo-edge-cross .topo-edge-line{stroke-dasharray:3,4;opacity:.35}
+.topo-edge-cross .topo-edge-flow{display:none}
+.topo-collapse-btn{cursor:pointer}
+.topo-collapse-btn circle{fill:var(--surface);stroke:var(--border)}
+.topo-collapse-btn text{font-size:12px;text-anchor:middle;fill:var(--text);pointer-events:none}
+.topo-hidden-pill{cursor:pointer}
+.topo-hidden-pill rect{fill:var(--surface);stroke:var(--border)}
+.topo-hidden-pill text{font-size:10px;text-anchor:middle;fill:var(--muted);pointer-events:none}
 .topo-web-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .topo-web-toggle input{cursor:pointer}
 .topo-uncon-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint)}

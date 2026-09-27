@@ -315,6 +315,10 @@
         <span class="topo-fs-label">Fullscreen</span>
       </button>
       <div class="topo-web-controls" id="topo-web-controls">
+        <div class="topo-layout-toggle" role="group" aria-label="Layout">
+          <button type="button" class="topo-view-btn" id="topo-layout-force" onclick="setTopoLayout('force')">Force</button>
+          <button type="button" class="topo-view-btn" id="topo-layout-tree" onclick="setTopoLayout('tree')">Tree</button>
+        </div>
         <label class="topo-web-toggle">
           <input type="checkbox" onchange="topologyToggleUnconnected(this.checked)">
           Include unconnected <span id="topo-uncon-count" class="topo-uncon-count"></span>
