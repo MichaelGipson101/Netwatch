@@ -910,7 +910,21 @@ class InventoryDB:
             )
             if cur.rowcount == 0:
                 return False, "record not found"
+        self._relint_around(inv_id)
         return True, None
+
+    def _relint_around(self, inv_id):
+        """After a record edit (port_count, device_type, network_role...),
+        drift on edges touching it may be fixed. Best effort: a relint
+        failure must never fail the edit itself."""
+        try:
+            parents = {inv_id} | {e["parent_id"]
+                                  for e in self.list_connections_for_device(inv_id)}
+            now = int(time.time())
+            for pid in parents:
+                self.relint_parent(pid, now)
+        except Exception as e:
+            logging.warning(f"InventoryDB: relint after edit failed: {type(e).__name__}")
 
     # ─── Connections (inventory_connections table) ──────────────────────────
     # Connection types we accept. Anything else gets coerced to "ethernet".
@@ -1095,7 +1109,8 @@ class InventoryDB:
         with self.lock:
             rows = self.conn.execute(
                 "SELECT c.id, c.to_port, i.id, i.system FROM inventory_connections c "
-                "JOIN inventory i ON i.id = c.from_device_id WHERE c.to_device_id = ?",
+                "JOIN inventory i ON i.id = c.from_device_id WHERE c.to_device_id = ? "
+                "AND c.connection_type != 'wifi'",
                 (device_id,)).fetchall()
         for cid, port, iid, name in rows:
             p = canonical_port(port, ports)
@@ -1269,9 +1284,21 @@ class InventoryDB:
             raw_notes = data.get("notes")
             notes = (str(raw_notes).strip() if raw_notes is not None else "") or None
             changed = True
+        port_cleared = False
+        if ("connection_type" in data and ctype == "wifi"
+                and parent_port is not None and not port_touched):
+            # A wifi link has no parent port: switching the type to wifi drops
+            # the old switch port rather than leaving it behind. An edge that
+            # was already wifi (legacy bad data) is untouched here - clearing
+            # its stale port is a deliberate edit, not a side effect of
+            # editing something else.
+            parent_port = None
+            port_cleared = True
         if not changed:
             return False, "no fields to update", []
         warnings = []
+        if port_cleared:
+            warnings.append("parent_port_cleared")
         if port_touched:
             if ctype == "wifi":
                 if parent_port is not None:
@@ -1292,7 +1319,8 @@ class InventoryDB:
                 "from_port = ?, to_port = ?, connection_type = ?, notes = ?, "
                 "source = 'manual', updated_at = ? WHERE id = ?",
                 (child_id, parent_id, child_port, parent_port, ctype, notes, now, conn_id))
-        self.relint_parent(parent_id, now)
+        self.relint_parent(parent_id, now,
+                           confirmed={conn_id} if data.get("swap") else None)
         if parent_id != existing["to_device_id"]:
             self.relint_parent(existing["to_device_id"], now)
         return True, None, warnings
@@ -1310,9 +1338,12 @@ class InventoryDB:
             self.relint_parent(existing["to_device_id"], now)
         return True, None
 
-    def relint_parent(self, parent_id, now=None):
+    def relint_parent(self, parent_id, now=None, confirmed=None):
         """Resolve migration drift for edges on this parent that are now
-        clean. Only resolves; new drift comes from migration/discovery."""
+        clean. Only resolves; new drift comes from migration/discovery.
+
+        `confirmed`: edge ids whose direction the user just chose explicitly
+        (a swap) - an ambiguous orientation no longer counts against them."""
         now = int(now or time.time())
         parent = self.get(parent_id)
         if parent is None:
@@ -1323,7 +1354,8 @@ class InventoryDB:
                 continue
             child = self.get(row["from_device_id"])
             issues = lint_edge(row, child, parent, ports)
-            if orient_edge(child, parent, row["connection_type"])[2]:
+            if (orient_edge(child, parent, row["connection_type"])[2]
+                    and row["id"] not in (confirmed or ())):
                 issues.append("ambiguous_direction")
             port = normalize_port(row["to_port"])
             if (port is not None and row["connection_type"] != "wifi"
