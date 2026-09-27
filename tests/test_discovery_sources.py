@@ -630,3 +630,140 @@ def test_unreadable_guest_config_holds_that_guest_only():
     assert ch["resolve"] == ["device:proxmox:prodesk1:777"]
     assert "drift:stale:conn:60" not in keys(ch)
     assert "device:proxmox:prodesk1:301" in keys(ch)     # other guests still work
+
+
+# ── Task 6: storage - accepting Proxmox suggestions ──────────────────────────
+
+from netwatch.storage import HistoryDB, InventoryDB
+
+
+def make_idb(tmpdir):
+    hdb = HistoryDB(os.path.join(tmpdir, "sources_test.db"))
+    return hdb, InventoryDB(hdb)
+
+
+def add_device(idb, system, device_type="host", mac=None, ip=None, **props):
+    data = {"system": system, "device_type": device_type, "properties": props or None}
+    if mac:
+        data["mac"] = mac
+    if ip:
+        data["ip"] = ip
+    new_id, err = idb.create(data)
+    assert err is None, err
+    return new_id
+
+
+def insert_edge(idb, child, parent, ctype="ethernet", to_port=None, source="manual"):
+    with idb.lock:
+        cur = idb.conn.execute(
+            "INSERT INTO inventory_connections (from_device_id, to_device_id, to_port, "
+            "connection_type, created_at, source) VALUES (?, ?, ?, ?, 0, ?)",
+            (child, parent, to_port, ctype, source))
+        return cur.lastrowid
+
+
+def pending_suggestion(idb, kind, source, key, payload):
+    idb.apply_discovery_changes({"upserts": [{"kind": kind, "source": source,
+                                              "subject_key": key, "payload": payload,
+                                              "fp": "f" * 16}]}, NOW)
+    return next(s for s in idb.suggestions.list("pending") if s["subject_key"] == key)
+
+
+def test_accept_guest_device_saves_vm_properties_and_a_virtual_edge():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        node = add_device(idb, "HP Prodesk 405 G6 Mini", ip="192.168.6.219")
+        s = pending_suggestion(idb, "device", "proxmox", "device:proxmox:prodesk1:301", {
+            "device": {"system": "Minecraft", "mac": MC_MAC, "ip": None, "device_type": "vm",
+                       "category": "Virtual Machine",
+                       "properties": {"guest_type": "lxc", "proxmox_node": "prodesk1",
+                                      "proxmox_vmid": 301, "vcpu_count": 2}},
+            "edge": {"parent_id": node, "parent_name": "HP Prodesk 405 G6 Mini",
+                     "parent_port": None, "child_port": None, "connection_type": "virtual",
+                     "source": "proxmox", "external_key": "proxmox:guest:prodesk1:301"},
+            "message": "Minecraft (LXC 301 on prodesk1) isn't in inventory"})
+        ok, err, res = idb.accept_suggestion(s["id"], s["fingerprint"])
+        assert ok, (err, res)
+        vm = idb.get(res["device_id"])
+        assert (vm["device_type"], vm["category"], vm["mac"]) == ("vm", "Virtual Machine", MC_MAC)
+        assert vm["properties"]["proxmox_vmid"] == 301
+        assert vm["properties"]["guest_type"] == "lxc"
+        [c] = [c for c in idb.list_all_connections() if c["from_device_id"] == res["device_id"]]
+        assert (c["to_device_id"], c["connection_type"], c["source"], c["external_key"]) == (
+            node, "virtual", "proxmox", "proxmox:guest:prodesk1:301")
+        hdb.close()
+
+
+def test_accept_virtual_edge_ignores_network_links_but_not_a_second_virtual_edge():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        vm = add_device(idb, "Home Assistant OS", "vm", mac=HA_MAC)
+        node = add_device(idb, "HP EliteDesk 800 G3 Mini")
+        other = add_device(idb, "HP Prodesk 405 G6 Mini")
+        sw = add_device(idb, "USW", "network")
+        insert_edge(idb, vm, sw, ctype="ethernet")         # someone drew the VM on the switch
+        payload = {"child_id": vm, "child_name": "Home Assistant OS", "parent_id": node,
+                   "parent_name": "HP EliteDesk 800 G3 Mini", "parent_port": None,
+                   "child_port": None, "connection_type": "virtual", "source": "proxmox",
+                   "external_key": "proxmox:guest:pve:108", "message": "m"}
+        s = pending_suggestion(idb, "edge", "proxmox", "edge:proxmox:pve:108", payload)
+        ok, err, _ = idb.accept_suggestion(s["id"], s["fingerprint"])
+        assert ok, err
+        s2 = pending_suggestion(idb, "edge", "proxmox", "edge:proxmox:prodesk1:108",
+                                dict(payload, parent_id=other,
+                                     external_key="proxmox:guest:prodesk1:108"))
+        ok, err, _ = idb.accept_suggestion(s2["id"], s2["fingerprint"])
+        assert (ok, err) == (False, "suggestion_changed")
+        hdb.close()
+
+
+def test_accept_proxmox_node_identity_sets_the_property_once():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        a = add_device(idb, "HP EliteDesk 800 G3 Mini", mac=NODE_PVE_MAC)
+        b = add_device(idb, "Spare box")
+        payload = {"proxmox_node": "pve", "node_ip": "192.168.4.237", "candidate_id": a,
+                   "candidate_name": "HP EliteDesk 800 G3 Mini", "message": "m"}
+        s = pending_suggestion(idb, "identity", "proxmox", "identity:proxmox-node:pve", payload)
+        ok, err, res = idb.accept_suggestion(s["id"], s["fingerprint"])
+        assert (ok, res) == (True, {"device_id": a}), err
+        assert idb.get(a)["properties"]["proxmox_node"] == "pve"
+        s2 = pending_suggestion(idb, "identity", "proxmox", "identity:proxmox-node:pve#2",
+                                dict(payload, candidate_id=b, candidate_name="Spare box"))
+        ok, err, res = idb.accept_suggestion(s2["id"], s2["fingerprint"])
+        assert (ok, err) == (False, "rejected")
+        assert "already Proxmox node pve" in res["error"]
+        hdb.close()
+
+
+def test_accept_proxmox_node_identity_ignores_vm_records_holding_the_node_name():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        # A VM record with properties.proxmox_node="pve" means "runs on node
+        # pve", not "is node pve" - it must never block accepting the pve
+        # identity for the actual EliteDesk host.
+        a = add_device(idb, "HP EliteDesk 800 G3 Mini", mac=NODE_PVE_MAC)
+        add_device(idb, "Minecraft", device_type="vm", proxmox_node="pve", proxmox_vmid=301)
+        payload = {"proxmox_node": "pve", "node_ip": "192.168.4.237", "candidate_id": a,
+                   "candidate_name": "HP EliteDesk 800 G3 Mini", "message": "m"}
+        s = pending_suggestion(idb, "identity", "proxmox", "identity:proxmox-node:pve", payload)
+        ok, err, res = idb.accept_suggestion(s["id"], s["fingerprint"])
+        assert ok, (err, res)
+        assert idb.get(a)["properties"]["proxmox_node"] == "pve"
+        hdb.close()
+
+
+def test_scan_fills_missing_guest_properties_without_overwriting():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        vm = add_device(idb, "Sun Solaris", "vm", proxmox_vmid=116)
+        with idb.lock:  # a user-recorded node the scan must not overwrite
+            idb.conn.execute("UPDATE inventory SET properties = ? WHERE id = ?",
+                             ('{"proxmox_vmid": 116, "proxmox_node": "prodesk1"}', vm))
+        idb.apply_discovery_changes({"props": [
+            {"id": vm, "set": {"guest_type": "qemu", "proxmox_node": "pve",
+                               "proxmox_vmid": 116}},
+            {"id": 99999, "set": {"guest_type": "lxc"}}]}, NOW)
+        props = idb.get(vm)["properties"]
+        assert props == {"proxmox_vmid": 116, "proxmox_node": "prodesk1", "guest_type": "qemu"}
+        hdb.close()

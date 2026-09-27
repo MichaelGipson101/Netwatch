@@ -1394,6 +1394,25 @@ class InventoryDB:
                             "UPDATE inventory_connections SET last_seen = ?, to_port = ?, "
                             "updated_at = ? WHERE id = ? AND source != 'manual'",
                             (now, t["parent_port"], now, t["id"]))
+                for pf in changes.get("props", []):
+                    # Spec §1.5: fill managed guest properties Proxmox knows,
+                    # never overwrite anything already recorded.
+                    row = self.conn.execute(
+                        "SELECT properties FROM inventory WHERE id = ?", (pf["id"],)).fetchone()
+                    if row is None:
+                        continue
+                    try:
+                        props = json.loads(row[0]) if row[0] else {}
+                    except ValueError:
+                        continue
+                    if not isinstance(props, dict):
+                        continue
+                    missing = {k: v for k, v in pf["set"].items() if props.get(k) in (None, "")}
+                    if missing:
+                        props.update(missing)
+                        self.conn.execute(
+                            "UPDATE inventory SET properties = ?, updated_at = ? WHERE id = ?",
+                            (json.dumps(props), now, pf["id"]))
                 self.conn.execute("COMMIT")
             except BaseException:
                 self._rollback_quietly()
@@ -1528,9 +1547,14 @@ class InventoryDB:
         if not (self._device_exists_locked(p["child_id"])
                 and self._device_exists_locked(p["parent_id"])):
             raise _SuggestionChanged()
-        # A device has at most one network link - regardless of which parent
-        # it's already wired to, a second one would create a phantom uplink.
-        if self._has_network_link_locked(p["child_id"], as_child=True):
+        # One edge per conflict family: a device has at most one network link
+        # (a second would be a phantom uplink), and a guest runs on one node.
+        if p["connection_type"] in NETWORK_LINK_TYPES:
+            if self._has_network_link_locked(p["child_id"], as_child=True):
+                raise _SuggestionChanged()
+        elif self.conn.execute(
+                "SELECT 1 FROM inventory_connections WHERE from_device_id = ? AND "
+                "connection_type = ?", (p["child_id"], p["connection_type"])).fetchone():
             raise _SuggestionChanged()
         cid = self._insert_connection_locked(
             p["child_id"], p["parent_id"], p.get("child_port"), p.get("parent_port"),
@@ -1557,10 +1581,12 @@ class InventoryDB:
         if not self._device_exists_locked(e["parent_id"]):
             raise _SuggestionChanged()
         category = str(dev.get("category") or "").strip() or None
+        props = dev.get("properties")
+        props_json = json.dumps(props) if isinstance(props, dict) and props else None
         cur = self.conn.execute(
             "INSERT INTO inventory (category, system, device_type, mac, ip, properties, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
-            (category, system, dtype, mac, dev.get("ip"), now, now))
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (category, system, dtype, mac, dev.get("ip"), props_json, now, now))
         device_id = cur.lastrowid
         cid = self._insert_connection_locked(
             device_id, e["parent_id"], e.get("child_port"), e.get("parent_port"),
@@ -1637,6 +1663,26 @@ class InventoryDB:
             props = None
         if not isinstance(props, dict):
             raise _SuggestionRejected("that device's properties are unreadable; fix them first")
+        if p.get("proxmox_node"):
+            name = str(p["proxmox_node"])
+            # A VM record carrying properties.proxmox_node means "runs on
+            # node X", not "is node X" - it never blocks the node identity.
+            for system, dtype, raw in self.conn.execute(
+                    "SELECT system, device_type, properties FROM inventory WHERE id != ? AND "
+                    "properties LIKE ?", (target, '%"proxmox_node"%')).fetchall():
+                if dtype == "vm":
+                    continue
+                try:
+                    other = json.loads(raw) if raw else {}
+                except ValueError:
+                    continue
+                if isinstance(other, dict) and other.get("proxmox_node") == name:
+                    raise _SuggestionRejected(f"{system} is already Proxmox node {name}")
+            props["proxmox_node"] = name
+            self.conn.execute(
+                "UPDATE inventory SET properties = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(props), now, target))
+            return {"device_id": target}
         mac = self.normalize_mac(p["chassis_mac"])
         conflict = self._mac_conflict_locked(mac, exclude_id=target)
         if conflict is not None:
