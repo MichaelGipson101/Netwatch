@@ -359,6 +359,7 @@ class ProxmoxPoller:
         self._alert_state = {}    # condition_id -> bool (True = currently alerting)
         self._exemptions = {}     # vmid (int) -> float timestamp (exempt until)
         self._node_history = {}   # node name -> {"cpu": [...], "mem": [...]}
+        self._last_ok_at = None   # epoch of the last successful poll (discovery freshness)
 
     @staticmethod
     def append_history(history, nodes, cap=20):
@@ -392,6 +393,31 @@ class ProxmoxPoller:
             data.get("proxmox_token_id", ""),
             data.get("proxmox_token_secret", ""),
         )
+
+    def configured(self):
+        return all(self._get_config())
+
+    def api_get(self, path):
+        """GET one API path with this poller's token and TLS settings. The
+        discovery source reuses them rather than keeping its own copy."""
+        url, user, token_id, token_secret = self._get_config()
+        if not all([url, user, token_id, token_secret]):
+            raise RuntimeError("Proxmox not configured")
+        return self._fetch(url, user, token_id, token_secret, path)
+
+    def fresh_nodes(self, max_age=300):
+        """The cached node/guest list if a poll succeeded within max_age
+        seconds, polling once first if not (the poll thread only runs when
+        Proxmox was configured at startup). None when there's no fresh data."""
+        with self._lock:
+            ok_at = self._last_ok_at
+        if ok_at is None or time.time() - ok_at > max_age:
+            self._poll()
+        import copy
+        with self._lock:
+            if self._last_ok_at is None or time.time() - self._last_ok_at > max_age:
+                return None
+            return copy.deepcopy(self._cache["nodes"])
 
     def _make_ssl_ctx(self):
         import ssl
@@ -530,6 +556,7 @@ class ProxmoxPoller:
                 nodes.append(self._build_node(raw, qemu, lxc))
             now_str = datetime.now().isoformat(timespec="seconds")
             with self._lock:
+                self._last_ok_at = time.time()
                 prev_nodes = self._cache.get("nodes", [])
                 self.append_history(self._node_history, nodes)
                 self._cache.update({
