@@ -1921,3 +1921,23 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
   .cx-edit-actions .btn{flex:1 1 auto}
 }
 .cx-table-empty{padding:14px 4px}
+
+/* Suggestions inbox */
+.cx-sgroup+.cx-sgroup{margin-top:16px}
+.cx-sgroup-hdr{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cx-sgroup-hdr h3{margin:0;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.cx-ssource{border:1px solid var(--border-light);border-radius:10px;background:var(--subtle);padding:2px 12px;margin-bottom:8px}
+.cx-ssource-hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;font:500 11px 'DM Mono',monospace;color:var(--hint)}
+.cx-accept-all{padding:4px 8px}
+.cx-sugg{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 0;border-top:1px solid var(--border-light)}
+.cx-sugg-text{flex:1 1 220px;min-width:0;margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.cx-sugg-actions{display:flex;gap:6px;flex-shrink:0}
+.cx-sugg-edit,.cx-sugg-pick{flex-basis:100%}
+.cx-sugg-edit summary{cursor:pointer;font-size:12px;color:var(--blue);width:max-content}
+.cx-sugg-edit-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.cx-empty{padding:14px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:13px;text-align:center}
+@media (max-width:600px){
+  .cx-sugg-actions{flex-basis:100%}
+  .cx-sugg-actions .btn{flex:1 1 0}
+  .cx-sugg-edit-grid{grid-template-columns:minmax(0,1fr)}
+}

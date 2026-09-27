@@ -133,6 +133,7 @@ async function cxRefreshAll(){
 
 function cxRender(){
   renderCxStatus();
+  renderCxSuggestions();
   renderCxTable();
 }
 
@@ -552,4 +553,251 @@ function cxHighlightConnection(id, opts){
   _cxState.highlightConn = id;
   if(opts && opts.edit) cxStartEdit(id);
   else cxRenderTableRows({force: true});
+}
+
+// ── Suggestions inbox (spec §5.3) ───────────────────────────────────────────
+
+const CX_KIND_ORDER = ['device', 'edge', 'drift', 'identity', 'shared_port'];
+const CX_KIND_LABELS = {device: 'New devices', edge: 'New connections', drift: 'Drift',
+                        identity: 'Identity', shared_port: 'Shared ports'};
+// Drift and identity are always decided one at a time (spec §5.3).
+const CX_BULK_KINDS = ['device', 'edge', 'shared_port'];
+
+function cxGroupSuggestions(items){
+  const groups = [];
+  CX_KIND_ORDER.forEach(kind => {
+    const mine = (items || []).filter(s => s.kind === kind);
+    if(!mine.length) return;
+    const bySource = {};
+    mine.forEach(s => { (bySource[s.source] = bySource[s.source] || []).push(s); });
+    groups.push({
+      kind: kind, label: CX_KIND_LABELS[kind], count: mine.length,
+      bulk: CX_BULK_KINDS.indexOf(kind) !== -1,
+      sources: Object.keys(bySource).sort().map(src => ({
+        source: src, label: CX_SOURCE_LABELS[src] || src, items: bySource[src]})),
+    });
+  });
+  return groups;
+}
+
+function cxSuggestionActions(s){
+  const p = s.payload || {};
+  switch(s.kind){
+    case 'device':
+    case 'edge':
+      return [['accept', 'Accept', true], ['dismiss', 'Dismiss', false]];
+    case 'shared_port':
+      return [['accept', 'Create placeholder', true], ['dismiss', 'Dismiss', false]];
+    case 'identity':
+      return [['accept', p.candidate_id !== null && p.candidate_id !== undefined ? 'Yes' : 'That\'s the one', true],
+              ['dismiss', 'No', false]];
+    case 'drift':
+      if(p.action === 'replace') return [['accept', 'Replace', true], ['dismiss', 'Keep mine', false]];
+      if(p.action === 'remove') return [['accept', 'Remove', true], ['dismiss', 'Keep it', false]];
+      return [['fix', 'Fix…', true], ['dismiss', 'Mark reviewed', false]];
+    default:
+      return [['dismiss', 'Dismiss', false]];
+  }
+}
+
+function cxSuggestionText(s){
+  const p = s.payload || {};
+  if(s.source === 'migration'){
+    return (p.child_name || '?') + ' → ' + (p.parent_name || '?') + ': ' + (p.message || 'needs review');
+  }
+  return p.message || (s.kind + ' suggestion');
+}
+
+function cxDoneMessage(s, action){
+  if(action === 'dismiss') return s.kind === 'drift' ? 'Kept your version' : 'Dismissed';
+  if(s.kind === 'drift') return (s.payload || {}).action === 'remove' ? 'Connection removed' : 'Connection updated';
+  const msgs = {device: 'Device added', edge: 'Connection added', identity: 'Device identified',
+                shared_port: 'Placeholder switch created'};
+  return msgs[s.kind] || 'Done';
+}
+
+// Accept-all can't carry per-item edits, so hand-edited device suggestions
+// are left out (the user is told) rather than accepted without their edits.
+function cxBulkItems(items, kind, source, drafts){
+  const send = [];
+  let skipped = 0;
+  (items || []).forEach(s => {
+    if(s.kind !== kind || s.source !== source) return;
+    const d = (drafts || {})[s.id] || {};
+    const edited = ['system', 'device_type', 'category', 'device_id'].some(k => d[k] !== undefined);
+    if(edited){ skipped++; return; }
+    send.push({id: s.id, fingerprint: s.fingerprint});
+  });
+  return {send: send, skipped: skipped};
+}
+
+function cxFindSuggestion(id){
+  return ((_cxState.suggestions && _cxState.suggestions.items) || []).find(s => s.id === id) || null;
+}
+
+function cxDeviceEditorHtml(s){
+  const dev = (s.payload || {}).device || {};
+  const d = _cxState.drafts[s.id] || {};
+  const val = k => (d[k] !== undefined ? d[k] : (dev[k] || ''));
+  const types = typeof INV_TYPE_ORDER !== 'undefined' ? INV_TYPE_ORDER : ['host', 'vm', 'network'];
+  const curType = val('device_type') || 'host';
+  return '<details class="cx-sugg-edit"' + (d.open ? ' open' : '') + ' data-sid="' + s.id + '">'
+    + '<summary>Edit before adding</summary><div class="cx-sugg-edit-grid">'
+    + '<label class="qa-field"><span>Name</span><input type="text" data-draft="system" value="' + escapeHtml(val('system')) + '"></label>'
+    + '<label class="qa-field"><span>Type</span><select data-draft="device_type">'
+      + types.map(t => '<option value="' + t + '"' + (t === curType ? ' selected' : '') + '>' + t + '</option>').join('')
+    + '</select></label>'
+    + '<label class="qa-field"><span>Category</span><input type="text" data-draft="category" list="cx-cat-list" value="'
+      + escapeHtml(val('category')) + '"></label>'
+    + '</div></details>';
+}
+
+function cxIdentityPickerHtml(s){
+  const d = _cxState.drafts[s.id] || {};
+  return '<label class="qa-field cx-sugg-pick"><span>Which device is it?</span><select data-draft="device_id">'
+    + '<option value="">Choose a device…</option>'
+    + (_cxState.inventory || []).map(i => '<option value="' + i.id + '"' + (String(i.id) === String(d.device_id || '') ? ' selected' : '') + '>'
+      + escapeHtml(i.system) + ' (' + escapeHtml(i.device_type || 'host') + ')</option>').join('')
+    + '</select></label>';
+}
+
+function cxSuggestionHtml(s){
+  const busy = !!_cxState.busy[s.id];
+  const p = s.payload || {};
+  let extra = '';
+  if(s.kind === 'device') extra = cxDeviceEditorHtml(s);
+  if(s.kind === 'identity' && (p.candidate_id === null || p.candidate_id === undefined)) extra = cxIdentityPickerHtml(s);
+  return '<div class="cx-sugg" data-sid="' + s.id + '">'
+    + '<p class="cx-sugg-text">' + escapeHtml(cxSuggestionText(s)) + '</p>'
+    + extra
+    + '<div class="cx-sugg-actions">'
+    + cxSuggestionActions(s).map(a =>
+        '<button type="button" class="btn' + (a[2] ? ' btn-primary' : ' btn-ghost') + '"' + (busy ? ' disabled' : '')
+        + ' onclick="cxSuggestionAction(' + s.id + ', \'' + a[0] + '\')">' + escapeHtml(a[1]) + '</button>').join('')
+    + '</div></div>';
+}
+
+function cxInitSuggestionEvents(el){
+  if(el.dataset.wired) return;
+  el.dataset.wired = '1';
+  const sync = e => {
+    const f = e.target.closest('[data-draft]');
+    const item = e.target.closest('.cx-sugg');
+    if(!f || !item) return;
+    const id = Number(item.dataset.sid);
+    _cxState.drafts[id] = Object.assign({}, _cxState.drafts[id], {[f.dataset.draft]: f.value});
+  };
+  el.addEventListener('input', sync);
+  el.addEventListener('change', sync);
+  // <details> toggle doesn't bubble; listen in the capture phase.
+  el.addEventListener('toggle', e => {
+    const det = e.target;
+    if(!det.classList || !det.classList.contains('cx-sugg-edit')) return;
+    const id = Number(det.dataset.sid);
+    _cxState.drafts[id] = Object.assign({}, _cxState.drafts[id], {open: det.open});
+  }, true);
+}
+
+function renderCxSuggestions(){
+  const el = document.getElementById('cx-suggestions');
+  const countEl = document.getElementById('cx-sugg-count');
+  if(!el) return;
+  cxInitSuggestionEvents(el);
+  const data = _cxState.suggestions;
+  if(!data){
+    el.innerHTML = _cxState.error ? '' : '<div class="cx-muted">Loading…</div>';
+    if(countEl) countEl.textContent = '';
+    return;
+  }
+  const items = data.items || [];
+  if(countEl) countEl.textContent = items.length ? items.length + ' pending' : '';
+  // Keep focus if the user is typing in a suggestion's editor.
+  const active = document.activeElement;
+  if(active && el.contains(active) && active.matches('input, select')) return;
+  if(!items.length){
+    el.innerHTML = '<div class="cx-empty">Nothing to review. New suggestions appear here after each discovery scan.</div>';
+    return;
+  }
+  el.innerHTML = cxGroupSuggestions(items).map(g =>
+    '<div class="cx-sgroup">'
+    + '<div class="cx-sgroup-hdr"><h3>' + escapeHtml(g.label) + '</h3><span class="cx-hdr-count">' + g.count + '</span></div>'
+    + g.sources.map(sg =>
+        '<div class="cx-ssource">'
+        + '<div class="cx-ssource-hdr"><span>' + escapeHtml(sg.label) + ' · ' + sg.items.length + '</span>'
+        + (g.bulk && sg.items.length > 1
+          ? '<button type="button" class="btn btn-ghost cx-accept-all" data-kind="' + g.kind + '" data-source="' + escapeHtml(sg.source) + '"'
+            + ' onclick="cxAcceptAll(this.dataset.kind, this.dataset.source)">Accept all</button>'
+          : '')
+        + '</div>'
+        + sg.items.map(cxSuggestionHtml).join('')
+        + '</div>').join('')
+    + '</div>').join('')
+    + '<datalist id="cx-cat-list">'
+    + (_cxState.categories || []).map(c => '<option value="' + escapeHtml(c) + '">').join('')
+    + '</datalist>';
+}
+
+async function cxSuggestionAction(id, action){
+  const s = cxFindSuggestion(id);
+  if(!s) return;
+  const p = s.payload || {};
+  if(action === 'fix'){ cxHighlightConnection(p.connection_id, {edit: true}); return; }
+  const body = {fingerprint: s.fingerprint};
+  if(action === 'accept'){
+    const d = _cxState.drafts[id] || {};
+    if(s.kind === 'device'){
+      const o = {};
+      ['system', 'device_type', 'category'].forEach(k => { if(d[k] !== undefined) o[k] = String(d[k]).trim(); });
+      if(o.system === ''){ toast('Give the device a name first', 'error'); return; }
+      body.overrides = o;
+    } else if(s.kind === 'identity' && (p.candidate_id === null || p.candidate_id === undefined)){
+      if(!d.device_id){ toast('Choose which device this is first', 'error'); return; }
+      body.overrides = {device_id: parseInt(d.device_id, 10)};
+    } else if(s.kind === 'drift'){
+      body.action = p.action;
+    }
+  }
+  _cxState.busy[id] = true;
+  renderCxSuggestions();
+  const out = await cxPost('/api/suggestions/' + id + '/' + (action === 'dismiss' ? 'dismiss' : 'accept'), body);
+  delete _cxState.busy[id];
+  if(out.status === 409){ toast('This suggestion changed — refreshed', 'info'); connectionsChanged(); return; }
+  if(!out.ok){
+    toast((action === 'dismiss' ? 'Could not dismiss: ' : 'Could not apply: ') + out.error, 'error');
+    renderCxSuggestions();
+    return;
+  }
+  delete _cxState.drafts[id];
+  toast(cxDoneMessage(s, action), 'success');
+  if(action === 'accept' && ['device', 'shared_port', 'identity'].indexOf(s.kind) !== -1){
+    qaInvalidateInventory();
+    if(typeof fetchInventory === 'function') fetchInventory();
+  }
+  connectionsChanged();
+}
+
+async function cxAcceptAll(kind, source){
+  const items = (_cxState.suggestions && _cxState.suggestions.items) || [];
+  const plan = cxBulkItems(items, kind, source, _cxState.drafts);
+  if(!plan.send.length){
+    toast('Nothing to accept in bulk: edited suggestions need accepting one at a time.', 'info');
+    return;
+  }
+  const what = (CX_KIND_LABELS[kind] || kind).toLowerCase() + ' from ' + (CX_SOURCE_LABELS[source] || source);
+  const skippedNote = plan.skipped ? ' (' + plan.skipped + ' you edited will be left for you to accept one by one)' : '';
+  if(!confirm('Accept ' + plan.send.length + ' ' + what + '?' + skippedNote)) return;
+  plan.send.forEach(it => { _cxState.busy[it.id] = true; });
+  renderCxSuggestions();
+  const out = await cxPost('/api/suggestions/accept-all', {items: plan.send});
+  plan.send.forEach(it => { delete _cxState.busy[it.id]; });
+  if(!out.ok){ toast('Could not accept: ' + out.error, 'error'); renderCxSuggestions(); return; }
+  const results = out.body.results || [];
+  const okN = results.filter(r => r.ok).length;
+  toast(okN === results.length
+    ? 'Accepted ' + okN
+    : 'Accepted ' + okN + ' of ' + results.length + '. The rest changed since you looked; they\'re refreshed below.',
+    okN === results.length ? 'success' : 'info');
+  qaInvalidateInventory();
+  if(typeof fetchInventory === 'function') fetchInventory();
+  connectionsChanged();
 }

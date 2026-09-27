@@ -675,3 +675,83 @@ def test_refresh_all_replay_does_not_requeue_a_pending_edit_that_never_appears()
     calls, pending = json.loads(r.stdout)
     assert calls == [[42, {"fromReplay": True}]]
     assert pending is None   # consumed before the replay call, not left dangling
+
+
+# ── Task 7: suggestions ─────────────────────────────────────────────────────
+
+CX_PANELS.append("renderCxSuggestions")
+
+SUGG = ("[{id: 1, kind: 'drift', source: 'migration', payload: {child_name: 'USW', parent_name: 'Eero', message: 'bad port'}},"
+        " {id: 2, kind: 'edge', source: 'unifi', payload: {message: 'VF2 is wired to USW · Port 4'}},"
+        " {id: 3, kind: 'device', source: 'unifi', payload: {device: {system: 'WORKBENCH-PC'}}},"
+        " {id: 4, kind: 'edge', source: 'proxmox', payload: {}},"
+        " {id: 5, kind: 'drift', source: 'unifi', payload: {action: 'replace'}},"
+        " {id: 6, kind: 'mystery', source: 'unifi', payload: {}}]")
+SUGG_PARTS = [(CX_JS, "const CX_SOURCE_LABELS"), (CX_JS, "const CX_KIND_ORDER"),
+              (CX_JS, "const CX_KIND_LABELS"), (CX_JS, "const CX_BULK_KINDS"),
+              (CX_JS, "function cxGroupSuggestions")]
+
+
+@needs_node
+def test_group_suggestions_by_kind_then_source():
+    out = run_js(SUGG_PARTS, f"cxGroupSuggestions({SUGG}).map(g => [g.kind, g.label, g.count, g.bulk,"
+                             f" g.sources.map(s => [s.source, s.label, s.items.map(i => i.id)])])")
+    assert out == [
+        ["device", "New devices", 1, True, [["unifi", "UniFi", [3]]]],
+        ["edge", "New connections", 2, True, [["proxmox", "Proxmox", [4]], ["unifi", "UniFi", [2]]]],
+        ["drift", "Drift", 2, False, [["migration", "Migration", [1]], ["unifi", "UniFi", [5]]]],
+    ]
+
+
+@needs_node
+def test_suggestion_actions_per_kind():
+    cases = ("[{kind: 'device'}, {kind: 'edge'}, {kind: 'shared_port'},"
+             " {kind: 'identity', payload: {candidate_id: 2}}, {kind: 'identity', payload: {candidate_id: null}},"
+             " {kind: 'drift', payload: {action: 'replace'}}, {kind: 'drift', payload: {action: 'remove'}},"
+             " {kind: 'drift', payload: {issues: ['bad_parent_port']}}]")
+    out = run_js([(CX_JS, "function cxSuggestionActions")], f"{cases}.map(cxSuggestionActions)")
+    assert out == [
+        [["accept", "Accept", True], ["dismiss", "Dismiss", False]],
+        [["accept", "Accept", True], ["dismiss", "Dismiss", False]],
+        [["accept", "Create placeholder", True], ["dismiss", "Dismiss", False]],
+        [["accept", "Yes", True], ["dismiss", "No", False]],
+        [["accept", "That's the one", True], ["dismiss", "No", False]],
+        [["accept", "Replace", True], ["dismiss", "Keep mine", False]],
+        [["accept", "Remove", True], ["dismiss", "Keep it", False]],
+        [["fix", "Fix…", True], ["dismiss", "Mark reviewed", False]],
+    ]
+
+
+@needs_node
+def test_suggestion_text_and_done_messages():
+    out = run_js([(CX_JS, "function cxSuggestionText"), (CX_JS, "function cxDoneMessage")],
+                 f"[{SUGG}.map(cxSuggestionText),"
+                 f" cxDoneMessage({{kind: 'drift', payload: {{action: 'remove'}}}}, 'accept'),"
+                 f" cxDoneMessage({{kind: 'drift', payload: {{}}}}, 'dismiss'),"
+                 f" cxDoneMessage({{kind: 'device', payload: {{}}}}, 'accept')]")
+    assert out[0][0] == "USW → Eero: bad port"
+    assert out[0][1] == "VF2 is wired to USW · Port 4"
+    assert out[0][3] == "edge suggestion"
+    assert out[1:] == ["Connection removed", "Kept your version", "Device added"]
+
+
+@needs_node
+def test_bulk_accept_skips_hand_edited_devices():
+    out = run_js([(CX_JS, "function cxBulkItems")],
+                 "cxBulkItems([{id: 3, kind: 'device', source: 'unifi', fingerprint: 'a'},"
+                 " {id: 7, kind: 'device', source: 'unifi', fingerprint: 'b'},"
+                 " {id: 8, kind: 'device', source: 'proxmox', fingerprint: 'c'}],"
+                 " 'device', 'unifi', {7: {system: 'Renamed'}, 3: {open: true}})")
+    assert out == {"send": [{"id": 3, "fingerprint": "a"}], "skipped": 1}
+
+
+@needs_node
+def test_device_editor_renders_drafts_over_the_payload():
+    prelude = ("let _cxState = {drafts: {3: {system: 'Workbench PC', open: true}}, categories: []};"
+               " const INV_TYPE_ORDER = ['host', 'vm', 'network'];")
+    html = run_js([(UTILS_JS, "function escapeHtml"), (CX_JS, "function cxDeviceEditorHtml")],
+                  "cxDeviceEditorHtml({id: 3, payload: {device: {system: 'WORKBENCH-PC', device_type: 'host'}}})",
+                  prelude=prelude)
+    assert 'value="Workbench PC"' in html and "WORKBENCH-PC" not in html
+    assert "<details class=\"cx-sugg-edit\" open" in html
+    assert '<option value="host" selected>' in html
