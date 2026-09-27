@@ -574,3 +574,223 @@ def test_reconcile_stale_needs_a_full_week_of_healthy_streak():
     edges, even if last_seen itself is more than 7 days old."""
     assert "drift:stale:conn:12" not in by_key(run(healthy_since={"unifi": NOW - DAY}))
     assert "drift:stale:conn:12" not in by_key(run(healthy_since=None))
+
+
+# ── Task 4: applying scans and accepting suggestions (storage) ──────────────
+
+from netwatch.connections import migration_drift_key
+
+
+def lab_db(d):
+    """Real DB mirroring lab_records()/lab_edges(), migrated like production."""
+    hdb, idb = make_idb(d)
+    ids = {
+        "usw": add_device(idb, "USW Pro Max 16 PoE", "network", mac=USW_MAC,
+                          network_role="switch", port_count=16),
+        "eero": add_device(idb, "Eero Pro 6E — Gateway", "network", mac=EERO_MAC,
+                           ip="192.168.4.1", network_role="gateway", port_count=2),
+        "pi5": add_device(idb, "Raspberry Pi 5", "host", mac=PI5_MAC),
+        "printer": add_device(idb, "Mystery printer", "printer", mac=SHARED_A),
+        "oldnas": add_device(idb, "Old NAS", "host", mac="00:11:22:33:44:55"),
+        "vf2": add_device(idb, "VisionFive 2", "host", mac=VF2_MAC),
+    }
+    e = {
+        "usw_eero": insert_edge(idb, ids["usw"], ids["eero"], to_port="eth0", from_port="13"),
+        "pi5_wifi": insert_edge(idb, ids["pi5"], ids["eero"], ctype="wifi"),
+    }
+    assert idb.migrate_connections_v2()[0]
+    # Inserted after the migration: the migration marks every existing edge
+    # manual, and this one must stay UniFi-sourced to exercise staleness.
+    e["oldnas"] = insert_edge(idb, ids["oldnas"], ids["usw"], to_port="Port 3", source="unifi",
+                              last_seen=NOW - 8 * DAY, external_key="unifi:port:00:11:22:33:44:55")
+    ports = snapshot()["switches"][0]["ports"]
+    idb.live_port_provider = lambda r: [dict(p) for p in ports] if r.get("mac") == USW_MAC else None
+    return hdb, idb, ids, e
+
+
+def scan(idb, now=NOW):
+    changes = reconcile(unifi_observations(snapshot()), records=idb.list_all(),
+                        edges=idb.list_all_connections(), pending=idb.suggestions.list(),
+                        healthy_sources={"unifi"}, now=now,
+                        live_ports_for=idb.live_port_provider,
+                        healthy_since={"unifi": NOW - 30 * DAY})
+    idb.apply_discovery_changes(changes, now)
+    return changes
+
+
+def pending(idb):
+    return {s["subject_key"]: s for s in idb.suggestions.list()}
+
+
+def accept(idb, key, **kw):
+    s = pending(idb)[key]
+    return idb.accept_suggestion(s["id"], s["fingerprint"], now=NOW + 1, **kw)
+
+
+def test_apply_writes_suggestions_and_touches_in_one_go():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        keys = set(pending(idb))
+        assert {f"drift:unifi:{PI5_MAC}", f"edge:unifi:{VF2_MAC}", "drift:stale:conn:%d" % e["oldnas"],
+                f"identity:lldp:{EERO_LLDP_MAC}", f"shared_port:{USW_MAC}:Port 9",
+                f"device:unifi:{WORKBENCH_MAC}", f"drift:unifi:{USW_MAC}"} <= keys
+        c = idb.get_connection(e["usw_eero"])
+        assert c["last_seen"] == NOW and c["parent_port"] == "eth0" and c["source"] == "manual"
+        hdb.close()
+
+
+def test_apply_rolls_back_on_error():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        before = idb.suggestions.count_pending()
+        bad = {"upserts": [{"kind": "edge", "source": "unifi", "subject_key": "edge:unifi:x",
+                            "payload": {}, "fp": "f"}],
+               "resolve": [], "touch": [{"id": e["usw_eero"]}]}  # missing parent_port key
+        with pytest.raises(KeyError):
+            idb.apply_discovery_changes(bad, NOW)
+        assert idb.suggestions.count_pending() == before
+        hdb.close()
+
+
+def test_accept_edge_then_rescan_is_quiet():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, res = accept(idb, f"edge:unifi:{VF2_MAC}")
+        assert ok and err is None
+        c = idb.get_connection(res["connection_id"])
+        assert (c["child_id"], c["parent_id"], c["parent_port"], c["source"], c["last_seen"]) == (
+            ids["vf2"], ids["usw"], "Port 4", "unifi", NOW + 1)
+        scan(idb, NOW + 60)
+        assert f"edge:unifi:{VF2_MAC}" not in pending(idb)
+        hdb.close()
+
+
+def test_accept_device_with_overrides_creates_record_and_edge():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, res = accept(idb, f"device:unifi:{WORKBENCH_MAC}",
+                              overrides={"system": "Workbench PC", "category": "Computers"})
+        assert ok
+        r = idb.get(res["device_id"])
+        assert (r["system"], r["mac"], r["ip"], r["category"], r["device_type"]) == (
+            "Workbench PC", WORKBENCH_MAC, "192.168.6.45", "Computers", "host")
+        c = idb.get_connection(res["connection_id"])
+        assert (c["child_id"], c["parent_id"], c["parent_port"]) == (res["device_id"], ids["usw"], "Port 10")
+        hdb.close()
+
+
+def test_accept_device_rejects_bad_override_and_409s_when_mac_added_by_hand():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        assert accept(idb, f"device:unifi:{WORKBENCH_MAC}", overrides={"device_type": "toaster"}) == (
+            False, "rejected", {"error": "unknown device type 'toaster'"})
+        add_device(idb, "Hand-made", "host", mac=WORKBENCH_MAC)
+        assert accept(idb, f"device:unifi:{WORKBENCH_MAC}")[1] == "suggestion_changed"
+        assert f"device:unifi:{WORKBENCH_MAC}" in pending(idb)  # nothing applied
+        hdb.close()
+
+
+def test_accept_drift_replace_moves_edge_and_clears_migration_drift():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        assert migration_drift_key(e["usw_eero"]) in pending(idb)
+        scan(idb)
+        assert accept(idb, f"drift:unifi:{USW_MAC}")[0]
+        c = idb.get_connection(e["usw_eero"])
+        assert (c["parent_id"], c["parent_port"], c["child_port"], c["source"]) == (
+            ids["eero"], "1", "Port 13", "unifi")
+        assert migration_drift_key(e["usw_eero"]) not in pending(idb)
+
+        assert accept(idb, f"drift:unifi:{PI5_MAC}")[0]
+        c = idb.get_connection(e["pi5_wifi"])
+        assert (c["parent_id"], c["parent_port"], c["connection_type"]) == (ids["usw"], "Port 7", "ethernet")
+        scan(idb, NOW + 60)
+        assert not {f"drift:unifi:{PI5_MAC}", f"drift:unifi:{USW_MAC}"} & set(pending(idb))
+        hdb.close()
+
+
+def test_accept_stale_drift_removes_edge():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, res = accept(idb, "drift:stale:conn:%d" % e["oldnas"])
+        assert ok and res == {"removed_connection_id": e["oldnas"]}
+        assert idb.get_connection(e["oldnas"]) is None
+        hdb.close()
+
+
+def test_accept_identity_adds_alias_and_rescan_matches_by_mac():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        assert accept(idb, f"identity:lldp:{EERO_LLDP_MAC}")[0]
+        props = idb.get(ids["eero"])["properties"]
+        assert props["mac_aliases"] == [EERO_LLDP_MAC] and props["network_role"] == "gateway"
+        scan(idb, NOW + 60)
+        assert f"identity:lldp:{EERO_LLDP_MAC}" not in pending(idb)
+        hdb.close()
+
+
+def test_accept_identity_without_candidate_needs_device_id():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        idb.update(ids["eero"], {"ip": "10.0.0.1"})
+        scan(idb)
+        assert accept(idb, f"identity:lldp:{EERO_LLDP_MAC}")[1] == "rejected"
+        assert accept(idb, f"identity:lldp:{EERO_LLDP_MAC}", overrides={"device_id": ids["eero"]})[0]
+        hdb.close()
+
+
+def test_accept_shared_port_creates_placeholder_and_rescan_is_quiet():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        ok, err, res = accept(idb, f"shared_port:{USW_MAC}:Port 9")
+        assert ok and res["linked"] == [ids["printer"]]
+        ph = idb.get(res["device_id"])
+        assert ph["device_type"] == "network" and ph["properties"]["network_role"] == "switch"
+        assert "Port 9" in ph["system"]
+        edges = {(c["child_id"], c["parent_id"], c["parent_port"]) for c in idb.list_all_connections()}
+        assert (res["device_id"], ids["usw"], "Port 9") in edges
+        assert (ids["printer"], res["device_id"], None) in edges
+        scan(idb, NOW + 60)
+        assert f"shared_port:{USW_MAC}:Port 9" not in pending(idb)
+        hdb.close()
+
+
+def test_accept_is_409_for_old_fingerprint_deleted_device_and_decided_rows():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        s = pending(idb)[f"edge:unifi:{VF2_MAC}"]
+        assert idb.accept_suggestion(s["id"], "stale-fp")[1] == "suggestion_changed"
+        idb.delete(ids["vf2"])
+        assert idb.accept_suggestion(s["id"], s["fingerprint"])[1] == "suggestion_changed"
+        assert f"edge:unifi:{VF2_MAC}" in pending(idb)  # nothing applied
+        assert idb.accept_suggestion(99999, "x") == (False, "not_found", {})
+        mig = pending(idb)[migration_drift_key(e["usw_eero"])]
+        assert idb.accept_suggestion(mig["id"], mig["fingerprint"]) == (
+            False, "rejected", {"error": "this suggestion can only be dismissed"})
+        hdb.close()
+
+
+def test_accept_suggestions_reports_per_item():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        good = pending(idb)[f"edge:unifi:{VF2_MAC}"]
+        results = idb.accept_suggestions([
+            {"id": good["id"], "fingerprint": good["fingerprint"]},
+            {"id": good["id"], "fingerprint": good["fingerprint"]},  # already accepted
+            {"id": "nope"},
+        ], now=NOW + 1)
+        assert results == [
+            {"id": good["id"], "ok": True, "error": None},
+            {"id": good["id"], "ok": False, "error": "suggestion_changed"},
+            {"id": "nope", "ok": False, "error": "invalid id"},
+        ]
+        hdb.close()
