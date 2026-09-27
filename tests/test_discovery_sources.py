@@ -855,3 +855,141 @@ def test_reconcile_turns_inferred_observations_into_wifi_suggestions():
         "Custom Desktop PC connects over wifi to Eero Pro 6E — Gateway")
     assert {"id": 80, "parent_port": None} in ch["touch"]     # manual Deck edge confirmed
     assert ch["resolve"] == []                                # the down NAS is held
+
+
+# ── Task 8: runner integration ───────────────────────────────────────────────
+
+from netwatch.discovery import DiscoveryRunner, safe_error
+
+
+class FakeHosts:
+    def __init__(self, hosts):
+        self._hosts = hosts
+
+    def list_hosts(self):
+        return [types.SimpleNamespace(to_dict=lambda h=h: dict(h)) for h in self._hosts]
+
+
+class FakePoller:
+    def __init__(self, configured=True):
+        self.is_configured = configured
+
+    def configured(self):
+        return self.is_configured
+
+
+def raw_unifi():
+    table = [{"port_idx": i, "name": f"Port {i}", "up": True, "speed": 1000,
+              "poe_enable": True, "is_uplink": i == 13} for i in range(1, 17)]
+    devices = {"meta": {"rc": "ok"}, "data": [{"type": "usw", "mac": USW_MAC, "name": "USW",
+                                               "port_table": table, "lldp_table": []}]}
+    clients = {"meta": {"rc": "ok"}, "data": [
+        {"mac": m, "ip": ip, "hostname": n, "is_wired": True, "sw_mac": USW_MAC,
+         "sw_port": port, "last_seen": NOW} for (m, port, ip, n) in LAB_CLIENTS]}
+    return devices, clients
+
+
+def lab_idb(d):
+    hdb, idb = make_idb(d)
+    add_device(idb, "USW Pro Max 16 PoE", "network", mac=USW_MAC, network_role="switch",
+               port_count=16)
+    add_device(idb, "Eero Pro 6E — Gateway", "network", mac=GW_MAC, ip="192.168.4.1",
+               network_role="gateway")
+    add_device(idb, "HP EliteDesk 800 G3 Mini", mac=NODE_PVE_MAC)
+    add_device(idb, "HP Prodesk 405 G6 Mini", mac=NODE_PRODESK_MAC, ip="192.168.6.219")
+    add_device(idb, "Raspberry Pi 5", mac=PI5_MAC)
+    add_device(idb, "Custom Desktop PC", mac=DESKTOP_MAC, ip="192.168.4.89")
+    return hdb, idb
+
+
+def make_runner(idb, unifi_ok=True, proxmox=None, hosts=(), arp=None):
+    auth = types.SimpleNamespace(data={"unifi_url": "https://unifi.local:11443",
+                                       "unifi_api_key": "k"})
+
+    def fetch_unifi(url, key, site, ctx):
+        if not unifi_ok:
+            raise urllib.error.URLError("down")
+        return raw_unifi()
+
+    return DiscoveryRunner(
+        auth, {}, idb, fetch_unifi=fetch_unifi, proxmox_poller=FakePoller(),
+        host_manager=FakeHosts(list(hosts)),
+        fetch_proxmox=proxmox or (lambda p: proxmox_snapshot(pve_cache(), cluster_status(),
+                                                             CONFIGS)),
+        read_arp=lambda: dict(arp or {}))
+
+
+def pending_keys(idb):
+    return {s["subject_key"] for s in idb.suggestions.list("pending")}
+
+
+def test_safe_error_names_a_missing_proxmox_cache():
+    from netwatch.discovery_proxmox import ProxmoxUnavailable
+    assert safe_error(ProxmoxUnavailable()) == "Proxmox poller has no fresh data"
+
+
+def test_scan_runs_proxmox_then_unifi_then_inference():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = lab_idb(d)
+        r = make_runner(idb, hosts=[host("Custom Desktop PC", "192.168.4.89")],
+                        arp={"192.168.4.89": DESKTOP_MAC,
+                             "192.168.4.237": NODE_PVE_MAC})
+        assert r.scan_once(now=NOW) is True
+        k = pending_keys(idb)
+        assert {"device:proxmox:prodesk1:301", "edge:unifi:node-port:prodesk1",
+                f"edge:inferred:{DESKTOP_MAC}", "identity:proxmox-node:pve"} <= k
+        assert not any(MC_MAC in key or HA_MAC in key for key in k)   # guests never on the switch
+        [ident] = [s for s in idb.suggestions.list("pending")
+                   if s["subject_key"] == "identity:proxmox-node:pve"]
+        assert ident["payload"]["candidate_name"] == "HP EliteDesk 800 G3 Mini"
+        src = r.status()["sources"]
+        assert src["proxmox"] == {"ok": True, "error": None, "at": NOW,
+                                  "counts": {"nodes": 3, "guests": 3}, "configured": True}
+        assert (src["inferred"]["ok"], src["inferred"]["counts"]) == (True, {"devices": 1})
+        hdb.close()
+
+
+def test_proxmox_failure_holds_guest_ports():
+    from netwatch.discovery_proxmox import ProxmoxUnavailable
+
+    def boom(poller):
+        raise ProxmoxUnavailable()
+
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = lab_idb(d)
+        r = make_runner(idb, proxmox=boom)
+        r.scan_once(now=NOW)
+        src = r.status()["sources"]["proxmox"]
+        assert (src["ok"], src["error"]) == (False, "Proxmox poller has no fresh data")
+        k = pending_keys(idb)
+        assert "edge:unifi:node-port:prodesk1" not in k
+        assert f"edge:unifi:{NODE_PRODESK_MAC}" not in k    # port 8 carries a likely guest
+        hdb.close()
+
+
+def test_inference_waits_for_a_successful_unifi_scan():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = lab_idb(d)
+        r = make_runner(idb, unifi_ok=False,
+                        hosts=[host("Custom Desktop PC", "192.168.4.89")],
+                        arp={"192.168.4.89": DESKTOP_MAC})
+        r.scan_once(now=NOW)
+        src = r.status()["sources"]["inferred"]
+        assert (src["ok"], src["error"]) == (False, "waiting for a successful UniFi scan")
+        assert not [s for s in idb.suggestions.list("pending") if s["source"] == "inferred"]
+        hdb.close()
+
+
+def test_proxmox_alone_counts_as_a_configured_source():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        r = DiscoveryRunner(types.SimpleNamespace(data={}), {}, idb,
+                            proxmox_poller=FakePoller(True), host_manager=FakeHosts([]))
+        assert r.any_source_configured() is True and r.request_scan() is True
+        src = r.status()["sources"]
+        assert (src["proxmox"]["configured"], src["unifi"]["configured"],
+                src["inferred"]["configured"]) == (True, False, False)
+        idle = DiscoveryRunner(types.SimpleNamespace(data={}), {}, idb,
+                               proxmox_poller=FakePoller(False))
+        assert idle.any_source_configured() is False
+        hdb.close()

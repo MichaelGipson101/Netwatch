@@ -169,7 +169,9 @@ def main():
     ups_poller.start(stop_event)
     print(f"[netwatch] UPS poller -> polling NUT every {UPSPoller.POLL_INTERVAL_SECONDS}s")
 
-    discovery_runner = DiscoveryRunner(auth_manager, settings, inventory_db)
+    discovery_runner = DiscoveryRunner(auth_manager, settings, inventory_db,
+                                       proxmox_poller=proxmox_poller,
+                                       host_manager=host_manager)
     inventory_db.live_port_provider = discovery_runner.live_ports_for
     discovery_runner.start(stop_event)
     print(f"[netwatch] Discovery  -> every {DiscoveryRunner.SCAN_INTERVAL_SECONDS}s"

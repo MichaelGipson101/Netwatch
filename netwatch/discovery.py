@@ -6,6 +6,8 @@ Layers, outermost last:
 - reconcile: pure; observations + current inventory/edges/suggestions ->
   a change set (suggestion upserts/resolutions, edge touches).
 - fetch_unifi_classic / unifi_ssl_context / safe_error: thin I/O helpers.
+- Proxmox (netwatch.discovery_proxmox) and wifi inference (netwatch.discovery_wifi) adapters
+  feed the same reconcile.
 - DiscoveryRunner: background thread that scans every 15 minutes and
   applies change sets through InventoryDB.apply_discovery_changes.
 
@@ -25,6 +27,10 @@ from netwatch.connections import (
     NETWORK_LINK_TYPES, canonical_port, fingerprint, normalize_port, orient_edge,
     resolve_ports,
 )
+from netwatch.discovery_proxmox import (
+    ProxmoxUnavailable, fetch_proxmox as fetch_proxmox_snapshot, proxmox_observations,
+)
+from netwatch.discovery_wifi import read_arp as read_proc_arp, wifi_observations
 from netwatch.storage import InventoryDB
 
 PROXMOX_OUI = "bc:24:11"
@@ -692,6 +698,8 @@ def safe_error(exc):
         return f"URLError: {detail}"
     if isinstance(exc, UnifiError):
         return "controller returned an error"
+    if isinstance(exc, ProxmoxUnavailable):
+        return "Proxmox poller has no fresh data"
     return type(exc).__name__
 
 
@@ -753,11 +761,17 @@ class DiscoveryRunner:
     OUTAGE_GRACE_SECONDS = 3600
     _STREAKS_META_KEY = "discovery_health_streaks"
 
-    def __init__(self, auth_manager, settings, inventory_db, fetch_unifi=None):
+    def __init__(self, auth_manager, settings, inventory_db, fetch_unifi=None,
+                 proxmox_poller=None, host_manager=None, fetch_proxmox=None,
+                 read_arp=None):
         self._auth = auth_manager
         self._settings = settings  # shared by reference - never copy
         self._db = inventory_db
         self._fetch_unifi = fetch_unifi or fetch_unifi_classic
+        self._proxmox = proxmox_poller
+        self._hosts = host_manager
+        self._fetch_proxmox = fetch_proxmox or fetch_proxmox_snapshot
+        self._read_arp = read_arp or read_proc_arp
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._scanning = False
@@ -782,8 +796,18 @@ class DiscoveryRunner:
         cfg = self._unifi_config()
         return bool(cfg["url"] and cfg["api_key"])
 
+    def proxmox_configured(self):
+        try:
+            return bool(self._proxmox is not None and self._proxmox.configured())
+        except Exception:
+            return False
+
+    def inference_configured(self):
+        """Wifi inference needs a host list and UniFi (to rule out wired devices)."""
+        return self._hosts is not None and self.unifi_configured()
+
     def any_source_configured(self):
-        return self.unifi_configured()
+        return self.unifi_configured() or self.proxmox_configured()
 
     def _load_streaks(self):
         try:
@@ -835,7 +859,9 @@ class DiscoveryRunner:
             logging.info(f"Discovery: {source} scan recovered")
 
     def scan_once(self, now=None):
-        """Run one scan. Returns False if a scan was already running."""
+        """Run one scan: Proxmox first (its guest MACs decide which switch
+        ports are guests), then UniFi, then wifi inference. Returns False if
+        a scan was already running."""
         now = int(now or time.time())
         with self._lock:
             if self._scanning:
@@ -843,6 +869,22 @@ class DiscoveryRunner:
             self._scanning = True
         try:
             observations, healthy = [], set()
+            guest_macs, guest_node_of, guests_complete = None, None, True
+            if self.proxmox_configured():
+                try:
+                    psnap = self._fetch_proxmox(self._proxmox)
+                    guest_node_of = {m: g["node"] for g in psnap["guests"] for m in g["macs"]}
+                    guest_macs = set(guest_node_of)
+                    guests_complete = psnap["complete"]
+                    observations += proxmox_observations(psnap)
+                    healthy.add("proxmox")
+                    self._record_success("proxmox", now)
+                    self._set_health("proxmox", True, None, now,
+                                     {"nodes": len(psnap["nodes"]),
+                                      "guests": len(psnap["guests"])})
+                except Exception as e:
+                    self._set_health("proxmox", False, safe_error(e), now, None)
+            ip_macs, wired_macs = {}, set()
             if self.unifi_configured():
                 cfg = self._unifi_config()
                 try:
@@ -850,7 +892,11 @@ class DiscoveryRunner:
                         cfg["url"], cfg["api_key"], cfg["site"],
                         unifi_ssl_context(self._settings))
                     snap = parse_unifi(devices, clients)
-                    observations += unifi_observations(snap, guest_macs=None)
+                    observations += unifi_observations(
+                        snap, guest_macs=guest_macs, guest_node_of=guest_node_of,
+                        guests_complete=guests_complete)
+                    wired_macs = {c["mac"] for c in snap["clients"]}
+                    ip_macs = {c["ip"]: c["mac"] for c in snap["clients"] if c.get("ip")}
                     healthy.add("unifi")
                     with self._lock:
                         self._switches = snap["switches"]
@@ -862,13 +908,21 @@ class DiscoveryRunner:
                     self._set_health("unifi", False, safe_error(e), now, None)
             if healthy:
                 try:
+                    records = self._db.list_all()
+                    edges = self._db.list_all_connections()
+                    arp = self._read_arp() or {}
+                    for ip, mac in arp.items():
+                        ip_macs.setdefault(ip, mac)
+                    if self.inference_configured():
+                        observations += self._infer(now, "unifi" in healthy, arp, wired_macs,
+                                                    guest_macs or set(), records, edges,
+                                                    healthy)
                     changes = reconcile(
-                        observations, records=self._db.list_all(),
-                        edges=self._db.list_all_connections(),
+                        observations, records=records, edges=edges,
                         pending=self._db.suggestions.list("pending"),
                         healthy_sources=healthy, now=now,
                         live_ports_for=self.live_ports_for,
-                        healthy_since=self._healthy_snapshot())
+                        healthy_since=self._healthy_snapshot(), ip_macs=ip_macs)
                     self._db.apply_discovery_changes(changes, now)
                     self._set_apply_error(None)
                 except Exception as e:
@@ -879,6 +933,28 @@ class DiscoveryRunner:
         finally:
             with self._lock:
                 self._scanning = False
+
+    def _infer(self, now, unifi_ok, arp, wired_macs, guest_macs, records, edges, healthy):
+        """Wifi inference observations; adds "inferred" to `healthy` on success."""
+        if not unifi_ok:
+            self._set_health("inferred", False, "waiting for a successful UniFi scan",
+                             now, None)
+            return []
+        try:
+            hosts = [h.to_dict() for h in self._hosts.list_hosts()]
+            obs, error = wifi_observations(hosts, arp, wired_macs, guest_macs,
+                                           records, edges)
+        except Exception as e:
+            self._set_health("inferred", False, type(e).__name__, now, None)
+            return []
+        if error:
+            self._set_health("inferred", False, error, now, None)
+            return []
+        healthy.add("inferred")
+        self._record_success("inferred", now)
+        self._set_health("inferred", True, None, now,
+                         {"devices": sum(1 for o in obs if o["type"] == "edge")})
+        return obs
 
     def _healthy_snapshot(self):
         with self._lock:
@@ -894,13 +970,17 @@ class DiscoveryRunner:
         return True
 
     def status(self):
+        blank = {"ok": None, "error": None, "at": None, "counts": None}
         with self._lock:
-            unifi = dict(self._health.get(
-                "unifi", {"ok": None, "error": None, "at": None, "counts": None}))
+            sources = {s: dict(self._health.get(s, blank))
+                       for s in ("unifi", "proxmox", "inferred")}
             last, scanning = self._last_scan, self._scanning
             apply_error = self._apply_error
-        unifi["configured"] = self.unifi_configured()
-        return {"sources": {"unifi": unifi}, "last_scan": last, "scanning": scanning,
+        # configured() reads auth/poller state - never under our own lock.
+        sources["unifi"]["configured"] = self.unifi_configured()
+        sources["proxmox"]["configured"] = self.proxmox_configured()
+        sources["inferred"]["configured"] = self.inference_configured()
+        return {"sources": sources, "last_scan": last, "scanning": scanning,
                 "apply_error": apply_error}
 
     def switch_macs(self):
