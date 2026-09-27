@@ -94,7 +94,7 @@ def build_topology_payload(inventory_db, host_manager):
     frontend from 3 round trips to 1 and lets us join MAC -> host status
     without serialising the full host list."""
     if not inventory_db:
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": [], "suggested_edges": []}
 
     # Build a MAC -> host status lookup
     host_by_mac = {}

@@ -31,7 +31,7 @@ let _topoRelayoutTimer = null;
 // ── Pure helpers (unit-tested in node; keep brackets balanced in literals) ──
 // guestCollapseMin: more than 6 guests under one parent starts collapsed as
 // "+N guests". spacing: [sibling, level] px per orientation.
-const TOPO_TREE_RULES = {guestCollapseMin: 7, spacing: {down: [84, 130], right: [60, 190]}};
+const TOPO_TREE_RULES = {guestCollapseMin: 7, spacing: {down: [84, 130], right: [90, 190]}};
 
 function topoPortLabel(port){
   if(port === null || port === undefined) return '';

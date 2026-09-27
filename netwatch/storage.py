@@ -1153,11 +1153,16 @@ class InventoryDB:
             "ports": ports,
         }, None
 
-    def _port_in_use(self, parent_id, port, exclude_conn_id=None):
+    def _port_in_use(self, parent_id, port, exclude_conn_id=None, uplinks=True):
         """Another non-wifi edge already on this parent port? Ports are
         compared canonically, so "8" and "Port 8" are the same port. A
         device's own uplink (parent_id as the CHILD, from_port on that edge)
-        occupies its port too."""
+        occupies its port too, unless `uplinks=False` - relint_parent passes
+        that to match migration lint, which only ever considered downlinks
+        (plan_connections_migration's by_port grouping keys on to_device_id
+        alone); it must keep resolving exactly the drift migration could
+        have flagged, not surface new drift from a check migration never
+        made."""
         parent = self.get(parent_id)
         ports = resolve_ports(parent, self._live_ports_for(parent)) if parent else None
         want = canonical_port(port, ports)
@@ -1169,7 +1174,7 @@ class InventoryDB:
             uplink_rows = self.conn.execute(
                 "SELECT id, from_port FROM inventory_connections "
                 "WHERE from_device_id = ? AND connection_type != 'wifi'",
-                (parent_id,)).fetchall()
+                (parent_id,)).fetchall() if uplinks else []
         return any(canonical_port(p, ports) == want and cid != exclude_conn_id
                    for cid, p in rows + uplink_rows)
 
@@ -1378,7 +1383,7 @@ class InventoryDB:
                 issues.append("ambiguous_direction")
             port = normalize_port(row["to_port"])
             if (port is not None and row["connection_type"] != "wifi"
-                    and self._port_in_use(parent_id, port, row["id"])):
+                    and self._port_in_use(parent_id, port, row["id"], uplinks=False)):
                 issues.append("duplicate_parent_port")
             if not issues:
                 self.suggestions.resolve(migration_drift_key(row["id"]), now)

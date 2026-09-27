@@ -35,7 +35,8 @@ function qaPortOptions(ports){
   return ports.map(p => {
     const occ = p.occupants || [];
     let label = p.name;
-    if(occ.length) label += ' · ' + occ.map(o => o.name).join(', ');
+    // A device's own uplink occupies its port too - mark it like the port map does.
+    if(occ.length) label += ' · ' + occ.map(o => (o.uplink ? '↑ ' : '') + o.name).join(', ');
     else if(p.up === true) label += ' · link up';
     return {value: p.name, label: label, taken: occ.length > 0, idx: typeof p.idx === 'number' ? p.idx : null};
   });

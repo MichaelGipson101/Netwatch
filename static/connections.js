@@ -23,7 +23,7 @@ let _cxState = {
   mounted: false, quickMounted: false, seq: 0, refreshing: false, refreshQueued: false,
   status: null, suggestions: null, connections: null, inventory: [], categories: [], portMaps: [],
   error: null, migrationPending: false, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
-  filter: 'all', query: '', highlightConn: null, highlightSugg: null,
+  filter: 'all', query: '', highlightConn: null, highlightSugg: null, highlightAfterSeq: 0, suggSeq: 0,
   editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null,
   swappedIds: {}, drafts: {}, busy: {},
 };
@@ -129,6 +129,10 @@ async function cxRefreshAll(){
     const ports = await Promise.all(maps.map(m => cxGetJson('/api/ports/' + m.device_id)));
     if(seq !== _cxState.seq) return;
     _cxState.portMaps = maps.map((m, i) => ({device_id: m.device_id, name: m.name, data: ports[i]}));
+    // Marks that suggestions have actually been re-fetched AND rendered as
+    // of this seq - cxFlashSuggestion waits for this to pass the click's
+    // seq before resolving, so it never judges a stale cached render.
+    _cxState.suggSeq = seq;
     cxRender();
     if(_cxState.pendingEdit !== null){
       // Consume it before replaying: if the connection still isn't there
@@ -620,16 +624,28 @@ function cxHighlightConnection(id, opts){
 
 function cxHighlightSuggestion(id){
   const view = document.getElementById('view-connections');
-  if(view && !view.classList.contains('active')) setTab('connections');
+  const wasActive = !!(view && view.classList.contains('active'));
+  // Capture BEFORE triggering any refresh below: cxRefreshAll bumps
+  // _cxState.seq synchronously, so this must be the value from strictly
+  // before that call for the "fresh enough" check in cxFlashSuggestion to
+  // ever pass.
+  _cxState.highlightAfterSeq = _cxState.seq;
   _cxState.highlightSugg = Number(id);
+  if(!wasActive) setTab('connections');   // mountConnectionsTab() already refreshes
+  else cxRefreshAll();                    // already on the tab: setTab wouldn't be called, so refresh explicitly
   cxFlashSuggestion();
 }
 
 // Called now and after every inbox render, so it also works when the tab
-// is still loading. Says so when the suggestion is already gone.
+// is still loading. Says so when the suggestion is already gone - but only
+// once suggestions have actually been re-fetched AND rendered since the
+// click (_cxState.suggSeq passing the seq captured at click time): setTab
+// paints the CACHED inbox immediately and a refresh lands ~100ms later, and
+// judging the stale cached DOM can raise a false "already handled".
 function cxFlashSuggestion(){
   const id = _cxState.highlightSugg;
   if(id === null || id === undefined) return;
+  if(_cxState.suggSeq <= _cxState.highlightAfterSeq) return;   // no fresh render yet - stay pending
   const el = document.querySelector('.cx-sugg[data-sid="' + id + '"]');
   if(!el){
     // _cxState.suggestions is {items: [...]} once loaded (see

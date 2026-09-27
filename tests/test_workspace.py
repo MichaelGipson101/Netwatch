@@ -85,6 +85,33 @@ def test_a_switchs_own_uplink_occupies_its_port():
         hdb.close()
 
 
+def test_relint_matches_migration_lint_and_ignores_the_devices_own_uplink():
+    # plan_connections_migration's by_port dedup only ever grouped by
+    # to_device_id (downlinks) - it never considered a device's own uplink.
+    # relint_parent's job is only to RESOLVE drift migration could have
+    # flagged, so it must use that same downlink-only view (_port_in_use's
+    # new uplinks=False), not surface fresh "duplicate_parent_port" drift
+    # just because a downlink happens to share a port name with the
+    # device's own uplink.
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        eero = add_device(idb, "Eero", "network", network_role="gateway")
+        usw = add_device(idb, "USW", "network", network_role="switch", port_count=16)
+        wired = add_device(idb, "Wired")
+        insert_edge(idb, usw, eero, to_port="1", from_port="2")   # USW's own uplink, port "2"
+        cid = insert_edge(idb, wired, usw, to_port="2")            # a downlink also on port "2"
+        # The general-purpose check (uplinks=True, default) does see this as
+        # a real conflict on USW's port 2.
+        assert idb._port_in_use(usw, "2", exclude_conn_id=cid)
+        # A drift suggestion for cid already exists (from an earlier
+        # migration/scan) and is now otherwise clean.
+        idb.suggestions.upsert("drift", "migration", migration_drift_key(cid),
+                               {"connection_id": cid}, "fp", 1)
+        idb.relint_parent(usw)
+        assert migration_drift_key(cid) not in pending_keys(idb)
+        hdb.close()
+
+
 def test_changing_type_to_wifi_clears_the_parent_port():
     with tempfile.TemporaryDirectory() as d:
         hdb, idb = make_idb(d)
@@ -1059,3 +1086,89 @@ def test_quick_add_is_locked_while_migration_is_pending():
     assert "_cxQuickAdd.setLocked(pending)" in js_part(CX_JS, "async function cxRefreshAll")
     qa_part = js_part(QA_JS, "function renderQuickAdd")
     assert "setLocked:" in qa_part and "st.locked" in qa_part
+
+
+# ── Final-review fix wave: don't judge a suggestion highlight against a
+# stale cached render ───────────────────────────────────────────────────────
+# setTab('connections') repaints the CACHED inbox immediately and a refresh
+# lands ~100ms later; cxFlashSuggestion must not resolve (flash or "already
+# handled" toast) until a refresh that started at-or-after the click has
+# actually landed (_cxState.suggSeq, bumped in cxRefreshAll right before the
+# render that follows a successful, non-superseded fetch).
+
+@needs_node
+def test_flash_suggestion_waits_for_a_fresh_render_before_resolving():
+    src = (js_part(CX_JS, "function cxHighlightSuggestion")
+           + "\n" + js_part(CX_JS, "function cxFlashSuggestion"))
+    script = (
+        "let suggEl, toasts, refreshCalls, setTabCalls, queryCalls, addedClasses, scrolled;\n"
+        "function toast(m){ toasts.push(m); }\n"
+        "function cxRefreshAll(){ refreshCalls++; }\n"
+        "function setTab(){ setTabCalls++; }\n"
+        "function makeSuggEl(id){\n"
+        "  return {dataset: {sid: String(id)}, closest: () => null, scrollIntoView: () => { scrolled++; },\n"
+        "          classList: {add: c => addedClasses.push(c), remove: () => {}}};\n"
+        "}\n"
+        + src +
+        "\n"
+        "function reset(viewActive){\n"
+        "  toasts = []; refreshCalls = 0; setTabCalls = 0; queryCalls = 0; addedClasses = []; scrolled = 0;\n"
+        "  global.document = {\n"
+        "    getElementById: id => id === 'view-connections' ? {classList: {contains: () => viewActive}} : null,\n"
+        "    querySelector: () => { queryCalls++; return suggEl; },\n"
+        "  };\n"
+        "}\n"
+        "const out = {};\n"
+        # (a) stale render: a refresh was in flight (or none at all) when we
+        # clicked, and nothing fresher has landed yet - stay pending, don't
+        # even look at the DOM.
+        "reset(true);\n"
+        "suggEl = null;\n"
+        "_cxState = {seq: 5, suggSeq: 5, highlightSugg: null, highlightAfterSeq: 0, suggestions: {items: []}};\n"
+        "cxHighlightSuggestion(7);\n"
+        "out.stale = {highlightSugg: _cxState.highlightSugg, queryCalls, toasts: toasts.length,\n"
+        "             refreshCalls, setTabCalls, highlightAfterSeq: _cxState.highlightAfterSeq};\n"
+        # (b) a fresh render lands (suggSeq now ahead of the click's seq) and
+        # the card is present - flash it.
+        "suggEl = makeSuggEl(7);\n"
+        "_cxState.suggSeq = 6;\n"
+        "cxFlashSuggestion();\n"
+        "out.freshFlash = {highlightSugg: _cxState.highlightSugg, added: addedClasses, scrolled};\n"
+        # (c) a fresh render lands but the card is gone (handled elsewhere) -
+        # toast, don't leave it pending forever.
+        "_cxState = {seq: 5, suggSeq: 6, highlightSugg: 7, highlightAfterSeq: 5, suggestions: {items: []}};\n"
+        "suggEl = null;\n"
+        "cxFlashSuggestion();\n"
+        "out.freshGone = {highlightSugg: _cxState.highlightSugg, toasts: toasts.slice()};\n"
+        # (d) already on the Connections tab: setTab is never called (per
+        # cxHighlightSuggestion's own guard), so it must refresh explicitly.
+        "reset(true);\n"
+        "suggEl = null;\n"
+        "_cxState = {seq: 2, suggSeq: 2, highlightSugg: null, highlightAfterSeq: 0, suggestions: null};\n"
+        "cxHighlightSuggestion(3);\n"
+        "out.alreadyOnTab = {refreshCalls, setTabCalls};\n"
+        # (e) not on the tab: setTab is called (which mounts + refreshes on
+        # its own); cxHighlightSuggestion must not also double-fire it.\n"
+        "reset(false);\n"
+        "suggEl = null;\n"
+        "_cxState = {seq: 2, suggSeq: 2, highlightSugg: null, highlightAfterSeq: 0, suggestions: null};\n"
+        "cxHighlightSuggestion(3);\n"
+        "out.notOnTab = {refreshCalls, setTabCalls};\n"
+        "process.stdout.write(JSON.stringify(out));\n"
+    )
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["stale"] == {"highlightSugg": 7, "queryCalls": 0, "toasts": 0,
+                            "refreshCalls": 1, "setTabCalls": 0, "highlightAfterSeq": 5}
+    assert out["freshFlash"] == {"highlightSugg": None, "added": ["cx-sugg-flash"], "scrolled": 1}
+    assert out["freshGone"] == {"highlightSugg": None, "toasts": ["That suggestion was already handled"]}
+    assert out["alreadyOnTab"] == {"refreshCalls": 1, "setTabCalls": 0}
+    assert out["notOnTab"] == {"refreshCalls": 0, "setTabCalls": 1}
+
+
+@needs_node
+def test_port_options_mark_a_devices_own_uplink():
+    ports = "[{name: 'Port 13', idx: 13, up: true, occupants: [{name: 'Eero', connection_id: 31, uplink: true}]}]"
+    out = run_js([(QA_JS, "function qaPortOptions")], f"qaPortOptions({ports})")
+    assert out == [{"value": "Port 13", "label": "Port 13 · ↑ Eero", "taken": True, "idx": 13}]

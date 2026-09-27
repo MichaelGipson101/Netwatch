@@ -164,3 +164,8 @@ def test_suggested_edges_unavailable_degrades_to_empty_and_logs_a_warning(monkey
         assert any("topology: suggested_edges unavailable: RuntimeError" in r.message
                    for r in caplog.records)
         hdb.close()
+
+
+def test_payload_without_inventory_still_carries_suggested_edges():
+    # Consumers (topology.js, hearthboard) can rely on the key always existing.
+    assert build_topology_payload(None, None) == {"nodes": [], "edges": [], "suggested_edges": []}
