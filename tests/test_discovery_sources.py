@@ -196,3 +196,79 @@ def test_fetch_proxmox_without_fresh_data_raises():
 
     with pytest.raises(ProxmoxUnavailable):
         fetch_proxmox(Poller())
+
+# ── Task 3: guest precedence on switch ports ─────────────────────────────────
+
+from netwatch.discovery import unifi_observations
+
+GW_MAC = "d4:3f:32:eb:2a:f2"
+NODE_PVE_MAC = "10:e7:c6:08:2e:39"           # EliteDesk: no IP in inventory
+NODE_PRODESK_MAC = "6c:02:e0:98:df:1d"
+PI5_MAC = "d8:3a:dd:ad:2d:b7"
+MYSTERY_MAC = "bc:24:11:77:77:77"            # Proxmox OUI, but no known guest has it
+USW_MAC = "74:fa:29:1d:a3:dc"
+
+LIVE = [{"name": f"Port {i}", "idx": i, "up": True, "speed_mbps": 1000, "poe": True,
+         "is_uplink": i == 13} for i in range(1, 17)]
+
+LAB_CLIENTS = [  # (mac, port, ip, hostname)
+    (NODE_PVE_MAC, 11, "192.168.4.237", None),
+    (HA_MAC, 11, "192.168.5.110", "homeassistant"),
+    (NODE_PRODESK_MAC, 8, "192.168.6.219", None),
+    (MC_MAC, 8, "192.168.6.220", "Minecraft"),
+    (MYSTERY_MAC, 5, "192.168.6.70", "mystery"),
+    (PI5_MAC, 7, "192.168.6.90", "ApplePi5"),
+]
+
+PVE_GUESTS = {HA_MAC: "pve", SOL_MAC0: "pve", SOL_MAC1: "pve", MC_MAC: "prodesk1"}
+
+
+def usw_snapshot(clients):
+    return {"switches": [{"mac": USW_MAC, "name": "USW", "ip": None,
+                          "ports": [dict(p) for p in LIVE], "lldp": []}],
+            "clients": [{"mac": m, "ip": ip, "name": n, "sw_mac": USW_MAC, "sw_port": port,
+                         "last_seen": NOW} for (m, port, ip, n) in clients]}
+
+
+def node_port_obs(obs):
+    return {o["child"]["proxmox_node"]: o for o in obs
+            if o["type"] == "edge" and "proxmox_node" in o["child"]}
+
+
+def test_guest_ports_yield_node_port_edges_and_drop_guests():
+    obs = unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=set(PVE_GUESTS),
+                             guest_node_of=PVE_GUESTS, guests_complete=True)
+    nodes = node_port_obs(obs)
+    assert set(nodes) == {"pve", "prodesk1"}
+    assert nodes["pve"] == {
+        "type": "edge", "source": "unifi", "child": {"proxmox_node": "pve"},
+        "parent": {"mac": USW_MAC}, "parent_port": "Port 11", "child_port": None,
+        "connection_type": "ethernet", "external_key": "unifi:node-port:pve"}
+    assert nodes["prodesk1"]["parent_port"] == "Port 8"
+    macs = {o["child"]["mac"] for o in obs if o["type"] == "edge" and "mac" in o["child"]}
+    assert macs == {NODE_PVE_MAC, NODE_PRODESK_MAC, PI5_MAC, MYSTERY_MAC}
+    assert not [o for o in obs if o["type"] == "held"]
+
+
+def test_incomplete_guest_set_holds_ports_with_unexplained_likely_guests():
+    obs = unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=set(PVE_GUESTS),
+                             guest_node_of=PVE_GUESTS, guests_complete=False)
+    held = [o for o in obs if o["type"] == "held"]
+    assert [(o["port"], o["macs"]) for o in held] == [("Port 5", [MYSTERY_MAC])]
+    assert set(node_port_obs(obs)) == {"pve", "prodesk1"}
+
+
+def test_node_port_vote_prefers_most_guests_then_lowest_port():
+    extra = "bc:24:11:00:00:09"
+    clients = [(HA_MAC, 11, None, None), (SOL_MAC0, 11, None, None), (SOL_MAC1, 3, None, None),
+               (MC_MAC, 6, None, None), (extra, 4, None, None)]
+    guests = {**PVE_GUESTS, extra: "prodesk1"}
+    obs = unifi_observations(usw_snapshot(clients), guest_macs=set(guests),
+                             guest_node_of=guests)
+    assert {n: o["parent_port"] for n, o in node_port_obs(obs).items()} == {
+        "pve": "Port 11", "prodesk1": "Port 4"}
+
+
+def test_without_node_map_output_is_unchanged():
+    obs = unifi_observations(usw_snapshot(LAB_CLIENTS), guest_macs=set(PVE_GUESTS))
+    assert node_port_obs(obs) == {}

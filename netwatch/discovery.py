@@ -109,12 +109,18 @@ def parse_unifi(devices_payload, clients_payload):
     return {"switches": switches, "clients": clients}
 
 
-def unifi_observations(snapshot, guest_macs=None):
+def unifi_observations(snapshot, guest_macs=None, guest_node_of=None, guests_complete=True):
     """Observations from a parsed UniFi snapshot.
 
     guest_macs: the authoritative set of Proxmox guest MACs, or None when
-    Proxmox data isn't available - then any port carrying a likely-guest MAC
+    Proxmox data isn't available. Then any port carrying a likely-guest MAC
     is held (spec §2.5 rule 5) instead of guessed at.
+    guest_node_of: {guest MAC: node name}. When given, the guests seen on a
+    port vote for their node's port (spec §2.5 rule 2): each node gets one
+    edge to the port with the most of its guests (ties: lowest port index).
+    guests_complete: False when a node was offline or a guest config couldn't
+    be read. Then a port whose leftover MACs include a likely-guest MAC is held
+    too, since it may be a guest Proxmox couldn't tell us about.
     """
     obs = []
     switches = {s["mac"]: s for s in snapshot["switches"]}
@@ -122,6 +128,7 @@ def unifi_observations(snapshot, guest_macs=None):
     for c in snapshot["clients"]:
         if c["sw_mac"] in switches:
             by_port.setdefault((c["sw_mac"], c["sw_port"]), []).append(c)
+    votes = {}  # node -> [(-guest_count, port_idx, switch_mac, port_name)]
     for sw_mac, idx in sorted(by_port):
         clients = by_port[(sw_mac, idx)]
         sw = switches[sw_mac]
@@ -130,12 +137,24 @@ def unifi_observations(snapshot, guest_macs=None):
             # Everything upstream shows up on the uplink; LLDP covers that link.
             continue
         port = port_info["name"] if port_info else str(idx)
+        held = {"type": "held", "source": "unifi",
+                "macs": sorted(c["mac"] for c in clients), "switch_mac": sw_mac, "port": port}
         if guest_macs is None and any(is_likely_guest_mac(c["mac"]) for c in clients):
-            obs.append({"type": "held", "source": "unifi",
-                        "macs": sorted(c["mac"] for c in clients),
-                        "switch_mac": sw_mac, "port": port})
+            obs.append(held)
             continue
         remaining = [c for c in clients if c["mac"] not in (guest_macs or ())]
+        if (guest_macs is not None and not guests_complete
+                and any(is_likely_guest_mac(c["mac"]) for c in remaining)):
+            obs.append(held)
+            continue
+        if guest_node_of:
+            counts = {}
+            for c in clients:
+                node = guest_node_of.get(c["mac"])
+                if node:
+                    counts[node] = counts.get(node, 0) + 1
+            for node, n in counts.items():
+                votes.setdefault(node, []).append((-n, idx, sw_mac, port))
         if len(remaining) == 1:
             c = remaining[0]
             obs.append({
@@ -149,6 +168,16 @@ def unifi_observations(snapshot, guest_macs=None):
         elif len(remaining) > 1:
             obs.append({"type": "shared_port", "source": "unifi", "switch_mac": sw_mac,
                         "port": port, "macs": sorted(c["mac"] for c in remaining)})
+    for node in sorted(votes):
+        _count, _idx, sw_mac, port = min(votes[node])
+        obs.append({
+            "type": "edge", "source": "unifi",
+            "child": {"proxmox_node": node},
+            "parent": {"mac": sw_mac},
+            "parent_port": port, "child_port": None,
+            "connection_type": "ethernet",
+            "external_key": f"unifi:node-port:{node}",
+        })
     for sw in snapshot["switches"]:
         for n in sw["lldp"]:
             is_uplink = next((p["is_uplink"] for p in sw["ports"]
