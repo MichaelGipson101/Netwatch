@@ -132,3 +132,93 @@ def test_fingerprint_is_stable_and_order_independent():
     assert fingerprint({"a": 1, "b": [1, 2]}) == fingerprint({"b": [1, 2], "a": 1})
     assert fingerprint({"a": 1}) != fingerprint({"a": 2})
     assert len(fingerprint({})) == 16
+
+
+# ── schema + oriented listing (Task 2) ──────────────────────────────────────
+
+from netwatch.storage import HistoryDB, InventoryDB, _column_exists
+
+
+def make_idb(tmpdir):
+    hdb = HistoryDB(os.path.join(tmpdir, "conn_test.db"))
+    return hdb, InventoryDB(hdb)
+
+
+def add_device(idb, system, device_type="host", **props):
+    new_id, err = idb.create({"system": system, "device_type": device_type,
+                              "properties": props or None})
+    assert err is None, err
+    return new_id
+
+
+def insert_raw_edge(idb, from_id, to_id, from_port=None, to_port=None, ctype="ethernet"):
+    """Insert an edge exactly as stored, bypassing orientation (simulates
+    pre-4.0 data)."""
+    with idb.lock:
+        cur = idb.conn.execute(
+            "INSERT INTO inventory_connections (from_device_id, to_device_id, from_port, "
+            "to_port, connection_type, created_at) VALUES (?, ?, ?, ?, ?, 0)",
+            (from_id, to_id, from_port, to_port, ctype))
+        return cur.lastrowid
+
+
+def test_schema_adds_connection_columns_and_meta_table():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        for col in ("source", "external_key", "last_seen", "updated_at"):
+            assert _column_exists(idb.conn, "inventory_connections", col)
+        assert idb.conn.execute("SELECT COUNT(*) FROM schema_meta").fetchone()[0] == 0
+        assert idb.live_port_provider is None
+        hdb.close()
+
+
+def test_schema_upgrade_is_idempotent_on_reopen():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        hdb.close()
+        hdb2, idb2 = make_idb(d)  # second open must not raise "duplicate column"
+        assert _column_exists(idb2.conn, "inventory_connections", "source")
+        hdb2.close()
+
+
+def test_list_all_connections_includes_aliases_names_and_source():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        host = add_device(idb, "ProDesk1", "host")
+        sw = add_device(idb, "USW", "network", port_count=16)
+        eid = insert_raw_edge(idb, host, sw, "eth0", "8")
+        [row] = idb.list_all_connections()
+        assert row["id"] == eid
+        assert (row["child_id"], row["parent_id"]) == (host, sw)
+        assert (row["child_port"], row["parent_port"]) == ("eth0", "8")
+        assert (row["child_name"], row["parent_name"]) == ("ProDesk1", "USW")
+        assert (row["child_type"], row["parent_type"]) == ("host", "network")
+        assert row["source"] == "manual"
+        assert idb.get_connection(eid)["parent_name"] == "USW"
+        assert idb.get_connection(99999) is None
+        hdb.close()
+
+
+def test_listing_skips_dangling_edges():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        a = add_device(idb, "A")
+        with idb.lock:
+            idb.conn.execute("PRAGMA foreign_keys = OFF")
+        insert_raw_edge(idb, a, 424242)  # parent never existed
+        with idb.lock:
+            idb.conn.execute("PRAGMA foreign_keys = ON")
+        assert idb.list_all_connections() == []
+        assert idb.list_connections_for_device(a) == []
+        hdb.close()
+
+
+def test_list_connections_for_device_keeps_direction_field():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        vm = add_device(idb, "jellyfin", "vm")
+        host = add_device(idb, "EliteDesk", "host")
+        insert_raw_edge(idb, vm, host, ctype="virtual")
+        assert idb.list_connections_for_device(vm)[0]["direction"] == "out"
+        assert idb.list_connections_for_device(host)[0]["direction"] == "in"
+        hdb.close()

@@ -672,6 +672,30 @@ class InventoryDB:
             CREATE INDEX IF NOT EXISTS idx_conn_from ON inventory_connections(from_device_id);
             CREATE INDEX IF NOT EXISTS idx_conn_to   ON inventory_connections(to_device_id);
         """)
+        # Connections v2 (4.0): provenance + freshness columns. Direction is
+        # a rule now: from_device_id = child (downstream), to_device_id =
+        # parent (upstream). See netwatch/connections.py.
+        for col, ddl in (
+            ("source",       "TEXT NOT NULL DEFAULT 'manual'"),
+            ("external_key", "TEXT"),
+            ("last_seen",    "INTEGER"),
+            ("updated_at",   "INTEGER"),
+        ):
+            if not _column_exists(self.conn, "inventory_connections", col):
+                self.conn.execute(
+                    f"ALTER TABLE inventory_connections ADD COLUMN {col} {ddl}")
+                logging.info(f"InventoryDB: added inventory_connections.{col}")
+        self.conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_conn_external_key
+                ON inventory_connections(external_key);
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+        # Assigned by the discovery runner (plan 2):
+        # callable(record) -> list of port dicts, or None.
+        self.live_port_provider = None
         # SQLite needs PRAGMA foreign_keys=ON for CASCADE to actually work.
         # The HistoryDB connection might not have it on; flip it now.
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -838,43 +862,69 @@ class InventoryDB:
         s = str(t).strip().lower()
         return s if s in self.CONNECTION_TYPES else "ethernet"
 
-    def list_connections_for_device(self, device_id):
-        """Return all connections involving this device, both directions.
+    # LEFT JOINs + a WHERE on both names drops edges whose device no longer
+    # exists (possible for rows written before foreign_keys was enabled).
+    _CONN_SELECT = (
+        "SELECT c.id, c.from_device_id, c.to_device_id, c.from_port, c.to_port, "
+        "c.connection_type, c.notes, c.created_at, c.source, c.external_key, "
+        "c.last_seen, c.updated_at, "
+        "f.system AS from_name, f.device_type AS from_type, "
+        "t.system AS to_name,   t.device_type AS to_type "
+        "FROM inventory_connections c "
+        "LEFT JOIN inventory f ON f.id = c.from_device_id "
+        "LEFT JOIN inventory t ON t.id = c.to_device_id "
+        "WHERE f.id IS NOT NULL AND t.id IS NOT NULL "
+    )
 
-        Each result includes the OTHER device's id and name (joined server-side
-        so the UI doesn't need a second call), plus a "direction" field of
-        either "out" (this device is the from end) or "in" (this device is
-        the to end).
-        """
+    @staticmethod
+    def _conn_rows(cur):
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r["child_id"], r["parent_id"] = r["from_device_id"], r["to_device_id"]
+            r["child_port"], r["parent_port"] = r["from_port"], r["to_port"]
+            r["child_name"], r["parent_name"] = r["from_name"], r["to_name"]
+            r["child_type"], r["parent_type"] = r["from_type"], r["to_type"]
+        return rows
+
+    def list_connections_for_device(self, device_id):
+        """All edges touching this device. `direction` is "out" when this
+        device is the child end, "in" when it is the parent end."""
         with self.lock:
             cur = self.conn.execute(
-                "SELECT c.id, c.from_device_id, c.to_device_id, "
-                "c.from_port, c.to_port, c.connection_type, c.notes, c.created_at, "
-                "f.system AS from_name, f.device_type AS from_type, "
-                "t.system AS to_name,   t.device_type AS to_type "
-                "FROM inventory_connections c "
-                "JOIN inventory f ON f.id = c.from_device_id "
-                "JOIN inventory t ON t.id = c.to_device_id "
-                "WHERE c.from_device_id = ? OR c.to_device_id = ? "
+                self._CONN_SELECT
+                + "AND (c.from_device_id = ? OR c.to_device_id = ?) "
                 "ORDER BY c.connection_type, c.created_at",
                 (device_id, device_id),
             )
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            rows = self._conn_rows(cur)
         for r in rows:
             r["direction"] = "out" if r["from_device_id"] == device_id else "in"
         return rows
 
     def list_all_connections(self):
-        """Return all connections in the system. Used by the topology view."""
+        """Every edge. Used by the topology view and the connections API."""
         with self.lock:
             cur = self.conn.execute(
-                "SELECT id, from_device_id, to_device_id, from_port, to_port, "
-                "connection_type, notes, created_at FROM inventory_connections "
-                "ORDER BY connection_type, created_at"
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+                self._CONN_SELECT + "ORDER BY c.connection_type, c.created_at")
+            return self._conn_rows(cur)
+
+    def get_connection(self, conn_id):
+        with self.lock:
+            cur = self.conn.execute(self._CONN_SELECT + "AND c.id = ?", (conn_id,))
+            rows = self._conn_rows(cur)
+        return rows[0] if rows else None
+
+    def _live_ports_for(self, rec):
+        """Live port table for `rec` from the discovery layer, if any."""
+        fn = self.live_port_provider
+        if fn is None:
+            return None
+        try:
+            return fn(rec)
+        except Exception as e:
+            logging.warning(f"InventoryDB: live port provider failed: {type(e).__name__}")
+            return None
 
     def create_connection(self, data):
         """Create a new connection row. Returns (id, error_msg)."""
