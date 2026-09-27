@@ -179,7 +179,7 @@ def main():
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db, "discovery_runner": discovery_runner},
             daemon=True
         )
         wt.start()

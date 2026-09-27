@@ -1012,6 +1012,51 @@ def _h_post_suggestion_dismiss(path: str, body: dict, inventory_db) -> tuple:
     return 200, {"ok": True}
 
 
+MAX_ACCEPT_ALL_ITEMS = 500
+
+
+def _h_post_suggestion_accept(path: str, body: dict, inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    try:
+        sid = int(path.split("/")[-2])
+    except (ValueError, IndexError):
+        return 400, {"error": "invalid id"}
+    body = body or {}
+    ok, err, result = inventory_db.accept_suggestion(
+        sid, body.get("fingerprint"), body.get("overrides"), body.get("action"))
+    if ok:
+        return 200, {"ok": True, **result}
+    if err == "not_found":
+        return 404, {"error": "suggestion not found"}
+    if err == "suggestion_changed":
+        return 409, {"error": "suggestion_changed"}
+    return 400, {"error": result.get("error") or "rejected"}
+
+
+def _h_post_suggestions_accept_all(body: dict, inventory_db) -> tuple:
+    gate = _conn_v2_gate(inventory_db)
+    if gate:
+        return gate
+    items = (body or {}).get("items")
+    if not isinstance(items, list) or len(items) > MAX_ACCEPT_ALL_ITEMS:
+        return 400, {"error": f"items must be a list of at most {MAX_ACCEPT_ALL_ITEMS}"}
+    return 200, {"results": inventory_db.accept_suggestions(items)}
+
+
+def _h_get_discovery_status(discovery_runner) -> tuple:
+    if discovery_runner is None:
+        return 200, {"sources": {}, "last_scan": None, "scanning": False}
+    return 200, discovery_runner.status()
+
+
+def _h_post_discovery_scan(discovery_runner) -> tuple:
+    if discovery_runner is None or not discovery_runner.any_source_configured():
+        return 400, {"error": "no discovery source is configured"}
+    return 200, {"ok": True, "queued": discovery_runner.request_scan()}
+
+
 def _h_post_discover() -> tuple:
     try:
         started, msg = start_discovery_scan()

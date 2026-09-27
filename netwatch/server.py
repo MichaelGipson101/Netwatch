@@ -32,6 +32,8 @@ from netwatch.http_handlers import (
     _h_post_maintenance_start, _h_post_maintenance_clear, _h_post_maintenance_quickstart,
     _h_get_connection_preview, _h_post_connection_quick_add, _h_get_ports,
     _h_get_suggestions, _h_post_suggestion_dismiss,
+    _h_post_suggestion_accept, _h_post_suggestions_accept_all,
+    _h_get_discovery_status, _h_post_discovery_scan,
 )
 
 
@@ -66,7 +68,7 @@ _STATIC_FILES = {
 }
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None):
     static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
     class Handler(BaseHTTPRequestHandler):
@@ -309,6 +311,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_suggestions(inventory_db))
                 return
+            if self.path == "/api/discovery/status":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_discovery_status(discovery_runner))
+                return
             if (self.path.startswith("/api/inventory/") and self.path.endswith("/connections")):
                 if not self._require_auth(): return
                 self._send_json(*_h_get_connections_for_device(self.path, inventory_db))
@@ -435,6 +441,25 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 data, err = self._read_json_body()
                 if err: return
                 self._send_json(*_h_post_connection_quick_add(data, inventory_db))
+                return
+
+            if self.path == "/api/suggestions/accept-all":
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_suggestions_accept_all(data, inventory_db))
+                return
+
+            if self.path.startswith("/api/suggestions/") and self.path.endswith("/accept"):
+                if not self._require_auth(): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_suggestion_accept(self.path, data, inventory_db))
+                return
+
+            if self.path == "/api/discovery/scan":
+                if not self._require_auth(admin_only=True): return
+                self._send_json(*_h_post_discovery_scan(discovery_runner))
                 return
 
             if self.path.startswith("/api/suggestions/") and self.path.endswith("/dismiss"):
@@ -690,8 +715,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db, discovery_runner=discovery_runner))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():

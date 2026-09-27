@@ -1112,3 +1112,135 @@ def test_unifi_settings_round_trip_through_auth_json(tmp_path):
     assert body["unifi_api_key"] == SECRET_PLACEHOLDER and body["unifi_site"] == "default"
     code, _ = _h_post_settings({"unifi_url": "not a url"}, str(cfg), settings, am)
     assert code == 400
+
+
+# ── Task 6: accept / accept-all / discovery endpoints ───────────────────────
+
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+from netwatch.http_handlers import (
+    _h_post_suggestion_accept, _h_post_suggestions_accept_all,
+    _h_get_discovery_status, _h_post_discovery_scan,
+)
+from netwatch.server import make_handler
+
+
+def test_accept_handler_status_codes():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        s = pending(idb)[f"edge:unifi:{VF2_MAC}"]
+        path = f"/api/suggestions/{s['id']}/accept"
+        assert _h_post_suggestion_accept(path, {"fingerprint": "old"}, idb) == (409, {"error": "suggestion_changed"})
+        code, body = _h_post_suggestion_accept(path, {"fingerprint": s["fingerprint"]}, idb)
+        assert code == 200 and body["ok"] and "connection_id" in body
+        assert _h_post_suggestion_accept("/api/suggestions/99999/accept", {}, idb)[0] == 404
+        assert _h_post_suggestion_accept("/api/suggestions/x/accept", {}, idb)[0] == 400
+        mig = pending(idb)[migration_drift_key(e["usw_eero"])]
+        assert _h_post_suggestion_accept(f"/api/suggestions/{mig['id']}/accept",
+                                         {"fingerprint": mig["fingerprint"]}, idb) == (
+            400, {"error": "this suggestion can only be dismissed"})
+        hdb.close()
+
+
+def test_accept_all_handler_validates_items():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        scan(idb)
+        s = pending(idb)[f"edge:unifi:{VF2_MAC}"]
+        code, body = _h_post_suggestions_accept_all(
+            {"items": [{"id": s["id"], "fingerprint": s["fingerprint"]}]}, idb)
+        assert code == 200 and body["results"] == [{"id": s["id"], "ok": True, "error": None}]
+        assert _h_post_suggestions_accept_all({"items": "nope"}, idb)[0] == 400
+        assert _h_post_suggestions_accept_all({"items": [{}] * 501}, idb)[0] == 400
+        hdb.close()
+
+
+def test_discovery_status_and_scan_handlers():
+    assert _h_get_discovery_status(None) == (200, {"sources": {}, "last_scan": None, "scanning": False})
+    assert _h_post_discovery_scan(None)[0] == 400
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb, ids, e = lab_db(d)
+        idle = DiscoveryRunner(fake_auth(), {}, idb, fetch_unifi=ok_fetch())
+        assert _h_post_discovery_scan(idle) == (400, {"error": "no discovery source is configured"})
+        r = runner_for(idb, ok_fetch())
+        assert _h_post_discovery_scan(r) == (200, {"ok": True, "queued": True})
+        code, body = _h_get_discovery_status(r)
+        assert code == 200 and body["sources"]["unifi"]["configured"] is True
+        hdb.close()
+
+
+def _serve_once(idb, auth, runner):
+    handler = make_handler(None, {}, "/dev/null", auth_manager=auth, inventory_db=idb,
+                           discovery_runner=runner)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=server.handle_request)
+    t.start()
+    return server, server.server_address[1], t
+
+
+def _post(port, path, cookie, token, body=b"{}"):
+    headers = {"Cookie": f"nw_session={cookie}", "Content-Type": "application/json"}
+    if token:
+        headers["X-CSRF-Token"] = token
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=body,
+                                 method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as err:
+        return err.code, json.loads(err.read())
+
+
+def test_scan_route_is_admin_only_and_status_route_is_open_to_users(tmp_path):
+    hdb, idb, ids, e = lab_db(str(tmp_path))
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    auth.create_user("bob", "password123")
+    runner = runner_for(idb, ok_fetch())
+    bob, root = auth.make_session_cookie("bob"), auth.make_session_cookie("root")
+
+    server, port, t = _serve_once(idb, auth, runner)
+    try:
+        assert _post(port, "/api/discovery/scan", bob, auth.csrf_token_for_cookie(bob))[0] == 403
+    finally:
+        server.server_close(); t.join()
+    server, port, t = _serve_once(idb, auth, runner)
+    try:
+        assert _post(port, "/api/discovery/scan", root, auth.csrf_token_for_cookie(root)) == (
+            200, {"ok": True, "queued": True})
+    finally:
+        server.server_close(); t.join()
+    server, port, t = _serve_once(idb, auth, runner)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/discovery/status",
+                                     headers={"Cookie": f"nw_session={bob}"})
+        with urllib.request.urlopen(req) as r:
+            assert json.loads(r.read())["sources"]["unifi"]["configured"] is True
+    finally:
+        server.server_close(); t.join()
+    hdb.close()
+
+
+def test_accept_routes_require_csrf_and_route_correctly(tmp_path):
+    hdb, idb, ids, e = lab_db(str(tmp_path))
+    scan(idb)
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("bob", "password123")
+    bob = auth.make_session_cookie("bob")
+    s = pending(idb)[f"edge:unifi:{VF2_MAC}"]
+    body = json.dumps({"items": [{"id": s["id"], "fingerprint": s["fingerprint"]}]}).encode()
+
+    server, port, t = _serve_once(idb, auth, None)
+    try:
+        assert _post(port, "/api/suggestions/accept-all", bob, None, body)[0] == 403
+    finally:
+        server.server_close(); t.join()
+    server, port, t = _serve_once(idb, auth, None)
+    try:
+        code, out = _post(port, "/api/suggestions/accept-all", bob, auth.csrf_token_for_cookie(bob), body)
+        assert code == 200 and out["results"][0]["ok"] is True
+    finally:
+        server.server_close(); t.join()
+    hdb.close()
