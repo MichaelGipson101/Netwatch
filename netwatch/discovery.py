@@ -34,14 +34,26 @@ def is_likely_guest_mac(mac):
         return False
 
 
+def _is_port_idx(value):
+    """True for a real port_idx: an int, excluding bool (a bool is an int
+    subclass in Python but never a legitimate port_idx)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def parse_unifi(devices_payload, clients_payload):
-    """Classic-API JSON (stat/device, stat/sta) -> plain dicts."""
+    """Classic-API JSON (stat/device, stat/sta) -> plain dicts.
+
+    Malformed rows (wrong type, or a port_table entry whose port_idx isn't a
+    real int) are skipped rather than raising - one bad row from the
+    controller shouldn't stop the whole scan."""
     switches = []
     for d in (devices_payload or {}).get("data") or []:
-        if d.get("type") != "usw":
+        if not isinstance(d, dict) or d.get("type") != "usw":
             continue
+        port_rows = [p for p in (d.get("port_table") or [])
+                     if isinstance(p, dict) and _is_port_idx(p.get("port_idx"))]
         ports = []
-        for p in sorted(d.get("port_table") or [], key=lambda p: p.get("port_idx") or 0):
+        for p in sorted(port_rows, key=lambda p: p["port_idx"]):
             idx = p.get("port_idx")
             ports.append({
                 "name": p.get("name") or f"Port {idx}",
@@ -57,7 +69,7 @@ def parse_unifi(devices_payload, clients_payload):
             "chassis_mac": _norm_mac(n.get("chassis_id")),
             "mgmt_ips": list(n.get("mgmt_ips") or []),
             "remote_port": normalize_port(n.get("port_id")),
-        } for n in (d.get("lldp_table") or []) if n.get("chassis_id")]
+        } for n in (d.get("lldp_table") or []) if isinstance(n, dict) and n.get("chassis_id")]
         switches.append({
             "mac": _norm_mac(d.get("mac")),
             "name": d.get("name") or d.get("model") or "UniFi switch",
@@ -67,7 +79,7 @@ def parse_unifi(devices_payload, clients_payload):
         })
     clients = []
     for c in (clients_payload or {}).get("data") or []:
-        if not c.get("is_wired") or not c.get("sw_mac"):
+        if not isinstance(c, dict) or not c.get("is_wired") or not c.get("sw_mac"):
             continue
         try:
             sw_port = int(c.get("sw_port"))

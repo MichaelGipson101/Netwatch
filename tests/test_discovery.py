@@ -220,3 +220,32 @@ def test_observations_with_guest_set_drop_guests_and_keep_nodes():
     edges = {o["child"]["mac"]: o["parent_port"] for o in obs if o["type"] == "edge"}
     assert edges[NODE8] == "Port 8" and edges[NODE11] == "Port 11"
     assert GUEST_MC not in edges and GUEST_HA not in edges
+
+
+def test_parse_unifi_skips_malformed_rows():
+    """A malformed row anywhere in the payload is skipped, not fatal (review
+    fix round 1): non-dict entries in devices/clients `data`, non-dict
+    entries in `port_table`/`lldp_table`, and port_table rows whose
+    `port_idx` isn't a real int."""
+    devices_payload = {"data": [
+        "junk",
+        {"type": "usw", "mac": USW_MAC, "name": "SW1", "ip": "192.168.1.1",
+         "port_table": [
+             {"port_idx": 2, "name": "Port 2", "up": True, "speed": 1000, "poe_enable": True},
+             {"port_idx": "weird", "name": "X"},
+             {"port_idx": None},
+             "junk",
+             {"port_idx": 1, "name": "Port 1", "up": False, "speed": 0, "poe_enable": False},
+         ],
+         "lldp_table": ["junk", {"chassis_id": EERO_LLDP_MAC, "local_port_idx": 1,
+                                 "local_port_name": "Port 1", "port_id": "1"}]},
+    ]}
+    clients_payload = {"data": ["junk", _sta(PI5_MAC, 1)]}
+
+    snap = parse_unifi(devices_payload, clients_payload)  # must not raise
+
+    [sw] = snap["switches"]
+    assert [p["idx"] for p in sw["ports"]] == [1, 2]  # weird/None/junk rows dropped, sorted
+    assert sw["lldp"] == [{"local_port_idx": 1, "local_port_name": "Port 1",
+                           "chassis_mac": EERO_LLDP_MAC, "mgmt_ips": [], "remote_port": "1"}]
+    assert {c["mac"] for c in snap["clients"]} == {PI5_MAC}
