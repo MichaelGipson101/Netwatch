@@ -1437,6 +1437,11 @@ class InventoryDB:
                         self.conn.execute(
                             "UPDATE inventory SET properties = ?, updated_at = ? WHERE id = ?",
                             (json.dumps(props), now, pf["id"]))
+                for f in changes.get("ips", []):
+                    # A guest's IP from Proxmox/ARP fills an empty field only.
+                    self.conn.execute(
+                        "UPDATE inventory SET ip = ?, updated_at = ? "
+                        "WHERE id = ? AND (ip IS NULL OR ip = '')", (f["ip"], now, f["id"]))
                 self.conn.execute("COMMIT")
             except BaseException:
                 self._rollback_quietly()

@@ -1231,3 +1231,29 @@ def test_runner_passes_unknown_guest_set_to_inference_when_proxmox_fails():
         assert f"edge:inferred:{DESKTOP_MAC}" in k
         assert f"edge:inferred:{odd}" not in k
         hdb.close()
+
+
+# ── Guest monitoring: guest IPs (Proxmox first, then UniFi/ARP by MAC) ──────
+
+def test_guest_ips_come_from_proxmox_then_arp_and_only_fill_empty_fields():
+    snap = proxmox_snapshot(pve_cache(), cluster_status(), CONFIGS, interfaces={
+        ("prodesk1", 301): [{"hardware-address": MC_MAC, "inet": "192.168.6.220/22"}]})
+    records = guest_records()
+    records[-2]["ip"] = "192.168.7.99"              # Sun Solaris: recorded by hand
+    ch = run(proxmox_observations(snap) + lab_unifi_obs(), records,
+             ip_macs={"192.168.5.110": HA_MAC, "192.168.6.129": SOL_MAC0,
+                      "127.0.0.1": HA_MAC, "192.168.6.221": MC_MAC})
+    assert keys(ch)["device:proxmox:prodesk1:301"]["payload"]["device"]["ip"] == "192.168.6.220"
+    assert {f["id"]: f["ip"] for f in ch["ips"]} == {71: "192.168.5.110"}   # HAOS via ARP
+
+
+def test_scan_fills_an_empty_inventory_ip_only():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        empty = add_device(idb, "pihole", "vm")
+        kept = add_device(idb, "Jellyfin", "vm", ip="192.168.6.224")
+        idb.apply_discovery_changes({"ips": [{"id": empty, "ip": "192.168.6.14"},
+                                             {"id": kept, "ip": "192.168.6.1"}]}, NOW)
+        assert idb.get(empty)["ip"] == "192.168.6.14"
+        assert idb.get(kept)["ip"] == "192.168.6.224"
+        hdb.close()

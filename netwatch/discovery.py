@@ -291,7 +291,16 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
     if not healthy_sources:
         return {"upserts": [], "resolve": [], "touch": [], "props": []}
     by_id, by_mac, by_ip = _index_records(records)
-    upserts, touch, props_fill = {}, {}, {}
+    upserts, touch, props_fill, ip_fill = {}, {}, {}, {}
+    # Guest IP fallback when Proxmox couldn't say (no QEMU guest agent): the
+    # same MAC seen by UniFi or the Pi's ARP table. Lowest IP wins on a tie.
+    mac_ips = {}
+    for ip, mac in sorted((ip_macs or {}).items()):
+        if isinstance(ip, str) and ip.count(".") == 3 and not ip.startswith(("127.", "169.254.")):
+            mac_ips.setdefault(_norm_mac(mac), ip)
+
+    def guest_ip(o):
+        return o.get("ip") or next((mac_ips[m] for m in o.get("macs") or [] if m in mac_ips), None)
     held_macs, held_ports = {}, set()        # held_macs: source -> {mac}
     held_keys_extra, held_prefixes = set(), set()
     stale_hold_keys, stale_hold_prefixes = set(), set()
@@ -597,6 +606,9 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                         if props.get(k) in (None, "")}
                 if fill:
                     props_fill[guest["id"]] = fill
+                ip = guest_ip(o)
+                if ip and not guest.get("ip"):
+                    ip_fill[guest["id"]] = ip   # fill only; a recorded IP is never replaced
             observe_edge(guest, node, None, None, subject, o["external_key"],
                          "virtual", o["source"])
             return
@@ -609,7 +621,7 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
         props = {k: v for k, v in props.items() if v is not None}
         kind_label = "LXC" if o["guest_type"] == "lxc" else "VM"
         suggest("device", o["source"], f"device:{o['source']}:{subject}", {
-            "device": {"system": o["name"], "mac": (o["macs"] or [None])[0], "ip": None,
+            "device": {"system": o["name"], "mac": (o["macs"] or [None])[0], "ip": guest_ip(o),
                        "device_type": "vm", "category": vm_category, "properties": props},
             "edge": {"parent_id": node["id"], "parent_name": node["system"],
                      "parent_port": None, "child_port": None,
@@ -743,7 +755,8 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                and not is_held(s["subject_key"])]
     return {"upserts": list(upserts.values()), "resolve": resolve,
             "touch": [{"id": k, "parent_port": v} for k, v in touch.items()],
-            "props": [{"id": k, "set": v} for k, v in props_fill.items()]}
+            "props": [{"id": k, "set": v} for k, v in props_fill.items()],
+            "ips": [{"id": k, "ip": v} for k, v in ip_fill.items()]}
 
 
 class UnifiError(Exception):
