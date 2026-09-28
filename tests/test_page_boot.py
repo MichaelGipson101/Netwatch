@@ -309,6 +309,60 @@ def test_home_with_real_content_does_not_overflow(width, theme, tmp_path):
     assert r.inner_width == width
 
 
+def _home_drift_fixtures(tmp_path, admin=True, name="vf2"):
+    """home_fixtures plus one ip_drift item (own copy: other tests count home_fixtures' rows)."""
+    fx = home_fixtures(tmp_path)
+    fx["/api/attention"]["items"].append({
+        "id": "ip_drift:aa:bb:cc:dd:ee:01", "kind": "ip_drift", "severity": "info",
+        "title": name + " moved to 192.168.4.44", "detail": "Monitored at 192.168.5.160",
+        "since": None, "affected": ["192.168.5.160"], "root_ip": None,
+        "link": {"page": "lab", "subview": "inventory", "params": {"inv": 5}},
+        "data": {"mac": "aa:bb:cc:dd:ee:01", "from_ip": "192.168.5.160", "to_ip": "192.168.4.44"}})
+    fx["/api/auth/status"]["admin"] = admin
+    return fx
+
+
+@needs_chromium
+def test_home_drift_row_shows_update_button_for_admins_only(tmp_path):
+    r = _home(tmp_path, _home_drift_fixtures(tmp_path))
+    assert r.errors == []
+    assert dom_count(r.dom, '<div class="hm-arow">') == 4
+    assert ('<button type="button" class="hm-apply" data-apply-mac="aa:bb:cc:dd:ee:01" '
+            'data-apply-from="192.168.5.160" data-apply-to="192.168.4.44">Update to 192.168.4.44</button>'
+            ) in r.dom
+    assert dom_count(r.dom, "data-apply-mac=") == 1
+    r = _home(tmp_path, _home_drift_fixtures(tmp_path, admin=False))
+    assert r.errors == []
+    assert dom_count(r.dom, '<div class="hm-arow">') == 4                 # the row itself still renders
+    assert 'class="hm-apply"' not in r.dom and "data-apply-mac=" not in r.dom
+
+
+@needs_chromium
+def test_home_drift_long_name_fixture_really_renders(tmp_path):
+    # the 320/390 boots dump only the iframe wrapper: prove at full width that the row the
+    # overflow test relies on (long title + Open + Update button) reaches the DOM
+    r = _home(tmp_path, _home_drift_fixtures(tmp_path, name="vf2-" + "z" * 60))
+    assert r.errors == []
+    assert "<b>vf2-" + "z" * 60 + " moved to 192.168.4.44</b>" in r.dom
+    assert 'class="hm-apply" data-apply-mac="aa:bb:cc:dd:ee:01"' in r.dom
+    assert 'class="hm-go" href="/lab/inventory?inv=5">Open' in r.dom
+
+
+@needs_chromium
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [320, 390])
+def test_home_drift_row_does_not_overflow(width, theme, tmp_path):
+    fx = _home_drift_fixtures(tmp_path, name="vf2-" + "z" * 60)
+    r = _home(tmp_path, fx, width=width, theme=theme)
+    assert r.errors == []
+    assert r.overflow <= 0, f"home drift row overflows at {width}px in {theme}: {r.overflow}"
+    assert r.inner_width == width
+
+
+def dom_count(dom, needle):
+    return dom.count(needle)
+
+
 @needs_chromium
 def test_lab_topology_renders_its_shell_and_problem_banner(tmp_path):
     dom = _boot("lab", "topology", tmp_path)

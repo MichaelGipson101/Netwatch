@@ -96,11 +96,20 @@ function hmAttentionRowHtml(item, isAdmin){
   var open = href ? '<a class="hm-go" href="' + escapeHtml(href) + '">Open →</a>' : '';
   var dismiss = (isAdmin && item.kind === 'poller_condition')
     ? '<button type="button" class="hm-dismiss" data-dismiss="' + escapeHtml(item.id) + '">Dismiss</button>' : '';
+  // An ip_drift item's action payload is only trusted (and a button only drawn) when well formed.
+  var ad = item.data, ipRe = /^\d{1,3}(\.\d{1,3}){3}$/;
+  var apply = (isAdmin && item.kind === 'ip_drift' && ad && typeof ad === 'object'
+      && typeof ad.mac === 'string' && /^[0-9a-f:]{17}$/.test(ad.mac)
+      && typeof ad.from_ip === 'string' && ipRe.test(ad.from_ip)
+      && typeof ad.to_ip === 'string' && ipRe.test(ad.to_ip))
+    ? '<button type="button" class="hm-apply" data-apply-mac="' + escapeHtml(ad.mac)
+      + '" data-apply-from="' + escapeHtml(ad.from_ip) + '" data-apply-to="' + escapeHtml(ad.to_ip)
+      + '">Update to ' + escapeHtml(ad.to_ip) + '</button>' : '';
   return '<div class="hm-arow">'
     + '<span class="hm-aico hm-aico-' + sev + '" aria-hidden="true"></span>'
     + '<div class="hm-at"><b>' + escapeHtml(item.title) + '</b>' + badge
     + '<div class="hm-ad">' + escapeHtml(item.detail || '') + '</div></div>'
-    + '<div class="hm-aact">' + open + dismiss + '</div></div>';
+    + '<div class="hm-aact">' + open + apply + dismiss + '</div></div>';
 }
 
 function hmHostTileHtml(h, states){
@@ -121,6 +130,19 @@ function hmGroupHtml(g, hb){
   var tiles = g.hosts.map(function(h){ return hmHostTileHtml(h, hb && hb[h.ip]); }).join('');
   return '<div class="hm-group"><div class="hm-grow"><div class="hm-gl"><span>' + escapeHtml(g.name)
     + '</span><em>' + g.up + '/' + g.total + '</em></div><div class="hm-gi">' + tiles + '</div></div></div>';
+}
+
+function hmApplyIpMessage(status, data){
+  data = data || {};
+  if(status === 200){
+    return {ok: true, text: typeof data.to === 'string' ? 'Updated to ' + data.to : 'Updated.'};
+  }
+  var text = "Couldn't update the address.";
+  if(status === 409 && data.error === 'ip_in_use') text = 'That IP is already monitored by another host.';
+  else if(status === 409 && data.error === 'drift_changed') text = 'That change is no longer pending. Refreshing.';
+  else if(status === 404) text = 'That host is no longer in the monitored list.';
+  else if(status === 403) text = 'Only admins can change host addresses.';
+  return {ok: false, text: text};
 }
 
 function hmExplainMessage(status, data){
@@ -272,6 +294,29 @@ function hmSafeUrl(url){
       _msg(''); _refreshAttentionSoon();
     }).catch(function () { _msg(failMsg); })
       .then(function () { _actionBusy = false; });
+  }
+  function _applyIp(btn) {
+    if (_actionBusy) return;
+    if (btn.getAttribute('data-armed') !== '1') {          // first click arms, second confirms
+      var label = btn.textContent;
+      btn.setAttribute('data-armed', '1'); btn.textContent = 'Confirm';
+      setTimeout(function () {
+        if (btn.getAttribute('data-armed') === '1') { btn.removeAttribute('data-armed'); btn.textContent = label; }
+      }, 4000);
+      return;
+    }
+    _actionBusy = true; btn.setAttribute('aria-disabled', 'true');
+    var status = 0;
+    _post('/api/attention/apply-ip', { mac: btn.getAttribute('data-apply-mac'),
+      from_ip: btn.getAttribute('data-apply-from'), to_ip: btn.getAttribute('data-apply-to') })
+      .then(function (r) { status = r.status; return r.json().catch(function () { return null; }); })
+      .then(function (d) {
+        var m = hmApplyIpMessage(status, d);
+        _msg(m.text);
+        if (m.ok && typeof nwStatus !== 'undefined') nwStatus.refreshNow();
+      })
+      .catch(function () { _msg(hmApplyIpMessage(0, null).text); })
+      .then(function () { _actionBusy = false; btn.removeAttribute('aria-disabled'); _refreshAttentionSoon(); });
   }
   function _dismiss(id) { _runAction({ id: id }, "Couldn't dismiss that item."); }
   function _restore() { _runAction({ restore_all: true }, "Couldn't restore dismissed items."); }
@@ -438,6 +483,8 @@ function hmSafeUrl(url){
     $('hm-attention-list').addEventListener('click', function (e) {
       var b = e.target.closest ? e.target.closest('[data-dismiss]') : null;
       if (b) _dismiss(b.getAttribute('data-dismiss'));
+      var a = e.target.closest ? e.target.closest('[data-apply-mac]') : null;
+      if (a) _applyIp(a);
     });
     $('hm-dismissed').addEventListener('click', function (e) { if (e.target.id === 'hm-restore') _restore(); });
     $('hm-explain-btn').addEventListener('click', _onExplain);

@@ -224,3 +224,57 @@ def test_valid_attention_requires_headline_string_and_items_array():
         hmValidAttention({verdict:{headline:'x'},items:{}}), hmValidAttention({verdict:'x',items:[]}),
         hmValidAttention({}), hmValidAttention(null), hmValidAttention(undefined), hmValidAttention('x')]""")
     assert out == [True, True, False, False, False, False, False, False, False, False, False, False]
+
+
+@needs_node
+def test_apply_ip_message_variants():
+    out = run_js(hm("hmApplyIpMessage"), """[
+      hmApplyIpMessage(200,{to:'192.168.4.44'}), hmApplyIpMessage(200,{}), hmApplyIpMessage(200,{to:5}),
+      hmApplyIpMessage(200,null), hmApplyIpMessage(200,undefined),
+      hmApplyIpMessage(409,{error:'ip_in_use'}), hmApplyIpMessage(409,{error:'drift_changed'}),
+      hmApplyIpMessage(409,{}), hmApplyIpMessage(409,null), hmApplyIpMessage(409,undefined),
+      hmApplyIpMessage(404,{error:'host_not_found'}), hmApplyIpMessage(404,null),
+      hmApplyIpMessage(403,{}), hmApplyIpMessage(403,undefined),
+      hmApplyIpMessage(400,{error:'invalid ip'}), hmApplyIpMessage(500,null), hmApplyIpMessage(0,undefined)]""")
+    generic = {"ok": False, "text": "Couldn't update the address."}
+    assert out[0] == {"ok": True, "text": "Updated to 192.168.4.44"}
+    assert out[1:5] == [{"ok": True, "text": "Updated."}] * 4
+    assert out[5] == {"ok": False, "text": "That IP is already monitored by another host."}
+    assert out[6] == {"ok": False, "text": "That change is no longer pending. Refreshing."}
+    assert out[7:10] == [generic] * 3
+    assert out[10:12] == [{"ok": False, "text": "That host is no longer in the monitored list."}] * 2
+    assert out[12:14] == [{"ok": False, "text": "Only admins can change host addresses."}] * 2
+    assert out[14:] == [generic] * 3
+
+
+@needs_node
+def test_attention_row_update_ip_button():
+    names = ("hmAttentionRowHtml", "hmItemHref")
+    out = run_js(hm(*names), """(() => {
+      const drift = (data, kind) => ({id:'ip_drift:aa:bb:cc:dd:ee:01', kind: kind || 'ip_drift', severity:'info',
+        title:'vf2 moved to 192.168.4.44', detail:'Monitored at 192.168.5.160', affected:[], link:null, data: data});
+      const good = {mac:'aa:bb:cc:dd:ee:01', from_ip:'192.168.5.160', to_ip:'192.168.4.44'};
+      const bad = d => hmAttentionRowHtml(drift(Object.assign({}, good, d)), true);
+      return {
+        admin: hmAttentionRowHtml(drift(good), true),
+        user: hmAttentionRowHtml(drift(good), false),
+        nodata: hmAttentionRowHtml(drift(undefined), true),
+        nulldata: hmAttentionRowHtml(drift(null), true),
+        hostileMac: bad({mac:'"><script>alert(1)</script>'}),
+        upperMac: bad({mac:'AA:BB:CC:DD:EE:01'}),
+        shortMac: bad({mac:'aa:bb'}),
+        hostileTo: bad({to_ip:'1.2.3.4"><img src=x onerror=alert(1)>'}),
+        badFrom: bad({from_ip:'host.local'}),
+        nonString: bad({to_ip:5}),
+        other: hmAttentionRowHtml(drift(good, 'connection_suggestions'), true),
+        poller: hmAttentionRowHtml(drift(good, 'poller_condition'), true),
+      };
+    })()""")
+    btn = ('<button type="button" class="hm-apply" data-apply-mac="aa:bb:cc:dd:ee:01" '
+           'data-apply-from="192.168.5.160" data-apply-to="192.168.4.44">Update to 192.168.4.44</button>')
+    assert btn in out["admin"] and 'class="hm-aact"' in out["admin"]
+    assert out["admin"].index('class="hm-aact"') < out["admin"].index('hm-apply')
+    for k in ("user", "nodata", "nulldata", "hostileMac", "upperMac", "shortMac", "hostileTo",
+              "badFrom", "nonString", "other", "poller"):
+        assert "hm-apply" not in out[k] and "data-apply" not in out[k], k
+    assert "<script" not in out["hostileMac"] and "<img" not in out["hostileTo"]

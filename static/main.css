@@ -1925,6 +1925,9 @@ a.servers-pill{text-decoration:none;display:inline-flex;align-items:center;gap:6
 .hm-bad{color:var(--red-text)}
 .hm-link,.hm-dismiss{background:none;border:none;font:inherit;font-size:12px;color:var(--hint);cursor:pointer;padding:4px 0}
 .hm-link:hover,.hm-dismiss:hover{color:var(--text)}
+.hm-apply{background:none;border:none;font:inherit;font-size:12px;color:var(--blue);cursor:pointer;padding:4px 0;white-space:nowrap}
+.hm-apply:hover{text-decoration:underline}
+.hm-apply[aria-disabled="true"]{opacity:.5;cursor:default}
 /* needs attention */
 .hm-arow{display:flex;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--border)}
 .hm-arow:first-child{border-top:0}
