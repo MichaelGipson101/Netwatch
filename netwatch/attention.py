@@ -414,3 +414,99 @@ class IPDriftMonitor:
                     logging.warning(f"IPDriftMonitor: pass failed: {e}")
                 stop_event.wait(self.INTERVAL_SECONDS)
         threading.Thread(target=_loop, daemon=True, name="ip-drift").start()
+
+
+NOTHING_TO_EXPLAIN = "Nothing needs attention right now."
+
+EXPLAIN_SYSTEM_PROMPT = (
+    "You are Mira, the assistant inside Netwatch, a homelab monitor. You will be given the list "
+    "of things that currently need attention. In 2 to 4 plain sentences, say what most likely "
+    "links them and what to check first. You only know what is in the list: do not invent "
+    "hosts, causes, or numbers. No markdown and no bullet points.")
+
+
+def _problems(items):
+    return [i for i in items if i["severity"] in ("critical", "warning")]
+
+
+def explain_key(items):
+    """Stable digest of the item set (ids and start times), independent of order."""
+    material = json.dumps(sorted((i["id"], i.get("since")) for i in items))
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def build_explain_messages(items, now):
+    lines = []
+    for i in items:
+        bits = [f"[{i['severity']}] {i['title']}"]
+        if i.get("detail"):
+            bits.append(i["detail"])
+        if i.get("since"):
+            bits.append(f"for {fmt_duration(now - i['since'])}")
+        if i.get("affected"):
+            bits.append("also affected: " + ", ".join(i["affected"]))
+        lines.append("- " + " — ".join(bits))
+    return [
+        {"role": "system", "content": EXPLAIN_SYSTEM_PROMPT},
+        {"role": "user", "content": "Currently needing attention:\n" + "\n".join(lines)},
+    ]
+
+
+def openrouter_complete(api_key, model, messages, timeout=45):
+    """One non-streaming chat completion; returns the assistant text. Raises on any failure."""
+    import urllib.request
+    payload = json.dumps({"model": model, "messages": messages, "max_tokens": 300}).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions", data=payload, method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://netwatch.local",
+            "X-Title": "Mira (Netwatch)",
+        })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = json.loads(resp.read().decode())
+    return body["choices"][0]["message"]["content"] or ""
+
+
+class Explainer:
+    """One-shot plain-language explanation of the current problems. Cached per item set and
+    rate limited so repeated taps cannot hammer the upstream API."""
+
+    MIN_INTERVAL_SECONDS = 30
+
+    def __init__(self, complete=None):
+        self._complete = complete or openrouter_complete
+        self._lock = threading.Lock()
+        self._key = None
+        self._text = None
+        self._last_call = None      # None: no call yet, so the first one is never rate limited
+
+    def explain(self, items, api_key, model, now=None):
+        now = time.time() if now is None else float(now)
+        generated = datetime.fromtimestamp(now).isoformat()
+        problems = _problems(items)
+        if not problems:
+            return 200, {"explanation": NOTHING_TO_EXPLAIN, "cached": False, "generated": generated}
+        if not (api_key or "").strip():
+            return 404, {"error": "ai_not_configured"}
+        key = explain_key(problems)
+        with self._lock:
+            if key == self._key and self._text:
+                return 200, {"explanation": self._text, "cached": True, "generated": generated}
+            wait = 0 if self._last_call is None else self.MIN_INTERVAL_SECONDS - (now - self._last_call)
+            if wait > 0:
+                if self._text:
+                    return 200, {"explanation": self._text, "cached": True, "stale": True,
+                                 "generated": generated}
+                return 429, {"error": "rate_limited", "retry_after": int(wait) + 1}
+            self._last_call = now
+            try:
+                text = (self._complete(api_key, model, build_explain_messages(problems, now)) or "").strip()
+            except Exception as e:
+                logging.warning(f"attention explain failed: {e}")
+                return 502, {"error": "explanation unavailable"}
+            if not text:
+                return 502, {"error": "empty explanation"}
+            self._key, self._text = key, text
+            return 200, {"explanation": text, "cached": False, "generated": generated}

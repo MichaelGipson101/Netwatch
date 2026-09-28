@@ -12,7 +12,7 @@ import argparse
 import logging
 
 from netwatch import VERSION
-from netwatch.attention import AlertLedger, IPDriftMonitor
+from netwatch.attention import AlertLedger, Explainer, IPDriftMonitor
 from netwatch.auth import AuthManager
 from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup, write_pre_migration_backup
 from netwatch.hosts import HostManager, IncidentLog, load_yaml
@@ -171,12 +171,13 @@ def main():
 
     drift_monitor = IPDriftMonitor(host_manager, inventory_db, read_neighbors)
     drift_monitor.start(stop_event)
+    explainer = Explainer()
 
     if not args.no_web:
         wt = threading.Thread(
             target=start_web_server,
             args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, pages_html["home"], history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db, "discovery_runner": discovery_runner, "pages": pages_html, "ledger": ledger, "drift_monitor": drift_monitor},
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db, "discovery_runner": discovery_runner, "pages": pages_html, "ledger": ledger, "drift_monitor": drift_monitor, "explainer": explainer},
             daemon=True
         )
         wt.start()

@@ -267,3 +267,81 @@ def test_heartbeat_route_serves_json_and_passes_the_query(tmp_path, hdb):
     finally:
         server.server_close()
         t.join()
+
+
+from netwatch.attention import Explainer
+
+
+class _Auth:
+    def __init__(self, key):
+        self.lock = threading.Lock()
+        self.data = {"openrouter_api_key": key}
+
+
+def _explain(hm, key="sk-x", settings=None, llm=None, now=1_000_000):
+    llm = llm or (lambda k, m, msgs: "It is probably the switch.")
+    return H._h_post_attention_explain(hm, _Inv(), None, None, _Auth(key), settings or {},
+                                       Explainer(complete=llm), now=now)
+
+
+def test_explain_handler_explains_current_problems_using_the_configured_model():
+    seen = {}
+
+    def llm(k, m, msgs):
+        seen["m"], seen["k"] = m, k
+        return "It is probably the switch."
+    hm = _HMgr([_host("sw", "10.0.0.2", False)])
+    s, p = _explain(hm, settings={"ai_model": "meta-llama/llama-3.3-70b-instruct:free"}, llm=llm)
+    assert s == 200 and p["explanation"] == "It is probably the switch."
+    assert seen == {"m": "meta-llama/llama-3.3-70b-instruct:free", "k": "sk-x"}
+
+
+def test_explain_handler_falls_back_to_the_free_model_for_an_unlisted_model():
+    seen = {}
+    _explain(_HMgr([_host("sw", "10.0.0.2", False)]), settings={"ai_model": "evil/model"},
+             llm=lambda k, m, msgs: seen.setdefault("m", m) or "x")
+    assert seen["m"] == "openrouter/free"
+
+
+def test_explain_handler_no_key_404_and_nothing_to_explain_200():
+    down = _HMgr([_host("sw", "10.0.0.2", False)])
+    assert _explain(down, key="")[0] == 404
+    s, p = _explain(_HMgr([_host("a", "10.0.0.1", True)]))
+    assert s == 200 and "Nothing needs attention" in p["explanation"]
+
+
+def test_explain_handler_without_an_explainer_is_404():
+    assert H._h_post_attention_explain(None, None, None, None, _Auth("k"), {}, None) == (
+        404, {"error": "ai_not_configured"})
+
+
+def test_explain_post_route_requires_a_session_and_csrf(tmp_path):
+    auth = _auth(tmp_path)
+    server, port, t = _server(auth, explainer=Explainer(complete=lambda k, m, msgs: "x"))
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/attention/explain", data=b"{}",
+                                     method="POST")
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        assert e.value.code in (401, 403)
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_explain_post_route_works_for_a_logged_in_user_with_csrf(tmp_path):
+    auth = _auth(tmp_path)
+    cookie = auth.make_session_cookie("bob")
+    token = auth.csrf_token_for_cookie(cookie)
+    server, port, t = _server(auth, explainer=Explainer(complete=lambda k, m, msgs: "x"))
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/attention/explain", data=b"{}", method="POST",
+            headers={"Cookie": f"nw_session={cookie}", "X-CSRF-Token": token,
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            body = json.loads(r.read())
+        assert r.status == 200 and "Nothing needs attention" in body["explanation"]   # no hosts -> fixed text
+    finally:
+        server.server_close()
+        t.join()

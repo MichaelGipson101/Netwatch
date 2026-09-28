@@ -91,13 +91,29 @@ Major subsystems, by module:
   `ups-replace-battery` (`RB`, default/`battery`) — on-battery and low-battery can both be active
   at once during a deep outage, so they're independent conditions rather than one escalating
   alert.
+- `netwatch/attention.py` — the attention layer behind Home's verdict and "Needs attention" list.
+  `AlertLedger` persists poller alert conditions in SQLite (`alert_state`, created by
+  `HistoryDB.SCHEMA`) so a restart does not re-send every still-active ntfy alert and each
+  condition has a `since` time; a 300s (`alert_cooldown_seconds`) cooldown stops flapping
+  conditions from re-notifying. `AlertGate` is the per-poller adapter: pollers keep their
+  in-memory `_alert_state` (tests pin it) and also call the gate, and `ledger=None` reproduces the
+  old behavior exactly. Level-triggered pollers call `begin_pass()`/`end_pass()` inside
+  `_check_alerts` to clear conditions that vanished; Proxmox's edge-triggered `stop:<vmid>`
+  alerts are deliberately excluded from that reconciliation. `build_attention` (pure) groups down
+  hosts under their topmost down ancestor using `compute_primary_parents`, merges ledger rows,
+  pending connection suggestions and `IPDriftMonitor` results (hosts that are checked and
+  currently down whose MAC is seen only at other IPs in the Pi's neighbor table), and writes a
+  deterministic headline: never LLM-generated. `Explainer` backs `POST /api/attention/explain`, a
+  cached, rate-limited one-shot OpenRouter call that sees only the attention items.
 - `netwatch/http_handlers.py` — `build_topology_payload` / `build_api_payload` (assemble the
   JSON the frontend polls; topology payload merges live host status onto inventory records +
   connection edges) plus every `_h_get_*`/`_h_post_*` handler function, each taking whatever
   state it needs as explicit arguments (these are unit-testable in isolation — see how
   `tests/test_netwatch.py` imports them directly). When adding an endpoint, add a `_h_*`
   function here and wire it up as a branch in `netwatch/server.py`'s `do_GET`/`do_POST`,
-  following the existing naming convention.
+  following the existing naming convention. Home's attention endpoints live here:
+  `GET /api/attention` (verdict + items, never errors), `GET /api/heartbeat` (per-host 48
+  half-hour buckets over 24h, cached 60s), and `POST /api/attention/explain`.
 - `netwatch/server.py` — **HTTP layer**: `make_handler()` builds a `BaseHTTPRequestHandler`
   subclass with `do_GET`/`do_POST` implemented as long if/elif chains over `self.path` (no
   routing library/decorator table), dispatching to the `_h_*` handlers in `http_handlers.py`.

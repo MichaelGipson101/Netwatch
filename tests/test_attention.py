@@ -573,3 +573,117 @@ def test_drift_monitor_survives_a_failing_reader():
     with pytest.raises(OSError):
         mon.refresh()                               # refresh itself propagates...
     assert mon.get() == []                          # ...and leaves the previous result alone
+
+
+import json
+
+from netwatch.attention import Explainer, build_explain_messages, explain_key, openrouter_complete
+
+ITEM_A = {"id": "host_down:10.0.0.2", "kind": "host_down", "severity": "critical", "title": "sw is down",
+          "detail": "Down 10 min · root cause of 2 host alerts", "since": NOW - 600,
+          "affected": ["10.0.0.3"], "root_ip": "10.0.0.2", "link": None}
+ITEM_B = {"id": "alert:x", "kind": "poller_condition", "severity": "warning", "title": "UPS on battery",
+          "detail": "UPS · 1 min", "since": NOW - 60, "affected": [], "root_ip": None, "link": None}
+ITEM_INFO = {"id": "connection_suggestions", "kind": "connection_suggestions", "severity": "info",
+             "title": "3 connection suggestions", "detail": "Review in Lab", "since": None,
+             "affected": [], "root_ip": None, "link": None}
+
+
+class _Llm:
+    def __init__(self, text="  Probably the switch.  "):
+        self.calls, self.text = [], text
+
+    def __call__(self, api_key, model, messages):
+        self.calls.append((api_key, model, messages))
+        if isinstance(self.text, Exception):
+            raise self.text
+        return self.text
+
+
+def test_explain_key_changes_with_the_set_and_since_but_not_order():
+    assert explain_key([ITEM_A, ITEM_B]) == explain_key([ITEM_B, ITEM_A])
+    assert explain_key([ITEM_A]) != explain_key([ITEM_A, ITEM_B])
+    assert explain_key([ITEM_A]) != explain_key([{**ITEM_A, "since": NOW - 5}])
+
+
+def test_prompt_contains_items_and_no_secrets():
+    msgs = build_explain_messages([ITEM_A, ITEM_B], NOW)
+    assert msgs[0]["role"] == "system" and msgs[1]["role"] == "user"
+    body = msgs[1]["content"]
+    assert "sw is down" in body and "10.0.0.3" in body and "UPS on battery" in body
+    assert "[critical]" in body and "for 10 min" in body
+    assert "sk-secret" not in json.dumps(msgs)
+
+
+def test_explain_calls_upstream_once_then_serves_the_cache():
+    llm = _Llm()
+    ex = Explainer(complete=llm)
+    s, p = ex.explain([ITEM_A, ITEM_INFO], "sk-secret", "openrouter/free", now=1000)
+    assert s == 200 and p["explanation"] == "Probably the switch." and p["cached"] is False
+    s, p = ex.explain([ITEM_A, ITEM_INFO], "sk-secret", "openrouter/free", now=1005)
+    assert s == 200 and p["cached"] is True and len(llm.calls) == 1
+    assert llm.calls[0][0] == "sk-secret" and llm.calls[0][1] == "openrouter/free"
+    assert "3 connection suggestions" not in llm.calls[0][2][1]["content"]   # info items are not sent
+
+
+def test_explain_regenerates_when_the_set_changes_but_respects_the_rate_limit():
+    llm = _Llm()
+    ex = Explainer(complete=llm)
+    ex.explain([ITEM_A], "k", "m", now=1000)
+    s, p = ex.explain([ITEM_A, ITEM_B], "k", "m", now=1010)     # changed, but inside 30s
+    assert s == 200 and p["cached"] is True and p["stale"] is True and len(llm.calls) == 1
+    s, p = ex.explain([ITEM_A, ITEM_B], "k", "m", now=1031)     # outside the window
+    assert s == 200 and p["cached"] is False and len(llm.calls) == 2
+
+
+def test_explain_rate_limited_with_nothing_cached_is_429():
+    ex = Explainer(complete=_Llm(RuntimeError("upstream down")))
+    assert ex.explain([ITEM_A], "k", "m", now=1000)[0] == 502   # a failed call still starts the window
+    s, p = ex.explain([ITEM_A], "k", "m", now=1005)
+    assert s == 429 and p["error"] == "rate_limited" and p["retry_after"] >= 1
+
+
+def test_explain_no_key_is_404_and_no_problems_is_fixed_text_without_a_call():
+    llm = _Llm()
+    ex = Explainer(complete=llm)
+    assert ex.explain([ITEM_A], "  ", "m", now=1) == (404, {"error": "ai_not_configured"})
+    s, p = ex.explain([ITEM_INFO], "k", "m", now=1)
+    assert s == 200 and "Nothing needs attention" in p["explanation"] and not llm.calls
+    s, p = ex.explain([], "", "m", now=1)                       # no items: fixed text even without a key
+    assert s == 200 and not llm.calls
+
+
+def test_explain_upstream_failure_is_502_and_leaks_nothing():
+    ex = Explainer(complete=_Llm(RuntimeError("connect to https://openrouter.ai failed key=sk-secret")))
+    s, p = ex.explain([ITEM_A], "sk-secret", "m", now=1)
+    assert s == 502 and "sk-secret" not in json.dumps(p) and "openrouter" not in json.dumps(p)
+    s, p = Explainer(complete=_Llm("   ")).explain([ITEM_A], "k", "m", now=1)
+    assert s == 502 and p["error"] == "empty explanation"
+
+
+def test_openrouter_complete_posts_a_non_streaming_request(monkeypatch):
+    import urllib.request
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "Hello"}}]}).encode()
+
+    def fake_urlopen(req, timeout=None):
+        seen["req"], seen["timeout"] = req, timeout
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    out = openrouter_complete("sk-x", "openrouter/free", [{"role": "user", "content": "hi"}])
+    assert out == "Hello"
+    req = seen["req"]
+    body = json.loads(req.data)
+    assert body["model"] == "openrouter/free" and "stream" not in body and body["max_tokens"] == 300
+    assert req.get_header("Authorization") == "Bearer sk-x"
+    assert req.full_url == "https://openrouter.ai/api/v1/chat/completions" and seen["timeout"] == 45
