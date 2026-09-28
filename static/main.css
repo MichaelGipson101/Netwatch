@@ -169,7 +169,6 @@ body.topo-fullscreen-active .topo-web{
 body.topo-fullscreen-active > nav,
 body.topo-fullscreen-active .tabs,
 body.topo-fullscreen-active .summary,
-body.topo-fullscreen-active .power-card,
 body.topo-fullscreen-active .topo-view-toolbar,
 body.topo-fullscreen-active .problem-banner,
 body.topo-fullscreen-active footer,
@@ -247,7 +246,7 @@ body.topo-fullscreen-active .topo-web-overlay-tr{top:50px;right:60px}
 
 /* When web mode is active, hide the main metrics row entirely - the
    overlay metrics inside the canvas take over. */
-body.nw-topo-web .summary,body.nw-topo-web .power-card{display:none}
+body.nw-topo-web .summary{display:none}
 /* And give the topology view itself more vertical room since the
    metrics row no longer takes any. */
 body.nw-topo-web .topo-web{height:min(82vh,1100px)}
@@ -381,11 +380,7 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 
 /* One orchestrated load reveal. body.nw-anim is added by JS before first
    data render and removed after; without JS everything is simply visible. */
-body.nw-anim .scard,body.nw-anim .topo-group,body.nw-anim .table{animation:nw-rise .38s cubic-bezier(.2,.7,.3,1) backwards}
-body.nw-anim .scard:nth-child(1){animation-delay:.02s}
-body.nw-anim .scard:nth-child(2){animation-delay:.07s}
-body.nw-anim .scard:nth-child(3){animation-delay:.12s}
-body.nw-anim .scard:nth-child(4){animation-delay:.17s}
+body.nw-anim .topo-group,body.nw-anim .table{animation:nw-rise .38s cubic-bezier(.2,.7,.3,1) backwards}
 body.nw-anim .topo-group:nth-child(1),body.nw-anim .group:nth-child(1) .table{animation-delay:.10s}
 body.nw-anim .topo-group:nth-child(2),body.nw-anim .group:nth-child(2) .table{animation-delay:.16s}
 body.nw-anim .topo-group:nth-child(3),body.nw-anim .group:nth-child(3) .table{animation-delay:.22s}
@@ -401,8 +396,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   .event-bar,.d-incident-bar{animation:none !important}
   .nav-glow{animation:none}
   #ai-bubble-btn.streaming{animation:none}
-  body.nw-anim .scard,body.nw-anim .topo-group,body.nw-anim .table{animation:none}
-  .scard:hover{transform:none}
+  body.nw-anim .topo-group,body.nw-anim .table{animation:none}
 }
 
 /* Background grid drift - very slow translate so the dots feel alive */
@@ -502,15 +496,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 
 .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
 @media(max-width:640px){.summary{grid-template-columns:repeat(2,1fr)}}
-.scard{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow-1);transition:box-shadow .2s,transform .2s}
-.scard-label{font-size:10px;font-family:'DM Mono',monospace;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:8px}
-.scard-val{font-size:28px;font-weight:600;letter-spacing:-.03em;line-height:1}
-.scard-val sup{font-size:13px;font-weight:400;color:var(--hint);margin-left:2px}
-.scard-sub{font-size:11px;color:var(--hint);margin-top:5px}
-.scard-spark{display:block;margin-top:8px}
-.scard-health-ok{background:var(--green-soft);border-color:var(--green-bg)}
-.scard-health-warn{background:var(--red-soft);border-color:var(--red-bg)}
-.scard:hover{transform:translateY(-1px);box-shadow:var(--shadow-2)}
 
 /* Topology */
 .topo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
@@ -1148,8 +1133,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 }
 @media (max-width: 480px){
   #clock{display:none}
-  .scard{padding:12px 14px}
-  .scard-val{font-size:22px}
 }
 /* ── Deep Frost: ambient background blobs (dark mode only) ── */
 [data-theme="dark"] body{background-image:radial-gradient(ellipse 640px 420px at 28% -8%,rgba(93,187,141,.052) 0%,transparent 68%),radial-gradient(ellipse 420px 320px at 84% 92%,rgba(93,187,141,.032) 0%,transparent 68%);background-attachment:fixed}
@@ -1170,10 +1153,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 /* Light mode: subtle blur on modal panel */
 .modal{backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 /* ── Deep Frost: summary cards ── */
-[data-theme="dark"] .scard{background:rgba(26,25,23,.65);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border-color:rgba(255,255,255,.08);box-shadow:0 4px 20px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.06)}
 /* Preserve semantic health colors */
-[data-theme="dark"] .scard-health-ok{background:var(--green-soft);border-color:var(--green-bg);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
-[data-theme="dark"] .scard-health-warn{background:var(--red-soft);border-color:var(--red-bg);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
 /* ── Deep Frost: host table container ── */
 [data-theme="dark"] .table{background:rgba(26,25,23,.60);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-color:rgba(255,255,255,.07)}
 /* ── Deep Frost: topology overlays ── */
@@ -1312,7 +1292,7 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 [data-theme="light"] body{background-image:radial-gradient(ellipse 720px 460px at 30% -10%,rgba(22,163,74,.045) 0%,transparent 65%),radial-gradient(ellipse 460px 340px at 85% 100%,rgba(22,163,74,.03) 0%,transparent 65%);background-attachment:fixed}
 [data-theme="light"] .dev-icon{filter:brightness(1.30) saturate(1.12) contrast(1.05)}
 
-#clock,.scard-val,.d-stat-val,.lat,.uptime-pct,.topo-overlay-num,.inv-metric-val,.event-dur,.d-pi-val{font-variant-numeric:tabular-nums}
+#clock,.d-stat-val,.lat,.uptime-pct,.topo-overlay-num,.inv-metric-val,.event-dur,.d-pi-val{font-variant-numeric:tabular-nums}
 
 /* ── Topo canvas glass: light defaults, dark overrides ──
    (.ov-topo-box shares the edge palette so the Overview mini-preview
@@ -1696,39 +1676,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .pbs-badge-failed { background: var(--red-bg);   color: var(--red-text); }
 .pbs-badge-none   { background: var(--subtle);   color: var(--muted); }
 
-/* ── Power card ──────────────────────────────────────────────────────────── */
-.power-card {
-  margin: 0 0 20px 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 18px 10px;
-}
-.power-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.power-card-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.power-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--border);
-  flex-shrink: 0;
-}
-.power-dot-ok  { background: var(--green); }
-.power-dot-err { background: var(--red); }
 .ups-nav-icon {
   display: inline-flex;
   align-items: center;
@@ -1743,44 +1690,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .ups-nav-icon-fill-warn { fill: var(--amber); }
 .ups-nav-icon-fill-crit { fill: var(--red); }
 .ups-nav-icon-fill-unknown { fill: var(--muted); }
-.power-card-updated { font-size: 11px; color: var(--muted); }
-.power-card-body {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-}
-.power-card-live { flex-shrink: 0; }
-.power-watts {
-  font-size: 28px;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.1;
-  margin-bottom: 6px;
-}
-.power-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.power-chip {
-  font-size: 11px;
-  background: var(--subtle);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 7px;
-  color: var(--muted);
-  font-family: 'DM Mono', monospace;
-}
-.power-chip:empty { display: none; }
-.power-sparkline {
-  flex: 1;
-  min-width: 0;
-  height: 40px;
-  max-width: 220px;
-  margin-left: auto;
-  overflow: hidden;
-}
-.power-sparkline svg { display: block; width: 100%; }
 
 /* ── Overview tab ───────────────────────────────────────────────────────── */
 .ov-greeting{margin-bottom:22px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}

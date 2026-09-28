@@ -180,10 +180,10 @@ HTTP access log: `tail -f monitor.log`
 ## Files
 
 ```
-monitor.py          — application core (~5,200 lines)
-dashboard.html      — frontend shell (served by the Python server)
-static/             — dashboard CSS/JS (main.css, core.js, topology.js, inventory.js,
-                       proxmox.js, nas.js, ai-panel.js, settings.js, auth.js, utils.js,
+monitor.py          — entrypoint shim (the application lives in the netwatch/ package)
+netwatch/           — Python package: hosts, auth, storage, pollers, HTTP server, pages
+templates/          — page templates (_base.html, one fragment per page, partials/)
+static/             — dashboard CSS/JS (main.css, shell.js, per-page scripts, utils.js,
                        vendored D3 + self-hosted fonts, icons/manifest)
 hosts.yaml          — host list (ping targets)
 hosts.yaml.example  — template

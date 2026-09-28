@@ -1,4 +1,4 @@
-"""Entry point: argument parsing, dashboard HTML loading, and process wiring.
+"""Entry point: argument parsing, page template assembly, and process wiring.
 `main()` loads hosts.yaml, starts HistoryDB/prune/flush threads, starts the
 NAS/Proxmox/HA/PBS pollers conditionally, starts the web server in a thread,
 then runs either the curses TUI or a headless sleep loop."""
@@ -21,23 +21,11 @@ from netwatch.server import start_web_server
 from netwatch.pages import render_all
 from netwatch.tui import draw_tui
 
-# monitor.py, hosts.yaml, auth.json, netwatch.db, monitor.log, and
-# dashboard.html all live at the repo root, one directory above this
-# package. `__file__` here points inside netwatch/, so - unlike the old
+# monitor.py, hosts.yaml, auth.json, netwatch.db, monitor.log, templates/ and static/
+# all live at the repo root, one directory above this package. `__file__` here points inside netwatch/, so - unlike the old
 # monitor.py, where `__file__` *was* the repo root - path resolution needs
 # an extra `dirname()` hop to land in the right place.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-# ============================================================================
-# Dashboard HTML (loaded from dashboard.html at startup)
-# ============================================================================
-
-def _load_dashboard_html(base_dir):
-    path = os.path.join(base_dir, "dashboard.html")
-    with open(path, encoding="utf-8") as f:
-        # {{VERSION}} markers cache-bust the /static/ asset URLs on upgrades
-        return f.read().replace("{{VERSION}}", VERSION)
 
 
 # ============================================================================
@@ -70,7 +58,6 @@ def main():
 
     config_path = os.path.join(_REPO_ROOT, args.config)
     base_dir = _REPO_ROOT
-    dashboard_html = _load_dashboard_html(base_dir)
     pages_html = render_all(base_dir, VERSION)
     config   = load_yaml(config_path)
     settings = config.get("settings", {})

@@ -33,6 +33,8 @@ def test_resolve_known_paths(path, expected):
 @pytest.mark.parametrize("path", [
     "/lab/nope", "/monitor/hosts/extra", "//", "/LAB", "/monitor/events/x", "/static/x.js",
     "/api/status", "/infra/proxmox/x", "/links/x", "/lab//topology", "/index.htm", "",
+    "/Lab", "/MONITOR/hosts", "/lab/Topology", "/lab/../monitor", "/lab/./topology", "/lab/%74opology",
+    "/%6Cab", "/lab;x", "/lab/topology%2F", "/home", "/overview",
 ])
 def test_resolve_rejects_unknown_paths(path):
     assert resolve(path) is None
@@ -96,9 +98,11 @@ def test_http_serves_each_page_and_404s_unknown():
                 assert r.status == 200
                 assert r.read() == f"<html>{name}</html>".encode()
                 assert r.headers["Cache-Control"] == "no-cache"
-        with pytest.raises(urllib.error.HTTPError) as e:
-            _get(server, "/lab/nope")
-        assert e.value.code in (404,)
+        # ("//" is not listed: http.server itself collapses a leading "//" to "/" before routing)
+        for bad in ("/lab/nope", "/LAB", "/lab//topology", "/Lab/topology", "/lab/topology/x"):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                _get(server, bad)
+            assert e.value.code == 404, bad
     finally:
         server.server_close()
 

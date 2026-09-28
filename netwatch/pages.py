@@ -3,7 +3,7 @@
 Templates live in <base_dir>/templates/: _base.html (the shell), one fragment per page
 (content, then a line `<!--@modals-->`, then that page's modals) and partials/*.html
 included with {{> name}}. Everything is assembled once at startup, so template edits
-need a service restart (same as the old dashboard.html).
+need a service restart.
 """
 import os
 import re

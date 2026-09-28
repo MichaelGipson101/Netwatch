@@ -34,10 +34,10 @@ python3 monitor.py --restore <tarball> [--force]
 ```
 
 There's no build/lint step — it's plain Python served directly. `static/*.js`/`*.css` are
-read off disk at request time (cached client-side via `?v=` query strings), but
-`dashboard.html` is loaded **once at startup** (`_load_dashboard_html`, in
-`netwatch/__main__.py`) — restart the server to see HTML changes. New files under `static/`
-must also be added to the `_STATIC_FILES` allowlist in `netwatch/server.py` or they 404.
+read off disk at request time (cached client-side via `?v=` query strings), but the page
+templates under `templates/` are assembled **once at startup** (`netwatch/pages.py::render_all`,
+called from `netwatch/__main__.py`) — restart the server to see HTML changes. New files under
+`static/` must also be added to the `_STATIC_FILES` allowlist in `netwatch/server.py` or they 404.
 
 First run requires creating an admin account (no auth configured = dashboard shows setup wizard):
 
@@ -101,7 +101,11 @@ Major subsystems, by module:
 - `netwatch/server.py` — **HTTP layer**: `make_handler()` builds a `BaseHTTPRequestHandler`
   subclass with `do_GET`/`do_POST` implemented as long if/elif chains over `self.path` (no
   routing library/decorator table), dispatching to the `_h_*` handlers in `http_handlers.py`.
-  Also owns `start_web_server()` and the `_STATIC_FILES` allowlist.
+  Also owns `start_web_server()` and the `_STATIC_FILES` allowlist. Page URLs (`/`, `/monitor`,
+  `/lab/...`) are matched first via `netwatch.pages.resolve()`; a path it doesn't know (e.g. `/lab/nope`) falls through to a 404.
+- `netwatch/pages.py` — the page table (`PAGES`: name/title/URL/sub-views/scripts), `resolve()`
+  (request path → page + sub-view, or `None`), and `render_all()`, which assembles every page's
+  HTML from `templates/` once at startup and substitutes `VERSION` into the `?v=` asset URLs.
 - `netwatch/tui.py` — `draw_tui`, `_init_tui_colors`, `_tui_status_role`: curses-based terminal
   view, used when `--no-tui` is *not* passed. Falls back gracefully (256-color → 8-color →
   monochrome) and catches `curses.error` so an unsupported terminal doesn't crash the process —
@@ -110,7 +114,7 @@ Major subsystems, by module:
   `HistoryDB`/prune/flush threads, starts pollers conditionally (only if Proxmox/TrueNAS are
   configured), starts the web server in a thread, then runs either the TUI or a headless sleep
   loop. SIGTERM is routed through `KeyboardInterrupt` so shutdown flushes buffered pings and
-  checkpoints the WAL. Also owns `_load_dashboard_html`.
+  checkpoints the WAL. Also calls `render_all()` to build the page HTML handed to the web server.
   **Important:** `settings` (the dict loaded from `hosts.yaml`) is passed by reference into
   `HostManager`, `NASPoller`, `ProxmoxPoller`, *and* the web server's handler closure — all as
   the *same* dict object, not copies, even though they now live in different modules.
@@ -121,11 +125,30 @@ Major subsystems, by module:
   not taking effect until the next restart). See `tests/test_netwatch.py`'s settings
   dict-identity test for a regression check that spans module boundaries.
 
-**Frontend**: `dashboard.html` is the shell, loaded fresh from disk per request (not templated).
-`static/*.js` are separate vanilla-JS modules per dashboard area (`core.js`, `topology.js`,
-`inventory.js`, `proxmox.js`, `nas.js`, `ai-panel.js`, `settings.js`, `auth.js`, `utils.js`) —
-no bundler, no framework, no CDN dependencies (D3 and fonts are vendored under `static/` so the
+**Frontend**: the dashboard is separate real pages — `/` (Home), `/monitor`, `/lab`, `/infra`,
+`/links` — with the Monitor and Lab pages switching sub-views client-side (`/monitor/hosts|events|briefs`,
+`/lab/topology|connections|inventory`, `history.pushState`, so back/forward and deep links work) and
+Infra taking a panel segment (`/infra/proxmox|truenas`). Each page is `templates/_base.html`
+(nav, shell chrome; the `<script>` tags are generated from `pages.py`) + one fragment `templates/<page>.html` (content, then a
+`<!--@modals-->` line, then that page's modals) + shared `templates/partials/*.html` pulled in with
+`{{> name}}`. `netwatch/pages.py` lists each page's scripts; every page loads the shell scripts
+first (`utils.js`, `shell.js`, `auth.js`, `ups.js`, `settings.js`, `ai-panel.js`).
+`static/shell.js` is the glue: it owns the single `/api/status` poll and exposes the `nwStatus`
+store (`nwStatus.subscribe(fn)` / `subscribeOnce` / `refreshNow`) that page renderers subscribe to
+instead of being called from a central refresh loop, plus `nwOnReady(fn)` (DOM-ready hook) and
+`nwOnSubview(name, fn)` (runs when a sub-view is shown). Other scripts are vanilla-JS modules per
+area: `hosts.js`, `events.js`, `briefs.js`, `drawer.js`, `hosts-editor.js`, `power.js`,
+`topology.js`, `topology-cards.js`, `inventory.js`, `connections.js`, `quickadd.js`,
+`quicklinks.js`, `overview.js`, `proxmox.js`, `nas.js`. A script loaded on one page must not
+assume another page's elements or functions exist (guard the lookup, or move the code into a
+script that page loads — `drawer.js` is on Monitor and Lab, `inventory.js` is Lab-only). No
+bundler, no framework, no CDN dependencies (D3 and fonts are vendored under `static/` so the
 dashboard works on an isolated LAN).
+
+**Adding a page or sub-view:** add a `Page` (or a sub-view name) in `netwatch/pages.py`, a fragment
+in `templates/`, put any new scripts in `_STATIC_FILES`, then run `tests/test_pages.py` and
+`tests/test_page_boot.py` — they fail on a missing function, element, script, API route, boot
+error, blank render, or horizontal overflow at 320/390px in both themes.
 
 **Every new dashboard feature must be checked at mobile widths (320–390px), not just desktop.**
 The dashboard is used from phones, not just at a desk. Follow the existing responsive
@@ -139,10 +162,11 @@ checking `element.scrollWidth` vs `clientWidth` at 320px — don't assume deskto
 holds at phone widths.
 
 **Bump `VERSION` (in `netwatch/__init__.py`) after every major task completion.** Static assets are
-cache-busted via `?v={{VERSION}}` in `dashboard.html`; if the version string doesn't change,
+cache-busted via `?v={{VERSION}}` in the page templates (`templates/_base.html`, substituted by
+`render_all()`); if the version string doesn't change,
 browsers may keep serving stale cached JS/CSS after an edit, even though the server is reading
 the new file from disk. Bumping requires a service restart (`systemctl restart netwatch`) to take
-effect, since `{{VERSION}}` is substituted from the Python constant at request time.
+effect, since `{{VERSION}}` is substituted from the Python constant when the pages are assembled at startup.
 
 **Data files** (gitignored, live next to `monitor.py`, not in a subdirectory):
 `hosts.yaml` (ping targets + settings, copy from `hosts.yaml.example`), `auth.json` (users +
@@ -175,3 +199,16 @@ test specifically targets HTTP plumbing (a few tests do use `ThreadingHTTPServer
 that, and one locates `monitor.py` itself via `import monitor` to exercise the entrypoint shim).
 `tests/conftest.py` just puts the repo root on `sys.path` so both `netwatch` and `monitor` are
 importable.
+
+Frontend tests come in three layers, so a page split can't silently break a page:
+- `tests/test_pages.py` — static checks on every assembled page (inline handlers resolve to a
+  function some loaded script defines, `getElementById('literal')` targets exist, scripts are on
+  the allowlist, API paths the JS calls have server routes). Ids that are deliberately looked up on
+  pages that may lack them are listed per script in `GUARDED_IDS` — add one only with a null guard.
+- `tests/boot_smoke.py` + `tests/test_page_boot.py` — boot each page (and sub-view) in headless
+  Chromium from `file://` with `fetch` stubbed by `tests/boot_fixtures.py`; asserts no console or
+  script errors, that key content actually renders (host groups, events, counts, panels), no
+  horizontal overflow at 320/390px in both themes, and the `?host=` / logged-out / fresh-install
+  edge cases. Skipped if `chromium` isn't installed.
+- `tests/test_shell_js.py` (and `tests/js_harness.py`) — run `shell.js` and pure helpers from other
+  scripts under `node` with a stubbed DOM.

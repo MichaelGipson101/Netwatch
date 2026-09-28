@@ -1683,13 +1683,13 @@ def test_daily_history_survives_prune(tmp_path):
 
 # ── Static asset cache busting ───────────────────────────────────────────────
 
-def test_dashboard_html_version_substitution(tmp_path):
+def test_page_templates_version_substitution():
     from netwatch import VERSION
-    from netwatch.__main__ import _load_dashboard_html
-    (tmp_path / "dashboard.html").write_text('<script src="/static/core.js?v={{VERSION}}"></script>')
-    out = _load_dashboard_html(str(tmp_path))
-    assert "{{VERSION}}" not in out
-    assert f"?v={VERSION}" in out
+    from netwatch.pages import render_all
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name, html in render_all(repo, VERSION).items():
+        assert "{{VERSION}}" not in html, name
+        assert f"?v={VERSION}" in html, name
 
 
 # ── static asset self-hosting ────────────────────────────────────────────
