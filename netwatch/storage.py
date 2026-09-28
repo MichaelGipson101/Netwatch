@@ -100,6 +100,18 @@ class HistoryDB:
         energy_kwh REAL
     );
     CREATE INDEX IF NOT EXISTS idx_power_ts ON power_readings(timestamp);
+
+    CREATE TABLE IF NOT EXISTS alert_state (
+        condition_id TEXT PRIMARY KEY,
+        source       TEXT NOT NULL,
+        severity     TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        detail       TEXT NOT NULL,
+        since        INTEGER NOT NULL,
+        notified_at  INTEGER,
+        cleared_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_state_cleared ON alert_state(cleared_at);
     """
 
     FLUSH_MAX = 200          # safety flush if the 30s flusher falls behind
@@ -541,7 +553,7 @@ def _flush_loop(history_db, stop_event):
         pass
 
 
-def _prune_loop(history_db, stop_event, inventory_db=None):
+def _prune_loop(history_db, stop_event, inventory_db=None, ledger=None):
     """Run prune() once a day until stop_event is set."""
     SECONDS_PER_DAY = 86400
     # Run first prune ~60s after startup so the system isn't busy at boot
@@ -566,6 +578,13 @@ def _prune_loop(history_db, stop_event, inventory_db=None):
                         logging.info(f"InventoryDB: pruned {n} decided suggestion(s)")
                 except Exception as e:
                     logging.warning(f"Suggestion prune failed: {e}")
+            if ledger is not None:
+                try:
+                    n = ledger.prune()
+                    if n:
+                        logging.info(f"AlertLedger: pruned {n} cleared condition(s)")
+                except Exception as e:
+                    logging.warning(f"Alert ledger prune failed: {e}")
             elapsed = 0
         time.sleep(5)
         elapsed += 5

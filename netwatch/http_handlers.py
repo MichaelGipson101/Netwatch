@@ -196,6 +196,7 @@ SETTINGS_EDITABLE_KEYS = {
     "history_window":       int,
     "refresh_rate":         int,
     "history_days":         int,
+    "alert_cooldown_seconds": int,
     "ntfy_topic":           str,
     "ntfy_server":          str,
     "truenas_url":          str,
@@ -241,6 +242,7 @@ _SETTINGS_INT_RANGES = {
     "history_window":   (10, 10000),
     "refresh_rate":     (1,  60),
     "history_days":     (1,  365),
+    "alert_cooldown_seconds": (0, 86400),
     "nut_port":         (1,  65535),
 }
 
