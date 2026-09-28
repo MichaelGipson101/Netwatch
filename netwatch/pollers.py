@@ -5,6 +5,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from netwatch.attention import AlertGate
 from netwatch.network import _get_dashboard_url, _send_alert_async
 
 
@@ -16,7 +17,7 @@ class NASPoller:
     POLL_INTERVAL_SECONDS = 900    # 15 minutes
     REPLICATION_STALE_HOURS = 25   # grace window for daily replication tasks
 
-    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None, ledger=None):
         self._auth_manager = auth_manager
         self._alert_settings = alert_settings or {}
         self._alert_port = alert_port
@@ -29,6 +30,7 @@ class NASPoller:
         }
         self._lock = threading.Lock()
         self._alert_state = {}  # condition_id -> bool, True = currently alerting
+        self._gate = AlertGate("nas", "TrueNAS", ledger)
 
     def get_cache(self):
         with self._lock:
@@ -260,25 +262,32 @@ class NASPoller:
             with self._lock:
                 self._cache.update({"reachable": False, "error": str(e)})
 
-    def _fire_alert(self, condition_id, title, message):
-        if not self._alert_state.get(condition_id, False):
-            self._alert_state[condition_id] = True
-            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
-            _send_alert_async(
-                self._alert_settings, title, message,
-                priority="high", tags="warning", click_url=click_url,
-            )
+    def _fire_alert(self, condition_id, title, message, severity="warning"):
+        already = self._alert_state.get(condition_id, False)
+        self._alert_state[condition_id] = True
+        notify = self._gate.fire(condition_id, severity, message)
+        if already or not notify:
+            return
+        click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+        _send_alert_async(
+            self._alert_settings, title, message,
+            priority="high", tags="warning", click_url=click_url,
+            on_success=lambda: self._gate.mark_notified(condition_id),
+        )
 
     def _clear_alert(self, condition_id):
         self._alert_state[condition_id] = False
+        self._gate.clear(condition_id)
 
     def _check_alerts(self, pools, tasks, alerts=None):
+        self._gate.begin_pass()
         from datetime import timezone, timedelta
         for pool in pools:
             cid = f"pool_health_{pool['name']}"
             if pool["status"] != "ONLINE":
                 self._fire_alert(cid, "Netwatch · NAS Alert",
-                                 f"Pool \"{pool['name']}\" is {pool['status']}")
+                                 f"Pool \"{pool['name']}\" is {pool['status']}",
+                                 severity="critical")
             else:
                 self._clear_alert(cid)
             cid_scrub = f"scrub_errors_{pool['name']}"
@@ -328,9 +337,10 @@ class NASPoller:
         # An alert that resolved (or got newly ignored) simply disappears from
         # TrueNAS's own list rather than arriving with a "resolved" state, so
         # clear any previously-firing TrueNAS alert no longer present here.
-        for cid in list(self._alert_state.keys()):
+        for cid in set(self._alert_state) | self._gate.active_ids():
             if cid.startswith("truenas_alert_") and cid not in current_alert_cids:
                 self._clear_alert(cid)
+        self._gate.end_pass()
 
 
 # ============================================================================
@@ -345,7 +355,7 @@ PROXMOX_NODE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$')
 class ProxmoxPoller:
     POLL_INTERVAL_SECONDS = 60
 
-    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None, ledger=None):
         self._auth_manager = auth_manager
         self._alert_settings = alert_settings or {}
         self._alert_port = alert_port
@@ -358,6 +368,7 @@ class ProxmoxPoller:
         self._lock = threading.Lock()
         self._poll_lock = threading.Lock()  # serializes _poll() to prevent discovery/loop race
         self._alert_state = {}    # condition_id -> bool (True = currently alerting)
+        self._gate = AlertGate("proxmox", "Proxmox", ledger)
         self._exemptions = {}     # vmid (int) -> float timestamp (exempt until)
         self._node_history = {}   # node name -> {"cpu": [...], "mem": [...]}
         self._last_ok_at = None   # epoch of the last successful poll (discovery freshness)
@@ -478,19 +489,25 @@ class ProxmoxPoller:
             "guests":          guests,
         }
 
-    def _fire_alert(self, condition_id, message):
-        if not self._alert_state.get(condition_id, False):
-            self._alert_state[condition_id] = True
-            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
-            _send_alert_async(
-                self._alert_settings, "Netwatch · Proxmox Alert", message,
-                priority="high", tags="rotating_light", click_url=click_url,
-            )
+    def _fire_alert(self, condition_id, message, severity="warning"):
+        already = self._alert_state.get(condition_id, False)
+        self._alert_state[condition_id] = True
+        notify = self._gate.fire(condition_id, severity, message)
+        if already or not notify:
+            return
+        click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+        _send_alert_async(
+            self._alert_settings, "Netwatch · Proxmox Alert", message,
+            priority="high", tags="rotating_light", click_url=click_url,
+            on_success=lambda: self._gate.mark_notified(condition_id),
+        )
 
     def _clear_alert(self, condition_id):
         self._alert_state[condition_id] = False
+        self._gate.clear(condition_id)
 
     def _check_alerts(self, nodes, prev_nodes):
+        self._gate.begin_pass()
         now = time.time()
         prev_states = {}
         for n in prev_nodes:
@@ -502,7 +519,8 @@ class ProxmoxPoller:
 
             cid_node = f"node:{name}"
             if node["status"] != "online":
-                self._fire_alert(cid_node, f'Proxmox node "{name}" lost cluster heartbeat — check corosync if it persists')
+                self._fire_alert(cid_node, f'Proxmox node "{name}" lost cluster heartbeat — check corosync if it persists',
+                                 severity="critical")
             else:
                 self._clear_alert(cid_node)
 
@@ -526,6 +544,18 @@ class ProxmoxPoller:
                                      f'VM "{gname}" ({vmid}) is paused on {name}')
                 else:
                     self._clear_alert(cid_pause)
+
+        # An absent guest only means "deleted" when every node was online and its guest
+        # list was actually read; otherwise it means "unknown", so neither the
+        # edge-triggered stop: rows nor the pause: rows may be reconciled away.
+        # node:<name> is fired/cleared for every node each pass, so it is always safe.
+        all_read = all(n["status"] == "online" and n.get("guests_ok") is not False for n in nodes)
+        if all_read:
+            current_vmids = {str(g["vmid"]) for n in nodes for g in n.get("guests", [])}
+            for cid in self._gate.active_ids():
+                if cid.startswith("stop:") and cid[len("stop:"):] not in current_vmids:
+                    self._clear_alert(cid)
+        self._gate.end_pass(prefixes=("node:", "pause:") if all_read else ("node:",))
 
     def _poll(self):
         with self._poll_lock:
@@ -601,7 +631,7 @@ class PBSPoller:
     POLL_INTERVAL_SECONDS = 300   # 5 minutes; backups run nightly, no need for Proxmox's 60s cadence
     STALE_HOURS = 25              # grace window for daily backup jobs, matches NASPoller.REPLICATION_STALE_HOURS
 
-    def __init__(self, auth_manager, alert_settings=None, alert_port=None, proxmox_poller=None):
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None, proxmox_poller=None, ledger=None):
         self._auth_manager = auth_manager
         self._alert_settings = alert_settings or {}
         self._alert_port = alert_port
@@ -618,6 +648,7 @@ class PBSPoller:
         }
         self._lock = threading.Lock()
         self._alert_state = {}    # condition_id -> bool (True = currently alerting)
+        self._gate = AlertGate("pbs", "Backups", ledger)
 
     def get_cache(self):
         with self._lock:
@@ -764,17 +795,22 @@ class PBSPoller:
         backups.sort(key=lambda b: (b["type"], str(b["vmid"])))
         return backups
 
-    def _fire_alert(self, condition_id, message):
-        if not self._alert_state.get(condition_id, False):
-            self._alert_state[condition_id] = True
-            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
-            _send_alert_async(
-                self._alert_settings, "Netwatch · Backup Alert", message,
-                priority="high", tags="warning", click_url=click_url,
-            )
+    def _fire_alert(self, condition_id, message, severity="warning"):
+        already = self._alert_state.get(condition_id, False)
+        self._alert_state[condition_id] = True
+        notify = self._gate.fire(condition_id, severity, message)
+        if already or not notify:
+            return
+        click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+        _send_alert_async(
+            self._alert_settings, "Netwatch · Backup Alert", message,
+            priority="high", tags="warning", click_url=click_url,
+            on_success=lambda: self._gate.mark_notified(condition_id),
+        )
 
     def _clear_alert(self, condition_id):
         self._alert_state[condition_id] = False
+        self._gate.clear(condition_id)
 
     def _known_guest_vmids(self):
         """VMIDs currently present in Proxmox, or None if that's not known
@@ -792,6 +828,7 @@ class PBSPoller:
         }
 
     def _check_alerts(self, backups):
+        self._gate.begin_pass()
         known_vmids = self._known_guest_vmids()
         for b in backups:
             cid = f"pbs-backup-{b['type']}-{b['vmid']}"
@@ -805,6 +842,7 @@ class PBSPoller:
                 self._fire_alert(cid, f"No recent backup for {b['type'].upper()} {b['vmid']} — last backup {when}")
             else:
                 self._clear_alert(cid)
+        self._gate.end_pass()
 
     def _poll(self):
         url, token_id, token_secret = self._get_config()
@@ -957,7 +995,7 @@ class HAPoller:
 class UPSPoller:
     POLL_INTERVAL_SECONDS = 15  # tight cadence - battery state can change fast during an outage
 
-    def __init__(self, auth_manager, alert_settings=None, alert_port=None):
+    def __init__(self, auth_manager, alert_settings=None, alert_port=None, ledger=None):
         self._auth_manager = auth_manager
         self._alert_settings = alert_settings or {}
         self._alert_port = alert_port
@@ -974,6 +1012,7 @@ class UPSPoller:
         }
         self._lock = threading.Lock()
         self._alert_state = {}  # condition_id -> bool (True = currently alerting)
+        self._gate = AlertGate("ups", "UPS", ledger)
 
     def get_cache(self):
         with self._lock:
@@ -1118,23 +1157,31 @@ class UPSPoller:
                 self._cache["reachable"] = False
                 self._cache["error"] = str(e)
 
+    _SEVERITY = {"ups-on-battery": "warning", "ups-low-battery": "critical",
+                 "ups-replace-battery": "info"}
+
     def _fire_alert(self, condition_id, message):
-        if not self._alert_state.get(condition_id, False):
-            self._alert_state[condition_id] = True
-            click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
-            priority = "default" if condition_id == "ups-replace-battery" else "high"
-            tags = {
-                "ups-on-battery":      "warning",
-                "ups-low-battery":     "rotating_light",
-                "ups-replace-battery": "battery",
-            }[condition_id]
-            _send_alert_async(
-                self._alert_settings, "Netwatch · UPS Alert", message,
-                priority=priority, tags=tags, click_url=click_url,
-            )
+        already = self._alert_state.get(condition_id, False)
+        self._alert_state[condition_id] = True
+        notify = self._gate.fire(condition_id, self._SEVERITY[condition_id], message)
+        if already or not notify:
+            return
+        click_url = _get_dashboard_url(self._alert_settings, self._alert_port or 8080)
+        priority = "default" if condition_id == "ups-replace-battery" else "high"
+        tags = {
+            "ups-on-battery":      "warning",
+            "ups-low-battery":     "rotating_light",
+            "ups-replace-battery": "battery",
+        }[condition_id]
+        _send_alert_async(
+            self._alert_settings, "Netwatch · UPS Alert", message,
+            priority=priority, tags=tags, click_url=click_url,
+            on_success=lambda: self._gate.mark_notified(condition_id),
+        )
 
     def _clear_alert(self, condition_id):
         self._alert_state[condition_id] = False
+        self._gate.clear(condition_id)
 
     def _check_alerts(self, status):
         flags = self._parse_status_flags(status)

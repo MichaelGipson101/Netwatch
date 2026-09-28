@@ -12,6 +12,7 @@ import argparse
 import logging
 
 from netwatch import VERSION
+from netwatch.attention import AlertLedger
 from netwatch.auth import AuthManager
 from netwatch.storage import HistoryDB, InventoryDB, QuickLinksDB, _flush_loop, _prune_loop, restore_backup, write_pre_migration_backup
 from netwatch.hosts import HostManager, IncidentLog, load_yaml
@@ -89,6 +90,7 @@ def main():
     retention_days = int(settings.get("history_days", 30))
     history_db = HistoryDB(db_path, retention_days=retention_days)
     print(f"[netwatch] History DB -> {db_path} (retention {retention_days} days)")
+    ledger = AlertLedger(history_db, cooldown_seconds=lambda: settings.get("alert_cooldown_seconds"))
     inventory_db = InventoryDB(history_db)
     backup_path = []
     _, msg = inventory_db.migrate_connections_v2(
@@ -102,7 +104,7 @@ def main():
     quicklinks_db = QuickLinksDB(history_db)
 
     # Daily prune task
-    pt = threading.Thread(target=_prune_loop, args=(history_db, stop_event, inventory_db), daemon=True, name="prune")
+    pt = threading.Thread(target=_prune_loop, args=(history_db, stop_event, inventory_db, ledger), daemon=True, name="prune")
     pt.start()
 
     # Ping flush task (batched inserts land every 30s)
@@ -124,13 +126,13 @@ def main():
     )
     host_manager.load_initial(config.get("hosts", []), default_interval)
 
-    nas_poller = NASPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    nas_poller = NASPoller(auth_manager, alert_settings=settings, alert_port=args.port, ledger=ledger)
     _nas_url, _ = nas_poller._get_config()
     if _nas_url:
         nas_poller.start(stop_event)
         print(f"[netwatch] NAS poller -> polling TrueNAS every {NASPoller.POLL_INTERVAL_SECONDS}s")
 
-    proxmox_poller = ProxmoxPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    proxmox_poller = ProxmoxPoller(auth_manager, alert_settings=settings, alert_port=args.port, ledger=ledger)
     _pve_url, _, _, _ = proxmox_poller._get_config()
     if _pve_url:
         proxmox_poller.start(stop_event)
@@ -143,13 +145,13 @@ def main():
         ha_poller.start(stop_event)
         print(f"[netwatch] HA poller -> polling Home Assistant every {HAPoller.POLL_INTERVAL_SECONDS}s")
 
-    pbs_poller = PBSPoller(auth_manager, alert_settings=settings, alert_port=args.port, proxmox_poller=proxmox_poller)
+    pbs_poller = PBSPoller(auth_manager, alert_settings=settings, alert_port=args.port, proxmox_poller=proxmox_poller, ledger=ledger)
     _pbs_url, _, _ = pbs_poller._get_config()
     if _pbs_url:
         pbs_poller.start(stop_event)
         print(f"[netwatch] PBS poller -> polling every {PBSPoller.POLL_INTERVAL_SECONDS}s")
 
-    ups_poller = UPSPoller(auth_manager, alert_settings=settings, alert_port=args.port)
+    ups_poller = UPSPoller(auth_manager, alert_settings=settings, alert_port=args.port, ledger=ledger)
     # Started unconditionally (unlike the other pollers above): _poll() already
     # self-gates on missing config every cycle, so keeping only that one gate
     # (rather than also gating .start() on server+ups_name) means configuring
