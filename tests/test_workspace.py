@@ -11,7 +11,11 @@ from js_harness import REPO, STATIC, js_part, needs_node, run_js
 from netwatch.connections import migration_drift_key
 from netwatch.storage import HistoryDB, InventoryDB
 
-DASHBOARD = os.path.join(REPO, "dashboard.html")
+
+def _page(name):
+    """An assembled dashboard page (the legacy dashboard.html no longer reflects what is served)."""
+    from netwatch.pages import render_all
+    return render_all(REPO, "test")[name]
 
 
 def make_idb(tmpdir):
@@ -397,8 +401,8 @@ def test_orient_and_sentence():
 def test_quickadd_is_served_and_loaded():
     from netwatch.server import _STATIC_FILES
     assert _STATIC_FILES["quickadd.js"].startswith("application/javascript")
-    html = open(DASHBOARD, encoding="utf-8").read()
-    assert '<script src="/static/quickadd.js?v={{VERSION}}"></script>' in html
+    html = _page("lab")
+    assert '<script src="/static/quickadd.js?v=test"></script>' in html
     assert "qaInvalidateInventory" in js_part(INV_JS, "async function fetchInventory")
 
 
@@ -452,18 +456,20 @@ def test_source_chips():
 
 
 def test_connections_tab_is_wired_in():
-    html = open(DASHBOARD, encoding="utf-8").read()
-    i_topo = html.index('data-tab="topology"')
-    i_conn = html.index('data-tab="connections"')
-    i_events = html.index('data-tab="events"')
-    assert i_topo < i_conn < i_events
+    html = _page("lab")
+    i_topo = html.index('href="/lab/topology"')
+    i_conn = html.index('href="/lab/connections"')
+    i_inv = html.index('href="/lab/inventory"')
+    assert i_topo < i_conn < i_inv
     for needle in ('id="conn-count"', 'id="view-connections"', 'id="cx-status"', 'id="cx-quick"',
                    'id="cx-suggestions"', 'id="cx-ports-panel"', 'id="cx-table"',
-                   '<script src="/static/connections.js?v={{VERSION}}"></script>'):
+                   '<script src="/static/connections.js?v=test"></script>'):
         assert needle in html, needle
     from netwatch.server import _STATIC_FILES
     assert _STATIC_FILES["connections.js"].startswith("application/javascript")
-    assert "mountConnectionsTab" in js_part(CORE_JS, "function setTab")
+    cx_src = open(CX_JS, encoding="utf-8").read()
+    hook = cx_src[cx_src.index("nwOnSubview('connections'"):]
+    assert "mountConnectionsTab()" in hook.split("\n", 1)[0]
     assert "updateConnectionsBadge(data.suggestions_pending)" in js_part(CORE_JS, "async function refresh")
     auth_body = js_part(AUTH_JS, "function updateAuthUI")
     assert "renderCxStatus" in auth_body

@@ -91,3 +91,5 @@ function renderBriefs(briefs) {
     hdr.addEventListener('click', () => hdr.closest('.brief-card').classList.toggle('open'));
   });
 }
+
+nwOnSubview('briefs', function(){ fetchBriefs(); });

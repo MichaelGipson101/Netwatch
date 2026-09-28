@@ -80,7 +80,7 @@
   }
 
   function _buildContext(){
-    const tab = localStorage.getItem('nw-tab') || 'topology';
+    const tab = (typeof nwCurrentTab === 'function' && nwCurrentTab()) || 'topology';
     if(tab === 'inventory'){
       return {
         page: 'inventory',
@@ -477,7 +477,7 @@
   (function(){
     const _origSetTab = window.setTab;
     window.setTab = function(tab){
-      const prev = localStorage.getItem('nw-tab');
+      const prev = (typeof nwCurrentTab === 'function') ? nwCurrentTab() : null;
       if(_origSetTab) _origSetTab.call(this, tab);
       if(prev && tab !== prev && _aiHistory.length > 0) _clearConversation(tab);
     };

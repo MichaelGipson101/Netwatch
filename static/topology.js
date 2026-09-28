@@ -1403,3 +1403,12 @@ document.addEventListener('visibilitychange', () => {
 
 nwStatus.subscribe(function(data){ updateTopologyWebStatus(data); });
 nwOnReady(function(){ if(typeof setTopoView === 'function') setTopoView(_topoView); });
+
+// Web-overlay metrics only apply on the topology sub-view in web mode; re-fetch when returning to it
+// (initial load is handled by setTopoView on page boot).
+['topology', 'connections', 'inventory'].forEach(function(name){
+  nwOnSubview(name, function(){
+    document.body.classList.toggle('nw-topo-web', name === 'topology' && _topoView === 'web');
+    if(name === 'topology' && _topoD3Loaded && typeof fetchAndRenderTopologyWeb === 'function') fetchAndRenderTopologyWeb();
+  });
+});

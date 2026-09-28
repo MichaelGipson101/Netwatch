@@ -28,31 +28,70 @@ function clockTick(){
     d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + '  ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
 }
 
-// shell.js — extracted from core.js (Netwatch 4.0 page split). Code moved verbatim.
+// ── Pages and sub-views (replaces the single-page tab bar) ────────────────
+const NW_PAGE_PATH = {home:'/', monitor:'/monitor', lab:'/lab', infra:'/infra', links:'/links'};
+// legacy tab name -> [page, sub-view]; keeps every existing setTab('x') call site working
+const NW_TABS = {
+  overview:['home',''], hosts:['monitor','hosts'], events:['monitor','events'], briefs:['monitor','briefs'],
+  topology:['lab','topology'], connections:['lab','connections'], inventory:['lab','inventory'],
+  servers:['infra','proxmox'], quicklinks:['links',''],
+};
+const _subviewHooks = {};
+let _currentSubview = '';
 
-function setTab(tab){
-  document.querySelectorAll('.tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.tab === tab);
-    t.setAttribute('aria-selected', t.dataset.tab === tab ? 'true' : 'false');
+function nwPageUrl(page, sub){
+  const p = NW_PAGE_PATH[page];
+  return sub ? p + '/' + sub : p;
+}
+function nwOnSubview(name, fn){ (_subviewHooks[name] = _subviewHooks[name] || []).push(fn); }
+function nwCurrentSubview(){ return _currentSubview; }
+// Legacy tab name for the current view (what setTab/nw-tab used to track): the sub-view
+// if the page has one, else the page's own legacy name. Used by Mira for page context.
+function nwCurrentTab(){
+  if(_currentSubview) return _currentSubview;
+  return {home:'overview', infra:'servers', links:'quicklinks'}[document.body.dataset.page] || '';
+}
+function _subviewNames(){
+  const s = document.body.dataset.subviews;
+  return s ? s.split(',') : [];
+}
+function _subviewFromPath(){
+  const names = _subviewNames();
+  // window.__nwPath lets the file:// boot smoke tests simulate a URL path
+  const seg = (window.__nwPath || location.pathname).split('/')[2] || '';
+  return names.includes(seg) ? seg : (names[0] || '');
+}
+
+function nwShowSubview(name, opts){
+  if(!_subviewNames().includes(name)) return false;
+  _currentSubview = name;
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+  document.querySelectorAll('.subnav [data-subview]').forEach(a => {
+    const on = a.dataset.subview === name;
+    a.classList.toggle('active', on);
+    a.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  // Web-overlay metrics only apply when topology tab is active in web mode
-  document.body.classList.toggle('nw-topo-web',
-    tab === 'topology' && _topoView === 'web');
-  // Overview hides the summary row + tab bar for a clean landing screen;
-  // its hamburger icon (toggleOverviewMenu) brings the tab bar back.
-  document.body.classList.toggle('nw-overview', tab === 'overview');
-  if(tab !== 'overview') document.body.classList.remove('nw-overview-menu-open');
-  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
-  localStorage.setItem('nw-tab', tab);
-  if(tab === 'overview'  && typeof initOverviewTab === 'function') initOverviewTab();
-  if(tab === 'inventory' && typeof fetchInventory === 'function') fetchInventory();
-  if(tab === 'servers'   && typeof initServersTab === 'function') initServersTab();
-  if(tab === 'briefs') fetchBriefs();
-  if(tab === 'quicklinks' && typeof mountQuickLinksPage === 'function') mountQuickLinksPage();
-  if(tab === 'connections' && typeof mountConnectionsTab === 'function') mountConnectionsTab();
-  // Re-fetch topology when switching to the tab (but only after D3 has loaded
-  // at least once — initial load is handled by setTopoView on page boot).
-  if(tab === 'topology' && _topoD3Loaded && typeof fetchAndRenderTopologyWeb === 'function') fetchAndRenderTopologyWeb();
+  if(opts && opts.push){
+    const url = nwPageUrl(document.body.dataset.page, name);
+    if(location.pathname !== url) history.pushState({sub: name}, '', url);
+  }
+  (_subviewHooks[name] || []).forEach(fn => { try { fn(); } catch(e){ console.error(e); } });
+  window.dispatchEvent(new CustomEvent('nw:subview', {detail: {name: name}}));
+  return true;
+}
+
+// Legacy entry point kept as a shim: in-page sub-views switch in place, other pages navigate.
+function setTab(tab){
+  if(tab === 'storage') tab = 'servers';  // renamed in v3.41
+  const t = NW_TABS[tab];
+  if(!t) return;
+  const page = t[0], sub = t[1];
+  if(page === document.body.dataset.page){
+    if(sub && _subviewNames().includes(sub)) nwShowSubview(sub, {push: true});
+    else if(page === 'infra' && typeof switchServersPanel === 'function') switchServersPanel(sub || 'proxmox');
+    return;
+  }
+  location.href = nwPageUrl(page, sub === 'proxmox' ? '' : sub);
 }
 
 // ── Status store ─────────────────────────────────────────────────────────
@@ -112,8 +151,12 @@ async function refresh(){
       }
     }
     _statusSubs.slice().forEach(fn => { try { fn(data); } catch(e){ console.error(e); } });
-    if(typeof updateConnectionsBadge === 'function') updateConnectionsBadge(data.suggestions_pending);
-    else nwSetConnBadge(data.suggestions_pending);
+    // Its own guard: a throw in the badge code is not a lost connection, so it must not
+    // fall through to the stale-banner catch below.
+    try {
+      if(typeof updateConnectionsBadge === 'function') updateConnectionsBadge(data.suggestions_pending);
+      else nwSetConnBadge(data.suggestions_pending);
+    } catch(e){ console.error(e); }
     if(!lastOk){
       document.getElementById('err-banner').style.display = 'none';
       const pipEl = document.getElementById('pip');
@@ -144,12 +187,17 @@ document.addEventListener('DOMContentLoaded', () => {
     b.addEventListener('click', () => setTheme(b.dataset.themeBtn));
   });
 
-  // Legacy single-page tab mode (replaced by pages + sub-views in Task 6)
-  let initialTab = localStorage.getItem('nw-tab') || 'overview';
-  if (initialTab === 'storage') initialTab = 'servers';  // renamed in v3.41
-  setTab(initialTab);
-  document.querySelectorAll('.tab').forEach(t => {
-    t.addEventListener('click', () => setTab(t.dataset.tab));
+  const names = _subviewNames();
+  if(names.length) nwShowSubview(_subviewFromPath(), {push: false});
+  else { const v = document.querySelector('.view'); if(v) v.classList.add('active'); }
+  document.addEventListener('click', e => {
+    const a = e.target.closest && e.target.closest('.subnav [data-subview]');
+    if(!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    nwShowSubview(a.dataset.subview, {push: true});
+  });
+  window.addEventListener('popstate', () => {
+    if(_subviewNames().length) nwShowSubview(_subviewFromPath(), {push: false});
   });
 
   _readyHooks.forEach(fn => { try { fn(); } catch(e){ console.error(e); } });

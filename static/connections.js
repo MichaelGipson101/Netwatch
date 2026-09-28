@@ -1171,3 +1171,5 @@ function cxQuickAddAt(deviceId, port){
   box.closest('.cx-panel').scrollIntoView({block: 'start', behavior: 'smooth'});
   if(qa) setTimeout(() => qa.focus(), 350);
 }
+
+nwOnSubview('connections', function(){ mountConnectionsTab(); });

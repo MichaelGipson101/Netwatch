@@ -151,3 +151,5 @@
       }).catch(function () {});
   };
 })();
+
+nwOnReady(function(){ if(document.getElementById('ql-page-grid') && typeof mountQuickLinksPage === 'function') mountQuickLinksPage(); });

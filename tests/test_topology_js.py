@@ -2,6 +2,8 @@
 import os
 
 from js_harness import STATIC, needs_node, run_js
+from page_analysis import REPO
+from netwatch.pages import render_all
 
 TOPO_JS = os.path.join(STATIC, "topology.js")
 D3 = os.path.join(STATIC, "d3.v7.min.js")
@@ -9,6 +11,11 @@ HELPERS = [(TOPO_JS, "const TOPO_TREE_RULES"), (TOPO_JS, "function topoPortLabel
            (TOPO_JS, "function topoTreeOrientation"), (TOPO_JS, "function topoParseCollapsed"),
            (TOPO_JS, "function topoIsCollapsed"), (TOPO_JS, "function topoScene"),
            (TOPO_JS, "function topoBuildForest")]
+
+
+def _lab_page():
+    """The assembled Lab page (topology lives there since the page split)."""
+    return render_all(REPO, "test")["lab"]
 
 
 def js(expr, parts=HELPERS, prelude=""):
@@ -129,8 +136,7 @@ def test_renderer_is_split_into_scene_and_layouts():
 
 def test_empty_state_links_to_connections_and_reset_button_has_an_id():
     assert "Open Connections</a>" in _src()
-    with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
-        html = f.read()
+    html = _lab_page()
     assert 'id="topo-reset-btn"' in html
     assert "getElementById('topo-reset-btn')" in _src()
 
@@ -157,8 +163,7 @@ def test_tree_layout_is_wired():
 
 
 def test_toolbar_has_the_segmented_layout_control():
-    with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
-        html = f.read()
+    html = _lab_page()
     assert 'id="topo-layout-force"' in html and 'id="topo-layout-tree"' in html
     assert "setTopoLayout('tree')" in html and "setTopoLayout('force')" in html
 
@@ -186,8 +191,7 @@ def test_ghosts_are_drawn_toggled_and_open_the_inbox():
     render = cx[cx.index("function renderCxSuggestions("):]
     render = render[:render.index("\n}\n")]
     assert "cxFlashSuggestion()" in render
-    with open(os.path.join(STATIC, "..", "dashboard.html"), encoding="utf-8") as f:
-        assert 'id="topo-ghost-toggle"' in f.read()
+    assert 'id="topo-ghost-toggle"' in _lab_page()
 
 
 # ── Task 7: responsive + version ─────────────────────────────────────────────

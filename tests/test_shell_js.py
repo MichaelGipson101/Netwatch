@@ -94,3 +94,84 @@ def test_fetch_failure_marks_stale_then_recovers():
       console.log(a + ',' + lastOk);
     """)
     assert out == "false,true"
+
+
+@needs_node
+def test_page_url_and_tab_map():
+    out = run("""
+      console.log([nwPageUrl('lab','topology'), nwPageUrl('home',''), nwPageUrl('infra',''),
+                   NW_TABS.servers.join('/'), NW_TABS.quicklinks.join('/')].join('|'));
+    """)
+    assert out == "/lab/topology|/|/infra|infra/proxmox|links/"
+
+
+@needs_node
+def test_show_subview_pushes_history_once_and_runs_hooks():
+    out = run("""
+      const subnav = [{dataset:{subview:'topology'}, classList:{toggle(){}}, setAttribute(){}},
+                      {dataset:{subview:'connections'}, classList:{toggle(){}}, setAttribute(){}}];
+      document.querySelectorAll = (sel) => sel.includes('subnav') ? subnav : [];
+      document.body.dataset = {page:'lab', subviews:'topology,connections,inventory'};
+      global.location = {pathname:'/lab/topology', search:''};
+      const pushed = [];
+      global.history = {pushState(s,t,u){ pushed.push(u); global.location.pathname = u; }};
+      global.CustomEvent = function(n, o){ this.type = n; this.detail = o.detail; };
+      const fired = []; global.dispatchEvent = e => fired.push(e.detail.name);
+      const ran = []; nwOnSubview('connections', () => ran.push('c'));
+      nwShowSubview('connections', {push:true});
+      nwShowSubview('connections', {push:true});           // already there: no duplicate entry
+      nwShowSubview('nope', {push:true});                    // unknown name: ignored
+      console.log([pushed.join(','), ran.join(','), fired.join(','), nwCurrentSubview()].join('|'));
+    """)
+    assert out == "/lab/connections|c,c|connections,connections|connections"
+
+
+@needs_node
+def test_set_tab_switches_in_page_or_navigates_across_pages():
+    out = run("""
+      document.querySelectorAll = () => [];
+      document.body.dataset = {page:'lab', subviews:'topology,connections,inventory'};
+      global.location = {pathname:'/lab/topology', search:'', href:''};
+      global.history = {pushState(s,t,u){ global.location.pathname = u; }};
+      global.CustomEvent = function(n, o){ this.detail = o.detail; };
+      global.dispatchEvent = () => {};
+      setTab('inventory');  const inPage = location.pathname;
+      setTab('hosts');      const cross = location.href;
+      setTab('storage');    const legacy = location.href;      // renamed alias for servers
+      setTab('bogus');      const same = location.href;
+      console.log([inPage, cross, legacy, same].join('|'));
+    """)
+    assert out == "/lab/inventory|/monitor/hosts|/infra|/infra"
+
+
+@needs_node
+def test_a_throwing_subview_hook_does_not_block_others():
+    out = run("""
+      document.querySelectorAll = () => [];
+      document.body.dataset = {page:'lab', subviews:'topology,connections'};
+      global.location = {pathname:'/lab', search:''};
+      global.history = {pushState(){}};
+      global.CustomEvent = function(n, o){ this.detail = o.detail; };
+      global.dispatchEvent = () => {};
+      const ran = [];
+      nwOnSubview('topology', () => { throw new Error('boom'); });
+      nwOnSubview('topology', () => ran.push('second'));
+      const origErr = console.error; console.error = () => {};
+      nwShowSubview('topology', {push:false});
+      console.error = origErr;
+      console.log(ran.join(','));
+    """)
+    assert out == "second"
+
+
+@needs_node
+def test_a_throwing_connections_badge_does_not_flip_the_stale_banner():
+    out = run("""
+      __fetch = () => okJson({hosts: [], suggestions_pending: 2});
+      global.updateConnectionsBadge = () => { throw new Error('badge'); };
+      const origErr = console.error; console.error = () => {};
+      await refresh();
+      console.error = origErr;
+      console.log(lastOk ? 'live' : 'stale');
+    """)
+    assert out == "live"

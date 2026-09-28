@@ -348,3 +348,5 @@
   }
 
 })();
+
+nwOnReady(function(){ if(typeof initServersTab === 'function') initServersTab(); });

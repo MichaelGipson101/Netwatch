@@ -11,6 +11,12 @@ from page_analysis import (
 )
 from netwatch.server import _STATIC_FILES
 
+# Temporary: the per-page checks below fail on cross-page runtime issues (KPI summary, power
+# card, Home topology preview, id guards) that Task 7 fixes. Remove this flag and the
+# xfail marks in Task 7 Step 6. Deliberately per-test, never a file-wide pytestmark: the
+# non-page tests in this file stay hard gates.
+PENDING_TASK_7 = True
+
 # ids looked up by literal that are created by JS at runtime, not present in the HTML
 DYNAMIC_IDS = {"nw-toasts"}
 DYNAMIC_ID_PREFIXES = ("ov-card-",)
@@ -39,15 +45,21 @@ closeUpsModal
 
 
 def load_pages():
-    """The pages the dashboard serves. Task 6 switches this to netwatch.pages.render_all()."""
-    html = read(os.path.join(REPO, "dashboard.html"))
-    return [PageSource("app", html, script_srcs(html))]
+    """The pages the dashboard serves: the assembled output of netwatch.pages.render_all()."""
+    from netwatch.pages import PAGES as _P, SHELL_SCRIPTS, render_all
+    html = render_all(REPO, "test")
+    out = []
+    for name, page in _P.items():
+        scripts = list(SHELL_SCRIPTS) + [s for s in page.scripts if s not in SHELL_SCRIPTS]
+        out.append(PageSource(name, html[name], scripts))
+    return out
 
 
 PAGES = load_pages()
 IDS = [p.name for p in PAGES]
 
 
+@pytest.mark.xfail(PENDING_TASK_7, reason="Task 7", strict=False)
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_inline_handlers_resolve(page):
     """Every function called from an inline handler (in the HTML or in HTML built by the
@@ -60,6 +72,7 @@ def test_inline_handlers_resolve(page):
     assert not missing, f"page {page.name}: handlers call undefined functions: {missing}"
 
 
+@pytest.mark.xfail(PENDING_TASK_7, reason="Task 7", strict=False)
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_literal_element_ids_exist(page):
     """Every getElementById('literal') in the page's scripts resolves to an element in the

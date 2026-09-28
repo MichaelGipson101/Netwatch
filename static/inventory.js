@@ -1090,11 +1090,10 @@ function navigateToHostDrawer(ip){
   // drawer for the given IP. This gives the user a coherent landing
   // experience: tab matches drawer content.
   closeDrawer();  // closes the inventory drawer (same #drawer element)
-  if(typeof setTab === 'function'){
-    const currentTab = localStorage.getItem('nw-tab');
-    if(currentTab !== 'hosts'){
-      setTab('hosts');
-    }
+  // Pages that carry the host drawer (Lab) open it in place; setTab('hosts') would now be a
+  // full page navigation to Monitor and the drawer open below would be lost.
+  if(typeof setTab === 'function' && !document.getElementById('drawer')){
+    setTab('hosts');
   }
   // Small delay lets the tab switch settle before opening the drawer.
   // Without it, the drawer can render before the tab transition completes
@@ -1281,3 +1280,5 @@ function showImportResult(cls, msg){
   el.style.display = '';
 }
 
+
+nwOnSubview('inventory', function(){ if(typeof fetchInventory === 'function') fetchInventory(); });
