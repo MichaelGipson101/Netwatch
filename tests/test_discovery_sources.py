@@ -1257,3 +1257,28 @@ def test_scan_fills_an_empty_inventory_ip_only():
         assert idb.get(empty)["ip"] == "192.168.6.14"
         assert idb.get(kept)["ip"] == "192.168.6.224"
         hdb.close()
+
+
+def test_vmid_matched_guest_gets_its_config_mac_filled():
+    records = guest_records()                       # 72 Sun Solaris: vmid match, no MAC
+    ch = run(pve_obs() + lab_unifi_obs(), records)
+    macs = {f["id"]: f["mac"] for f in ch["macs"]}
+    assert macs[72] == SOL_MAC0                     # net0, not the second NIC
+    assert 71 not in macs                           # HAOS already has its MAC
+
+
+def test_scan_fills_an_empty_mac_only_and_never_a_taken_one():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = make_idb(d)
+        jelly = add_device(idb, "Jellyfin", "vm", ip="192.168.6.224", proxmox_vmid=302)
+        forge = add_device(idb, "Forgejo", "vm", ip="192.168.6.226", proxmox_vmid=303)
+        kept = add_device(idb, "HAOS", "vm", mac=HA_MAC)
+        other = add_device(idb, "Old record", "vm", mac="bc:24:11:00:00:99")
+        idb.apply_discovery_changes({"macs": [
+            {"id": jelly, "mac": "BC:24:11:AA:BB:01"},
+            {"id": kept, "mac": "bc:24:11:00:00:01"},
+            {"id": forge, "mac": "bc:24:11:00:00:99"}]}, NOW)   # taken by another record
+        assert idb.get(jelly)["mac"] == "bc:24:11:aa:bb:01"
+        assert idb.get(kept)["mac"] == HA_MAC
+        assert not idb.get(forge)["mac"] and idb.get(other)["mac"] == "bc:24:11:00:00:99"
+        hdb.close()

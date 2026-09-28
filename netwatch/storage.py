@@ -1442,6 +1442,15 @@ class InventoryDB:
                     self.conn.execute(
                         "UPDATE inventory SET ip = ?, updated_at = ? "
                         "WHERE id = ? AND (ip IS NULL OR ip = '')", (f["ip"], now, f["id"]))
+                for f in changes.get("macs", []):
+                    # A matched guest's net0 MAC fills an empty field only, and
+                    # never one another record already uses (as mac or alias).
+                    mac = self.normalize_mac(f["mac"])
+                    if not mac or self._mac_conflict_locked(mac, exclude_id=f["id"]) is not None:
+                        continue
+                    self.conn.execute(
+                        "UPDATE inventory SET mac = ?, updated_at = ? "
+                        "WHERE id = ? AND (mac IS NULL OR mac = '')", (mac, now, f["id"]))
                 self.conn.execute("COMMIT")
             except BaseException:
                 self._rollback_quietly()

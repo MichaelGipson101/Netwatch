@@ -291,7 +291,7 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
     if not healthy_sources:
         return {"upserts": [], "resolve": [], "touch": [], "props": []}
     by_id, by_mac, by_ip = _index_records(records)
-    upserts, touch, props_fill, ip_fill = {}, {}, {}, {}
+    upserts, touch, props_fill, ip_fill, mac_fill = {}, {}, {}, {}, {}
     # Guest IP fallback when Proxmox couldn't say (no QEMU guest agent): the
     # same MAC seen by UniFi or the Pi's ARP table. Lowest IP wins on a tie.
     mac_ips = {}
@@ -609,6 +609,8 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
                 ip = guest_ip(o)
                 if ip and not guest.get("ip"):
                     ip_fill[guest["id"]] = ip   # fill only; a recorded IP is never replaced
+                if o.get("macs") and not guest.get("mac"):
+                    mac_fill[guest["id"]] = o["macs"][0]   # net0 from the guest's config
             observe_edge(guest, node, None, None, subject, o["external_key"],
                          "virtual", o["source"])
             return
@@ -756,7 +758,8 @@ def reconcile(observations, *, records, edges, pending, healthy_sources, now,
     return {"upserts": list(upserts.values()), "resolve": resolve,
             "touch": [{"id": k, "parent_port": v} for k, v in touch.items()],
             "props": [{"id": k, "set": v} for k, v in props_fill.items()],
-            "ips": [{"id": k, "ip": v} for k, v in ip_fill.items()]}
+            "ips": [{"id": k, "ip": v} for k, v in ip_fill.items()],
+            "macs": [{"id": k, "mac": v} for k, v in mac_fill.items()]}
 
 
 class UnifiError(Exception):
