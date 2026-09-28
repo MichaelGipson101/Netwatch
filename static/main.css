@@ -1951,12 +1951,21 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .cx-sugg-text{flex:1 1 220px;min-width:0;margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
 .cx-sugg-actions{display:flex;gap:6px;flex-shrink:0}
 .cx-sugg-edit,.cx-sugg-pick{flex-basis:100%}
+.cx-sugg-monitor{flex-basis:100%;display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.4;cursor:pointer}
+.cx-sugg-monitor input{margin:2px 0 0;flex-shrink:0;accent-color:var(--blue)}
+.cx-sugg-monitor b{font:500 12px 'DM Mono',monospace}
+.cx-sugg-monitor-hint{flex-basis:100%;margin:0;font-size:12px}
+.cx-guest-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--blue);border-radius:10px;background:var(--blue-bg)}
+.cx-guest-banner p{flex:1 1 260px;min-width:0;margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.cx-guest-banner-actions{display:flex;gap:6px;flex-shrink:0}
 .cx-sugg-edit summary{cursor:pointer;font-size:12px;color:var(--blue);width:max-content}
 .cx-sugg-edit-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
 .cx-empty{padding:14px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:13px;text-align:center}
 @media (max-width:600px){
   .cx-sugg-actions{flex-basis:100%}
   .cx-sugg-actions .btn{flex:1 1 0}
+  .cx-guest-banner-actions{flex-basis:100%}
+  .cx-guest-banner-actions .btn{flex:1 1 0}
   .cx-sugg-edit-grid{grid-template-columns:minmax(0,1fr)}
 }
 

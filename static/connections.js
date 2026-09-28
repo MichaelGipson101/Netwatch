@@ -25,7 +25,7 @@ let _cxState = {
   error: null, migrationPending: false, openChip: null, scanPolling: false, lastPending: null, lastLoggedIn: null,
   filter: 'all', query: '', highlightConn: null, highlightSugg: null, highlightAfterSeq: 0, suggSeq: 0,
   editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null, editFocus: null,
-  swappedIds: {}, drafts: {}, busy: {},
+  swappedIds: {}, drafts: {}, busy: {}, unmonitored: null, monitorBusy: false,
 };
 
 // The quick add control mounted in this workspace (not the drawer/port-map
@@ -102,9 +102,10 @@ async function cxRefreshAll(){
   _cxState.refreshing = true;
   try {
     const seq = ++_cxState.seq;
-    const [status, suggestions, connections, inventory] = await Promise.all([
+    const [status, suggestions, connections, inventory, unmonitored] = await Promise.all([
       cxGetJson('/api/discovery/status'), cxGetJson('/api/suggestions'),
-      cxGetJson('/api/connections'), qaLoadInventory()]);
+      cxGetJson('/api/connections'), qaLoadInventory(),
+      cxIsAdmin() ? cxGetJson('/api/discovery/unmonitored-guests') : Promise.resolve(null)]);
     if(seq !== _cxState.seq) return;
     const pending = [suggestions, connections].some(x => x && x.migrationPending);
     _cxState.migrationPending = pending;
@@ -124,6 +125,7 @@ async function cxRefreshAll(){
     _cxState.suggestions = suggestions && !suggestions.migrationPending ? suggestions : null;
     _cxState.connections = connections && !connections.migrationPending ? connections : null;
     _cxState.inventory = inventory || [];
+    _cxState.unmonitored = unmonitored && Array.isArray(unmonitored.guests) ? unmonitored : null;
     _cxState.categories = Array.from(new Set(_cxState.inventory.map(i => i.category).filter(Boolean))).sort();
     const maps = (_cxState.status && _cxState.status.port_maps) || [];
     const ports = await Promise.all(maps.map(m => cxGetJson('/api/ports/' + m.device_id)));
@@ -755,6 +757,95 @@ function cxFindSuggestion(id){
   return ((_cxState.suggestions && _cxState.suggestions.items) || []).find(s => s.id === id) || null;
 }
 
+// ── Guest monitoring: accepted Proxmox guests also go into hosts.yaml ──────
+// Only admins can write hosts.yaml, so only admins see these controls.
+
+function cxIsAdmin(){
+  return typeof _authState !== 'undefined' && !!(_authState && _authState.admin);
+}
+
+function cxGuestDevice(s){
+  const dev = (s && s.kind === 'device' && (s.payload || {}).device) || null;
+  const props = (dev && dev.properties) || {};
+  return dev && props.proxmox_vmid !== undefined && props.proxmox_vmid !== null ? dev : null;
+}
+
+// Ticked by default; the user can untick it per card.
+function cxWantsMonitor(s, drafts, isAdmin){
+  const dev = cxGuestDevice(s);
+  if(!isAdmin || !dev || !dev.ip) return false;
+  return ((drafts || {})[s.id] || {}).monitor !== false;
+}
+
+function cxMonitorHtml(s){
+  const dev = cxGuestDevice(s);
+  if(!dev || !cxIsAdmin()) return '';
+  if(!dev.ip){
+    return '<p class="cx-muted cx-sugg-monitor-hint">No IP yet, so it can\'t be monitored: start the guest or install its guest agent.</p>';
+  }
+  const quiet = (dev.properties || {}).autostart === false;
+  return '<label class="cx-sugg-monitor"><input type="checkbox" data-draft="monitor"'
+    + (cxWantsMonitor(s, _cxState.drafts, true) ? ' checked' : '') + '>'
+    + '<span>Monitor it at <b>' + escapeHtml(dev.ip) + '</b>'
+    + (quiet ? ' <span class="cx-muted">(no alerts: autostart is off)</span>' : '') + '</span></label>';
+}
+
+function cxMonitorToast(r){
+  if(!r || r.monitored === undefined) return '';
+  if(r.monitored) return ' and started monitoring it';
+  const why = {no_ip: 'it has no IP yet', already_monitored: 'it\'s already monitored',
+               admin_required: 'only admins can add monitored hosts'}[r.monitor_skipped];
+  return ' (not monitored: ' + (why || 'hosts.yaml couldn\'t be updated') + ')';
+}
+
+// Backfill: accepted guests from before this feature, once. "Not now" is
+// remembered for this exact set of guests - a new one brings the banner back.
+const CX_GUEST_SNOOZE_KEY = 'nw-guest-monitor-snooze';
+
+function cxGuestSnoozeKey(guests){
+  return (guests || []).map(g => g.id).sort((a, b) => a - b).join(',');
+}
+
+function cxGuestBannerHtml(){
+  const u = _cxState.unmonitored;
+  if(!cxIsAdmin() || !u || !u.guests.length) return '';
+  let snoozed = null;
+  try { snoozed = localStorage.getItem(CX_GUEST_SNOOZE_KEY); } catch(e){}
+  if(snoozed === cxGuestSnoozeKey(u.guests)) return '';
+  const n = u.guests.length;
+  const quiet = u.guests.filter(g => !g.alert).length;
+  const names = u.guests.slice(0, 4).map(g => g.name).join(', ') + (n > 4 ? ' and ' + (n - 4) + ' more' : '');
+  return '<div class="cx-guest-banner" role="status">'
+    + '<p><b>' + n + ' Proxmox guest' + (n === 1 ? '' : 's') + ' in inventory ' + (n === 1 ? 'isn\'t' : 'aren\'t') + ' monitored</b>: '
+    + escapeHtml(names) + '.'
+    + (quiet ? ' <span class="cx-muted">' + quiet + ' without autostart will be added without alerts.</span>' : '')
+    + (u.no_ip ? ' <span class="cx-muted">' + u.no_ip + ' more have no IP yet.</span>' : '') + '</p>'
+    + '<div class="cx-guest-banner-actions">'
+    + '<button type="button" class="btn btn-ghost" onclick="cxSnoozeGuestBanner()">Not now</button>'
+    + '<button type="button" class="btn btn-primary"' + (_cxState.monitorBusy ? ' disabled' : '')
+    + ' onclick="cxMonitorAllGuests()">Monitor ' + (n === 1 ? 'it' : 'them') + '</button>'
+    + '</div></div>';
+}
+
+function cxSnoozeGuestBanner(){
+  try { localStorage.setItem(CX_GUEST_SNOOZE_KEY, cxGuestSnoozeKey((_cxState.unmonitored || {}).guests)); } catch(e){}
+  renderCxSuggestions();
+}
+
+async function cxMonitorAllGuests(){
+  const guests = ((_cxState.unmonitored || {}).guests) || [];
+  if(!guests.length || _cxState.monitorBusy) return;
+  _cxState.monitorBusy = true;
+  renderCxSuggestions();
+  const out = await cxPost('/api/discovery/monitor-guests', {ids: guests.map(g => g.id)});
+  _cxState.monitorBusy = false;
+  if(!out.ok){ toast('Could not add them: ' + out.error, 'error'); renderCxSuggestions(); return; }
+  const added = (out.body.added || []).length;
+  toast(added ? 'Now monitoring ' + added + ' guest' + (added === 1 ? '' : 's') : 'Nothing new to monitor',
+        added ? 'success' : 'info');
+  connectionsChanged();
+}
+
 function cxDeviceEditorHtml(s){
   const dev = (s.payload || {}).device || {};
   const d = _cxState.drafts[s.id] || {};
@@ -785,7 +876,7 @@ function cxSuggestionHtml(s){
   const busy = !!_cxState.busy[s.id];
   const p = s.payload || {};
   let extra = '';
-  if(s.kind === 'device') extra = cxDeviceEditorHtml(s);
+  if(s.kind === 'device') extra = cxMonitorHtml(s) + cxDeviceEditorHtml(s);
   if(s.kind === 'identity' && (p.candidate_id === null || p.candidate_id === undefined)) extra = cxIdentityPickerHtml(s);
   return '<div class="cx-sugg" data-sid="' + s.id + '">'
     + '<p class="cx-sugg-text">' + escapeHtml(cxSuggestionText(s)) + '</p>'
@@ -805,7 +896,8 @@ function cxInitSuggestionEvents(el){
     const item = e.target.closest('.cx-sugg');
     if(!f || !item) return;
     const id = Number(item.dataset.sid);
-    _cxState.drafts[id] = Object.assign({}, _cxState.drafts[id], {[f.dataset.draft]: f.value});
+    _cxState.drafts[id] = Object.assign({}, _cxState.drafts[id],
+      {[f.dataset.draft]: f.type === 'checkbox' ? f.checked : f.value});
   };
   el.addEventListener('input', sync);
   el.addEventListener('change', sync);
@@ -835,13 +927,14 @@ function renderCxSuggestions(){
   if(countEl) countEl.textContent = items.length ? items.length + ' pending' : '';
   // Keep focus if the user is typing in a suggestion's editor.
   const active = document.activeElement;
-  if(active && el.contains(active) && active.matches('input, select')) return;
+  if(active && el.contains(active) && active.matches('input:not([type=checkbox]), select')) return;
   if(!items.length){
-    el.innerHTML = '<div class="cx-empty">Nothing to review. New suggestions appear here after each discovery scan.</div>';
+    el.innerHTML = cxGuestBannerHtml()
+      + '<div class="cx-empty">Nothing to review. New suggestions appear here after each discovery scan.</div>';
     cxFlashSuggestion();
     return;
   }
-  el.innerHTML = cxGroupSuggestions(items).map(g =>
+  el.innerHTML = cxGuestBannerHtml() + cxGroupSuggestions(items).map(g =>
     '<div class="cx-sgroup">'
     + '<div class="cx-sgroup-hdr"><h3>' + escapeHtml(g.label) + '</h3><span class="cx-hdr-count">' + g.count + '</span></div>'
     + g.sources.map(sg =>
@@ -874,6 +967,7 @@ async function cxSuggestionAction(id, action){
       ['system', 'device_type', 'category'].forEach(k => { if(d[k] !== undefined) o[k] = String(d[k]).trim(); });
       if(o.system === ''){ toast('Give the device a name first', 'error'); return; }
       body.overrides = o;
+      if(cxWantsMonitor(s, _cxState.drafts, cxIsAdmin())) body.monitor = true;
     } else if(s.kind === 'identity' && (p.candidate_id === null || p.candidate_id === undefined)){
       if(!d.device_id){ toast('Choose which device this is first', 'error'); return; }
       body.overrides = {device_id: parseInt(d.device_id, 10)};
@@ -892,7 +986,9 @@ async function cxSuggestionAction(id, action){
     return;
   }
   delete _cxState.drafts[id];
-  toast(cxDoneMessage(s, action), 'success');
+  const skipped = out.body && out.body.monitored === false;
+  toast(cxDoneMessage(s, action) + (action === 'accept' ? cxMonitorToast(out.body) : ''),
+        skipped ? 'info' : 'success');
   if(action === 'accept' && ['device', 'shared_port', 'identity'].indexOf(s.kind) !== -1){
     qaInvalidateInventory();
     if(typeof fetchInventory === 'function') fetchInventory();
@@ -909,7 +1005,11 @@ async function cxAcceptAll(kind, source){
   }
   const what = (CX_KIND_LABELS[kind] || kind).toLowerCase() + ' from ' + (CX_SOURCE_LABELS[source] || source);
   const skippedNote = plan.skipped ? ' (' + plan.skipped + ' you edited will be left for you to accept one by one)' : '';
-  if(!confirm('Accept ' + plan.send.length + ' ' + what + '?' + skippedNote)) return;
+  const admin = cxIsAdmin();
+  plan.send.forEach(it => { if(cxWantsMonitor(cxFindSuggestion(it.id), _cxState.drafts, admin)) it.monitor = true; });
+  const monN = plan.send.filter(it => it.monitor).length;
+  const monNote = monN ? ', and start monitoring ' + monN + ' of them' : '';
+  if(!confirm('Accept ' + plan.send.length + ' ' + what + monNote + '?' + skippedNote)) return;
   plan.send.forEach(it => { _cxState.busy[it.id] = true; });
   renderCxSuggestions();
   const out = await cxPost('/api/suggestions/accept-all', {items: plan.send});
@@ -917,8 +1017,10 @@ async function cxAcceptAll(kind, source){
   if(!out.ok){ toast('Could not accept: ' + out.error, 'error'); renderCxSuggestions(); return; }
   const results = out.body.results || [];
   const okN = results.filter(r => r.ok).length;
+  const monitored = results.filter(r => r.monitored).length;
+  const monText = monitored ? ' · monitoring ' + monitored : '';
   toast(okN === results.length
-    ? 'Accepted ' + okN
+    ? 'Accepted ' + okN + monText
     : 'Accepted ' + okN + ' of ' + results.length + '. The rest changed since you looked; they\'re refreshed below.',
     okN === results.length ? 'success' : 'info');
   qaInvalidateInventory();

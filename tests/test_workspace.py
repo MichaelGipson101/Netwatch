@@ -558,6 +558,7 @@ def test_refresh_all_coalesces_a_call_that_arrives_mid_flight():
         "  return {};\n"
         "}\n"
         "async function qaLoadInventory(){ return []; }\n"
+        "function cxIsAdmin(){ return false; }\n"
         "function cxRender(){ renderCalls++; }\n"
         "function cxStartEdit(id){}\n"
         "let _cxState = {mounted: true, seq: 0, refreshing: false, refreshQueued: false,\n"
@@ -696,6 +697,7 @@ def test_refresh_all_replay_does_not_requeue_a_pending_edit_that_never_appears()
         "global.window = {};\n"
         "async function cxGetJson(url){ return {}; }\n"
         "async function qaLoadInventory(){ return []; }\n"
+        "function cxIsAdmin(){ return false; }\n"
         "function cxRender(){}\n"
         "let startEditCalls = [];\n"
         "function cxStartEdit(id, opts){ startEditCalls.push([id, opts]); }\n"
@@ -892,7 +894,7 @@ def test_workspace_breakpoints_are_present():
 
 def test_version_bumped_for_new_static_assets():
     from netwatch import VERSION
-    assert VERSION == "3.78"
+    assert VERSION == "3.79"
 
 
 # ── Whole-branch review fix wave (Minor findings 1, 3, 4, 6) ────────────────
@@ -1228,3 +1230,72 @@ def test_editing_the_child_port_moves_the_uplink_on_the_port_map():
         assert not by_name["Port 13"] and by_name["Port 12"][0]["uplink"] is True   # "12" canonicalises
         assert idb.get_connection(cid)["to_port"] == "1"          # the Eero's port is untouched
         hdb.close()
+
+
+# ── Guest monitoring: card checkbox, accept flag, backfill banner ───────────
+
+GUEST_PARTS = [(UTILS_JS, "function escapeHtml"), (CX_JS, "function cxIsAdmin"),
+               (CX_JS, "function cxGuestDevice"), (CX_JS, "function cxWantsMonitor"),
+               (CX_JS, "function cxMonitorHtml"), (CX_JS, "function cxMonitorToast"),
+               (CX_JS, "const CX_GUEST_SNOOZE_KEY"), (CX_JS, "function cxGuestSnoozeKey"),
+               (CX_JS, "function cxGuestBannerHtml")]
+
+
+def _guest(id_, ip, autostart=True):
+    return ("{id: %d, kind: 'device', payload: {device: {system: 'g%d', ip: %s, "
+            "properties: {proxmox_vmid: %d, autostart: %s}}}}"
+            % (id_, id_, f"'{ip}'" if ip else "null", id_, "true" if autostart else "false"))
+
+
+@needs_node
+def test_guest_card_monitor_checkbox_and_accept_flag():
+    prelude = ("let _authState = {admin: true}; let _cxState = {drafts: {2: {monitor: false}}};"
+               "let _store = {}; const localStorage = {getItem: k => _store[k] || null};")
+    out = run_js(GUEST_PARTS, "[" + ",".join([
+        f"cxWantsMonitor({_guest(1, '192.168.6.14')}, _cxState.drafts, true)",
+        f"cxWantsMonitor({_guest(2, '192.168.6.15')}, _cxState.drafts, true)",     # unticked
+        f"cxWantsMonitor({_guest(3, None)}, _cxState.drafts, true)",               # no IP
+        f"cxWantsMonitor({_guest(1, '192.168.6.14')}, _cxState.drafts, false)",    # not admin
+        "cxWantsMonitor({id: 4, kind: 'device', payload: {device: {ip: '1.2.3.4', properties: {}}}}, {}, true)",
+        f"cxMonitorHtml({_guest(1, '192.168.6.14')})",
+        f"cxMonitorHtml({_guest(5, '192.168.6.129', False)})",
+        f"cxMonitorHtml({_guest(3, None)})",
+        f"(_authState.admin = false, cxMonitorHtml({_guest(1, '192.168.6.14')}))",
+    ]) + "]", prelude)
+    assert out[:5] == [True, False, False, False, False]
+    assert 'data-draft="monitor" checked' in out[5] and "192.168.6.14" in out[5]
+    assert "no alerts: autostart is off" in out[6]
+    assert "No IP yet" in out[7] and "checkbox" not in out[7]
+    assert out[8] == ""
+
+
+@needs_node
+def test_monitor_toast_explains_skips():
+    out = run_js(GUEST_PARTS, "[cxMonitorToast({monitored: true}), cxMonitorToast({ok: true}),"
+                              " cxMonitorToast({monitored: false, monitor_skipped: 'no_ip'}),"
+                              " cxMonitorToast({monitored: false, monitor_skipped: 'error'})]",
+                 "let _authState = {admin: true}; let _cxState = {drafts: {}};")
+    assert out == [" and started monitoring it", "",
+                   " (not monitored: it has no IP yet)",
+                   " (not monitored: hosts.yaml couldn't be updated)"]
+
+
+@needs_node
+def test_guest_banner_shows_for_admins_until_snoozed_for_this_set():
+    guests = ("[{id: 9, name: 'pihole', alert: true}, {id: 3, name: 'Solaris10', alert: false},"
+              " {id: 5, name: 'immich', alert: true}, {id: 7, name: 'wow', alert: true},"
+              " {id: 8, name: 'paperless', alert: true}]")
+    prelude = ("let _authState = {admin: true};"
+               f"let _cxState = {{drafts: {{}}, monitorBusy: false, unmonitored: {{guests: {guests}, no_ip: 2}}}};"
+               "let _store = {}; const localStorage = {getItem: k => _store[k] || null};")
+    out = run_js(GUEST_PARTS, "[cxGuestBannerHtml(), cxGuestSnoozeKey(_cxState.unmonitored.guests),"
+                              " (_store['nw-guest-monitor-snooze'] = '3,5,7,8,9', cxGuestBannerHtml()),"
+                              " (_store['nw-guest-monitor-snooze'] = '3,5,7,9', cxGuestBannerHtml() !== ''),"
+                              " (_authState.admin = false, _store = {}, cxGuestBannerHtml())]", prelude)
+    banner, key, snoozed, newer, non_admin = out
+    assert "5 Proxmox guests in inventory aren&#39;t monitored" in banner \
+        or "5 Proxmox guests in inventory aren't monitored" in banner
+    assert "pihole, Solaris10, immich, wow and 1 more" in banner
+    assert "1 without autostart will be added without alerts" in banner
+    assert "2 more have no IP yet" in banner and "cxMonitorAllGuests()" in banner
+    assert key == "3,5,7,8,9" and snoozed == "" and newer is True and non_admin == ""
