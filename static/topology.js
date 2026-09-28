@@ -330,10 +330,10 @@ function setTopoView(view){
   const grid = document.getElementById('topo-grid');
   const web  = document.getElementById('topo-web');
   // Body class lets CSS reposition the main metrics row when web is active.
-  // Only applied when the topology tab itself is active - other tabs use
+  // Only applied when the topology sub-view itself is active - the other Lab sub-views use
   // the metrics normally. (Otherwise restoring a saved 'web' view on boot
-  // would hide the summary cards even on non-topology tabs.)
-  const topoTabActive = !!document.querySelector('.tab[data-tab="topology"].active');
+  // would hide the summary cards even on non-topology sub-views.)
+  const topoTabActive = nwCurrentSubview() === 'topology';
   document.body.classList.toggle('nw-topo-web', view === 'web' && topoTabActive);
   if(view === 'web'){
     if(grid) grid.style.display = 'none';

@@ -64,6 +64,7 @@ function _subviewFromPath(){
 
 function nwShowSubview(name, opts){
   if(!_subviewNames().includes(name)) return false;
+  const same = (_currentSubview === name);   // before updating: is this a click on the active one?
   _currentSubview = name;
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   document.querySelectorAll('.subnav [data-subview]').forEach(a => {
@@ -73,7 +74,12 @@ function nwShowSubview(name, opts){
   });
   if(opts && opts.push){
     const url = nwPageUrl(document.body.dataset.page, name);
-    if(location.pathname !== url) history.pushState({sub: name}, '', url);
+    // Re-selecting the active sub-view must not stack a duplicate history entry; if the URL is
+    // not canonical yet (bare /lab showing topology) fix it in place.
+    if(location.pathname !== url){
+      if(same) history.replaceState({sub: name}, '', url);
+      else history.pushState({sub: name}, '', url);
+    }
   }
   (_subviewHooks[name] || []).forEach(fn => { try { fn(); } catch(e){ console.error(e); } });
   window.dispatchEvent(new CustomEvent('nw:subview', {detail: {name: name}}));

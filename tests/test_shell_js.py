@@ -175,3 +175,24 @@ def test_a_throwing_connections_badge_does_not_flip_the_stale_banner():
       console.log(lastOk ? 'live' : 'stale');
     """)
     assert out == "live"
+
+
+@needs_node
+def test_clicking_the_active_subview_never_pushes_a_duplicate_entry():
+    out = run("""
+      const subnav = [];
+      document.querySelectorAll = () => subnav;
+      document.body.dataset = {page:'lab', subviews:'topology,connections,inventory'};
+      global.location = {pathname:'/lab', search:''};                 // bare /lab shows topology
+      const log = [];
+      global.history = {pushState(s,t,u){ log.push('push:' + u); global.location.pathname = u; },
+                        replaceState(s,t,u){ log.push('replace:' + u); global.location.pathname = u; }};
+      global.CustomEvent = function(n, o){ this.detail = o.detail; };
+      global.dispatchEvent = () => {};
+      nwShowSubview('topology', {push:false});     // boot: no history call
+      nwShowSubview('topology', {push:true});      // click the active one on bare /lab: canonicalise in place
+      nwShowSubview('topology', {push:true});      // already canonical: nothing at all
+      nwShowSubview('connections', {push:true});   // a different sub-view still pushes exactly once
+      console.log(log.join(','));
+    """)
+    assert out == "replace:/lab/topology,push:/lab/connections"

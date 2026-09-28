@@ -347,3 +347,28 @@ def test_force_layout_keeps_guests_out_of_the_simulation_and_saved_positions():
     assert "ctx.nodeSel.filter(d => !guests.isGuest(d)).call(d3.drag()" in force   # VMs aren't draggable
     render = src[src.index("function renderTopologyWeb("):src.index("function _topoBuildScene(")]
     assert "topoGuestSplit(" in render and "topoAnchorGhosts(" in render
+
+
+TOPO_VIEW_PRELUDE = """
+let _topoView = 'web', _topoFullscreen = false, _flowRaf = null;
+const _cls = new Set();
+global.document = { getElementById: () => null, querySelector: () => null,
+  body: {classList: {toggle(n, on){ on ? _cls.add(n) : _cls.delete(n); }}} };
+global.localStorage = {setItem(){}};
+global.cancelAnimationFrame = () => {};
+function exitTopologyFullscreen(){} function initTopologyWeb(){}
+let _sub = '';
+function nwCurrentSubview(){ return _sub; }
+"""
+
+
+@needs_node
+def test_web_body_class_follows_the_active_subview_not_the_removed_tab_bar():
+    """setTopoView must key nw-topo-web off nwCurrentSubview(); the old `.tab[data-tab=topology]`
+    lookup matched nothing once tabs became links, so the class never stuck on /lab/topology."""
+    def cls(sub, view):
+        return js(f"(_sub = {sub!r}, setTopoView({view!r}), [..._cls])",
+                  [(TOPO_JS, "function setTopoView")], TOPO_VIEW_PRELUDE)
+    assert cls("topology", "web") == ["nw-topo-web"]
+    assert cls("connections", "web") == []
+    assert cls("topology", "cards") == []
