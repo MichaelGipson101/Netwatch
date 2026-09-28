@@ -33,6 +33,7 @@ from netwatch.http_handlers import (
     _h_get_connection_preview, _h_post_connection_quick_add, _h_get_ports,
     _h_get_suggestions, _h_post_suggestion_dismiss,
     _h_post_suggestion_accept, _h_post_suggestions_accept_all,
+    _h_get_unmonitored_guests, _h_post_monitor_guests,
     _h_get_discovery_status, _h_post_discovery_scan,
 )
 
@@ -116,6 +117,13 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                     self._send_json(403, {"error": "csrf_required"})
                     return False
             return True
+
+        def _monitor_ctx(self):
+            """What guest monitoring needs to write hosts.yaml - only an
+            admin may (same rule as POST /api/hosts)."""
+            is_admin = True if not auth_manager else self._current_user()[1]
+            return {"config_path": config_path, "host_manager": host_manager,
+                    "settings": settings, "is_admin": is_admin}
 
         def _set_session_cookie(self, username):
             cookie = auth_manager.make_session_cookie(username)
@@ -317,6 +325,10 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_discovery_status(discovery_runner, inventory_db))
                 return
+            if self.path == "/api/discovery/unmonitored-guests":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_unmonitored_guests(inventory_db, config_path))
+                return
             if (self.path.startswith("/api/inventory/") and self.path.endswith("/connections")):
                 if not self._require_auth(): return
                 self._send_json(*_h_get_connections_for_device(self.path, inventory_db))
@@ -445,18 +457,25 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 self._send_json(*_h_post_connection_quick_add(data, inventory_db))
                 return
 
+            if self.path == "/api/discovery/monitor-guests":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_monitor_guests(data, inventory_db, self._monitor_ctx()))
+                return
+
             if self.path == "/api/suggestions/accept-all":
                 if not self._require_auth(): return
                 data, err = self._read_json_body()
                 if err: return
-                self._send_json(*_h_post_suggestions_accept_all(data, inventory_db))
+                self._send_json(*_h_post_suggestions_accept_all(data, inventory_db, self._monitor_ctx()))
                 return
 
             if self.path.startswith("/api/suggestions/") and self.path.endswith("/accept"):
                 if not self._require_auth(): return
                 data, err = self._read_json_body()
                 if err: return
-                self._send_json(*_h_post_suggestion_accept(self.path, data, inventory_db))
+                self._send_json(*_h_post_suggestion_accept(self.path, data, inventory_db, self._monitor_ctx()))
                 return
 
             if self.path == "/api/discovery/scan":

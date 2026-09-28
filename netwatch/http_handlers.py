@@ -1126,7 +1126,44 @@ def _h_post_suggestion_dismiss(path: str, body: dict, inventory_db) -> tuple:
 MAX_ACCEPT_ALL_ITEMS = 500
 
 
-def _h_post_suggestion_accept(path: str, body: dict, inventory_db) -> tuple:
+def _is_proxmox_guest(record):
+    return bool(record) and record.get("device_type") == "vm" and (
+        (record.get("properties") or {}).get("proxmox_vmid") is not None)
+
+
+def _monitor_guests(device_ids, inventory_db, monitor):
+    """Add these inventory guests to hosts.yaml and start pinging them.
+    `monitor`: {config_path, host_manager, settings, is_admin}. Returns
+    {device_id: None (now monitored) | reason skipped}."""
+    out, entries = {}, {}
+    if not monitor or not monitor.get("is_admin"):
+        return {i: "admin_required" for i in device_ids}
+    for i in device_ids:
+        rec = inventory_db.get(i)
+        entry = guest_host_entry(rec) if _is_proxmox_guest(rec) else None
+        if entry is None:
+            out[i] = "no_ip" if _is_proxmox_guest(rec) else "not_a_guest"
+        else:
+            entries[i] = entry
+    if not entries:
+        return out
+    try:
+        added, hosts = add_monitored_hosts(monitor["config_path"], list(entries.values()))
+    except Exception as e:
+        logging.warning(f"guest monitoring: could not update hosts.yaml: {type(e).__name__}")
+        out.update({i: "error" for i in entries})
+        return out
+    if added:
+        settings = monitor.get("settings") or {}
+        monitor["host_manager"].reload_from_config(hosts, settings.get("default_interval", 30))
+        logging.info(f"guest monitoring: added {', '.join(a['name'] for a in added)}")
+    added_ips = {a["ip"] for a in added}
+    for i, e in entries.items():
+        out[i] = None if e["ip"] in added_ips else "already_monitored"
+    return out
+
+
+def _h_post_suggestion_accept(path: str, body: dict, inventory_db, monitor=None) -> tuple:
     gate = _conn_v2_gate(inventory_db)
     if gate:
         return gate
@@ -1138,6 +1175,14 @@ def _h_post_suggestion_accept(path: str, body: dict, inventory_db) -> tuple:
     ok, err, result = inventory_db.accept_suggestion(
         sid, body.get("fingerprint"), body.get("overrides"), body.get("action"))
     if ok:
+        result = dict(result)
+        if body.get("monitor") is True and result.get("device_id") is not None:
+            # The accept already committed: a monitoring problem is reported,
+            # never turned into a failed accept.
+            reason = _monitor_guests([result["device_id"]], inventory_db, monitor)[result["device_id"]]
+            result["monitored"] = reason is None
+            if reason:
+                result["monitor_skipped"] = reason
         return 200, {"ok": True, **result}
     if err == "not_found":
         return 404, {"error": "suggestion not found"}
@@ -1146,14 +1191,62 @@ def _h_post_suggestion_accept(path: str, body: dict, inventory_db) -> tuple:
     return 400, {"error": result.get("error") or "rejected"}
 
 
-def _h_post_suggestions_accept_all(body: dict, inventory_db) -> tuple:
+def _h_post_suggestions_accept_all(body: dict, inventory_db, monitor=None) -> tuple:
     gate = _conn_v2_gate(inventory_db)
     if gate:
         return gate
     items = (body or {}).get("items")
     if not isinstance(items, list) or len(items) > MAX_ACCEPT_ALL_ITEMS:
         return 400, {"error": f"items must be a list of at most {MAX_ACCEPT_ALL_ITEMS}"}
-    return 200, {"results": inventory_db.accept_suggestions(items)}
+    results = inventory_db.accept_suggestions(items)
+    wanted = {it.get("id") for it in items if isinstance(it, dict) and it.get("monitor") is True}
+    ids = [r["device_id"] for r in results
+           if r["ok"] and r.get("device_id") is not None and r["id"] in wanted]
+    if ids:
+        reasons = _monitor_guests(ids, inventory_db, monitor)   # one write + one reload
+        for r in results:
+            if r.get("device_id") in reasons:
+                r["monitored"] = reasons[r["device_id"]] is None
+                if reasons[r["device_id"]]:
+                    r["monitor_skipped"] = reasons[r["device_id"]]
+    return 200, {"results": results}
+
+
+def _h_get_unmonitored_guests(inventory_db, config_path) -> tuple:
+    """Accepted Proxmox guests with no hosts.yaml entry (by IP or name): the
+    backfill banner's list. Guests without an IP are counted separately."""
+    if not inventory_db:
+        return 200, {"guests": [], "no_ip": 0}
+    try:
+        hosts = (load_yaml(config_path) or {}).get("hosts") or []
+    except Exception:
+        hosts = []
+    ips, names = monitored_keys(hosts)
+    guests, no_ip = [], 0
+    for r in inventory_db.list_all():
+        if not _is_proxmox_guest(r):
+            continue
+        name = str(r.get("system") or "").strip()
+        ip = str(r.get("ip") or "").strip()
+        if name.lower() in names or (ip and ip in ips):
+            continue
+        entry = guest_host_entry(r)
+        if entry is None:
+            no_ip += 1
+            continue
+        guests.append({"id": r["id"], "name": name, "ip": ip, "alert": entry["alert"]})
+    guests.sort(key=lambda g: g["name"].lower())
+    return 200, {"guests": guests, "no_ip": no_ip}
+
+
+def _h_post_monitor_guests(body: dict, inventory_db, monitor) -> tuple:
+    ids = (body or {}).get("ids")
+    if (not isinstance(ids, list) or len(ids) > MAX_ACCEPT_ALL_ITEMS
+            or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+        return 400, {"error": f"ids must be a list of at most {MAX_ACCEPT_ALL_ITEMS} integers"}
+    reasons = _monitor_guests(ids, inventory_db, monitor)
+    return 200, {"added": [i for i in ids if reasons.get(i) is None],
+                 "skipped": {str(i): r for i, r in reasons.items() if r}}
 
 
 def _port_map_devices(switch_macs, inventory_db):

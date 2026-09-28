@@ -1529,8 +1529,10 @@ class InventoryDB:
                 results.append({"id": it.get("id"), "ok": False, "error": "invalid id"})
                 continue
             ok, err, res = self.accept_suggestion(sid, it.get("fingerprint"), now=now)
-            results.append({"id": sid, "ok": ok,
-                            "error": None if ok else (res.get("error") or err)})
+            out = {"id": sid, "ok": ok, "error": None if ok else (res.get("error") or err)}
+            if ok and res.get("device_id") is not None:
+                out["device_id"] = res["device_id"]   # a created device (guest monitoring)
+            results.append(out)
         return results
 
     def _device_exists_locked(self, inv_id):

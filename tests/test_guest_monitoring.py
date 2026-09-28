@@ -159,3 +159,181 @@ def test_add_monitored_hosts_waits_for_the_shared_write_lock():
             assert not done.wait(0.3)                            # blocked behind the holder
         t.join(5)
         assert done.is_set()
+
+
+# ── API: monitor on accept, accept-all, backfill ─────────────────────────────
+
+import json
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+from netwatch.auth import AuthManager
+from netwatch.http_handlers import (
+    _h_get_unmonitored_guests, _h_post_monitor_guests, _h_post_suggestion_accept,
+    _h_post_suggestions_accept_all,
+)
+from netwatch.server import make_handler
+from netwatch.storage import HistoryDB, InventoryDB
+
+
+class FakeHostManager:
+    def __init__(self):
+        self.reloads = []
+
+    def reload_from_config(self, hosts, default_interval):
+        self.reloads.append(([h["name"] for h in hosts], default_interval))
+
+
+def _idb(d):
+    hdb = HistoryDB(os.path.join(d, "t.db"))
+    idb = InventoryDB(hdb)
+    assert idb.migrate_connections_v2()[0]      # production DBs are migrated
+    return hdb, idb
+
+
+def _add(idb, system, device_type="host", ip=None, **props):
+    data = {"system": system, "device_type": device_type, "properties": props or None}
+    if ip:
+        data["ip"] = ip
+    new_id, err = idb.create(data)
+    assert err is None, err
+    return new_id
+
+
+def _guest_suggestion(idb, node_id, name, vmid, ip, autostart=True, mac=None):
+    payload = {
+        "device": {"system": name, "mac": mac, "ip": ip, "device_type": "vm",
+                   "category": None,
+                   "properties": {"hypervisor": "Proxmox", "guest_type": "lxc",
+                                  "proxmox_node": "pve", "proxmox_vmid": vmid,
+                                  "autostart": autostart}},
+        "edge": {"parent_id": node_id, "parent_name": "pve", "parent_port": None,
+                 "child_port": None, "connection_type": "virtual", "source": "proxmox",
+                 "external_key": f"proxmox:guest:pve:{vmid}"},
+        "message": f"{name} isn't in inventory"}
+    fp = f"fp{vmid}"
+    sid = idb.suggestions.upsert("device", "proxmox", f"device:proxmox:pve:{vmid}", payload, fp)
+    return sid, fp
+
+
+def _ctx(d, is_admin=True):
+    return {"config_path": _write_config(d), "host_manager": FakeHostManager(),
+            "settings": {"default_interval": 30}, "is_admin": is_admin}
+
+
+def _names(path):
+    with open(path) as f:
+        return [h["name"] for h in yaml.safe_load(f)["hosts"]]
+
+
+def test_accept_with_monitor_adds_the_guest_and_reloads():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = _idb(d)
+        node = _add(idb, "HP EliteDesk")
+        ctx = _ctx(d)
+        sid, fp = _guest_suggestion(idb, node, "pihole", 120, "192.168.6.14")
+        code, body = _h_post_suggestion_accept(
+            f"/api/suggestions/{sid}/accept", {"fingerprint": fp, "monitor": True}, idb, ctx)
+        assert code == 200 and body["monitored"] is True and "monitor_skipped" not in body
+        assert _names(ctx["config_path"])[-1] == "pihole"
+        assert ctx["host_manager"].reloads == [(["PrintServer", "HomeAssistant", "pihole"], 30)]
+        hdb.close()
+
+
+def test_accept_without_monitor_or_ip_or_admin_still_accepts():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = _idb(d)
+        node = _add(idb, "HP EliteDesk")
+        ctx = _ctx(d)
+        s1, f1 = _guest_suggestion(idb, node, "quiet", 1, "192.168.6.1")
+        s2, f2 = _guest_suggestion(idb, node, "wow", 2, None)
+        s3, f3 = _guest_suggestion(idb, node, "authentik", 3, "192.168.7.23")
+        s4, f4 = _guest_suggestion(idb, node, "haos", 4, "192.168.5.110")    # IP already monitored
+        _, b1 = _h_post_suggestion_accept(f"/api/suggestions/{s1}/accept", {"fingerprint": f1}, idb, ctx)
+        _, b2 = _h_post_suggestion_accept(f"/api/suggestions/{s2}/accept",
+                                          {"fingerprint": f2, "monitor": True}, idb, ctx)
+        _, b3 = _h_post_suggestion_accept(f"/api/suggestions/{s3}/accept",
+                                          {"fingerprint": f3, "monitor": True}, idb,
+                                          dict(ctx, is_admin=False))
+        _, b4 = _h_post_suggestion_accept(f"/api/suggestions/{s4}/accept",
+                                          {"fingerprint": f4, "monitor": True}, idb, ctx)
+        assert b1["ok"] and "monitored" not in b1
+        assert b2["ok"] and b2["monitor_skipped"] == "no_ip"
+        assert b3["ok"] and b3["monitor_skipped"] == "admin_required"
+        assert b4["ok"] and b4["monitor_skipped"] == "already_monitored"
+        assert _names(ctx["config_path"]) == ["PrintServer", "HomeAssistant"]
+        assert ctx["host_manager"].reloads == []
+        hdb.close()
+
+
+def test_accept_all_monitors_only_the_items_that_asked_in_one_write():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = _idb(d)
+        node = _add(idb, "HP EliteDesk")
+        ctx = _ctx(d)
+        s1, f1 = _guest_suggestion(idb, node, "immich", 1, "192.168.6.13")
+        s2, f2 = _guest_suggestion(idb, node, "Solaris10", 2, "192.168.6.129", autostart=False)
+        s3, f3 = _guest_suggestion(idb, node, "paperless", 3, "192.168.7.11")
+        code, body = _h_post_suggestions_accept_all({"items": [
+            {"id": s1, "fingerprint": f1, "monitor": True},
+            {"id": s2, "fingerprint": f2, "monitor": True},
+            {"id": s3, "fingerprint": f3}]}, idb, ctx)
+        r = {x["id"]: x for x in body["results"]}
+        assert r[s1]["monitored"] and r[s2]["monitored"] and "monitored" not in r[s3]
+        with open(ctx["config_path"]) as f:
+            hosts = {h["name"]: h for h in yaml.safe_load(f)["hosts"]}
+        assert set(hosts) == {"PrintServer", "HomeAssistant", "immich", "Solaris10"}
+        assert (hosts["Solaris10"]["always_on"], hosts["Solaris10"]["alert"]) == (False, False)
+        assert len(ctx["host_manager"].reloads) == 1
+        hdb.close()
+
+
+def test_backfill_lists_and_monitors_unmonitored_guests():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = _idb(d)
+        ctx = _ctx(d)
+        pihole = _add(idb, "pihole", "vm", ip="192.168.6.14", proxmox_vmid=120, autostart=True)
+        _add(idb, "printserver", "vm", ip="192.168.6.170", proxmox_vmid=126)   # monitored by name/IP
+        _add(idb, "wow", "vm", proxmox_vmid=306)                               # no IP yet
+        _add(idb, "Hand VM", "vm", ip="192.168.6.50")                          # not a Proxmox guest
+        solaris = _add(idb, "Solaris10", "vm", ip="192.168.6.129", proxmox_vmid=116, autostart=False)
+        code, body = _h_get_unmonitored_guests(idb, ctx["config_path"])
+        assert code == 200 and body["no_ip"] == 1
+        assert body["guests"] == [
+            {"id": pihole, "name": "pihole", "ip": "192.168.6.14", "alert": True},
+            {"id": solaris, "name": "Solaris10", "ip": "192.168.6.129", "alert": False}]
+        code, out = _h_post_monitor_guests({"ids": [pihole, solaris, 99999]}, idb, ctx)
+        assert code == 200 and out["added"] == [pihole, solaris]
+        assert out["skipped"] == {"99999": "not_a_guest"}
+        assert _h_get_unmonitored_guests(idb, ctx["config_path"])[1]["guests"] == []
+        assert _h_post_monitor_guests({"ids": "all"}, idb, ctx)[0] == 400
+        assert _h_post_monitor_guests({"ids": [True]}, idb, ctx)[0] == 400
+        hdb.close()
+
+
+def test_monitor_guests_route_is_admin_only(tmp_path):
+    hdb, idb = _idb(str(tmp_path))
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("root", "password123", admin=True)
+    auth.create_user("bob", "password123")
+    bob = auth.make_session_cookie("bob")
+    handler = make_handler(FakeHostManager(), {}, _write_config(str(tmp_path)),
+                           auth_manager=auth, inventory_db=idb)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=server.handle_request)
+    t.start()
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/discovery/monitor-guests",
+            data=b'{"ids": []}', method="POST",
+            headers={"Cookie": f"nw_session={bob}", "Content-Type": "application/json",
+                     "X-CSRF-Token": auth.csrf_token_for_cookie(bob)})
+        try:
+            urllib.request.urlopen(req)
+            code = 200
+        except urllib.error.HTTPError as err:
+            code = err.code
+        assert code == 403
+    finally:
+        server.server_close(); t.join()
+    hdb.close()
