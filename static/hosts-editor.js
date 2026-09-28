@@ -496,14 +496,3 @@ async function openEditor(){
     document.getElementById('modal-overlay').classList.add('open');
   } catch(e) { toast('Could not load host list.', 'error'); }
 }
-
-// Arriving from another page's "Edit hosts" button (/monitor?edit=1): strip the flag so a
-// reload doesn't reopen the editor, then open it once the auth state is known.
-nwOnReady(function(){
-  const qs = new URLSearchParams(location.search);
-  if(qs.get('edit') !== '1') return;
-  qs.delete('edit');
-  const rest = qs.toString();
-  history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
-  Promise.resolve(fetchAuthState()).then(() => openEditor());
-});

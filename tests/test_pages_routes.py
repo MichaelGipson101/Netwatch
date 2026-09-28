@@ -110,3 +110,11 @@ def test_legacy_dashboard_html_still_serves_root_when_no_pages_given():
             assert r.read() == b"<html>legacy</html>"
     finally:
         server.server_close()
+
+
+def test_edit_hosts_button_is_on_monitor_only():
+    pages = render_all(REPO, "1")
+    assert pages["monitor"].count("openEditor()") == 1
+    for name in ("home", "lab", "infra", "links"):
+        assert "openEditor()" not in pages[name]
+        assert "nwEditHosts" not in pages[name]

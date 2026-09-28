@@ -26,7 +26,8 @@
   };
 
   window.initServersTab = function () {
-    var saved = localStorage.getItem('nw-servers-panel') || 'proxmox';
+    var m = location.pathname.match(/^\/infra\/(proxmox|truenas)\/?$/);
+    var saved = m ? m[1] : 'proxmox';
     window.switchServersPanel(saved, false);
   };
 
@@ -37,10 +38,15 @@
     document.querySelectorAll('[data-servers-panel]').forEach(function (div) {
       div.style.display = div.dataset.serversPanel === panel ? '' : 'none';
     });
-    if (save !== false) localStorage.setItem('nw-servers-panel', panel);
+    if (save !== false && location.pathname !== '/infra/' + panel) history.pushState({}, '', '/infra/' + panel);
     if (panel === 'proxmox') window.fetchProxmox();
     if (panel === 'truenas' && typeof fetchNas === 'function') fetchNas();
   };
+
+  window.addEventListener('popstate', function () {
+    var m = location.pathname.match(/^\/infra\/(proxmox|truenas)\/?$/);
+    if (document.querySelector('.servers-pill')) window.switchServersPanel(m ? m[1] : 'proxmox', false);
+  });
 
   /* ── Hosts map (for Netwatch link dot) ─────────────────────────────────── */
 
@@ -264,9 +270,9 @@
     var title = escapeHtml(entry.name)
       + (entry.is_up === true ? ' • UP' : entry.is_up === false ? ' • DOWN' : '');
     return '<span class="pve-nw-dot ' + upCls + '" title="' + title + '"'
-      + ' onclick="if(typeof showTab===\'function\')setTab(\'inventory\')"'
+      + ' onclick="setTab(\'inventory\')"'
       + ' style="cursor:pointer" tabindex="0" role="link"'
-      + ' onkeydown="if(event.key===\'Enter\'&&typeof showTab===\'function\')setTab(\'inventory\')"></span>';
+      + ' onkeydown="if(event.key===\'Enter\')setTab(\'inventory\')"></span>';
   }
 
   /* ── Action buttons ─────────────────────────────────────────────────────── */

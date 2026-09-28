@@ -137,13 +137,6 @@ function nwComputeSummary(data){
   };
 }
 
-// Topbar "Edit hosts": the host editor lives on Monitor. Elsewhere, hop there and let
-// hosts-editor.js open it once the page has loaded (?edit=1).
-function nwEditHosts(){
-  if(typeof openEditor === 'function') openEditor();
-  else location.href = '/monitor?edit=1';
-}
-
 function nwSetConnBadge(n){
   const el = document.getElementById('conn-count');
   if(!el) return;

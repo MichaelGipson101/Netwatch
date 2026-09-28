@@ -602,3 +602,17 @@ nwStatus.subscribe(function(data){
     if(h) renderDrawer(h, data);
   }
 });
+
+// ?host=<ip> deep link (from Home's host icons and cross-page "open this host" hand-offs).
+// The value is only ever compared against monitored IPs, never rendered as HTML.
+function nwHostParam(search){
+  const v = new URLSearchParams(search || '').get('host');
+  return v ? v : null;
+}
+nwOnReady(function(){
+  const ip = nwHostParam(location.search);
+  if(!ip) return;
+  nwStatus.subscribeOnce(function(data){
+    if(data.hosts.some(h => h.ip === ip)) openDrawer(ip);   // unknown IPs: silently ignored
+  });
+});

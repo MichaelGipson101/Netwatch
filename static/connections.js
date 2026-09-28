@@ -671,9 +671,12 @@ async function cxDeleteConnection(id){
   connectionsChanged();
 }
 
+// Called from the Lab's own surfaces (topology/inventory/workspace) and from Home's switch-port
+// tiles. Without #view-connections on this page (Home) it hands off to the Lab via ?hc=.
 function cxHighlightConnection(id, opts){
   const view = document.getElementById('view-connections');
-  if(view && !view.classList.contains('active')) setTab('connections');
+  if(!view){ location.href = cxHighlightUrl(id, opts); return; }
+  if(!view.classList.contains('active')) setTab('connections');
   _cxState.filter = 'all';
   _cxState.query = '';
   _cxState.highlightConn = id;
@@ -683,6 +686,7 @@ function cxHighlightConnection(id, opts){
   else cxRenderTableRows({force: true});
 }
 
+// Lab-only: called from topology/inventory/the workspace
 function cxHighlightSuggestion(id){
   const view = document.getElementById('view-connections');
   const wasActive = !!(view && view.classList.contains('active'));
@@ -1169,10 +1173,39 @@ async function cxLoadPortMaps(){
   return maps.map((m, i) => ({device_id: m.device_id, name: m.name, data: ports[i]}));
 }
 
+// Cross-page hand-offs. Home's switch-port tiles can't drive the Lab's workspace directly, so they
+// navigate to /lab/connections with one of these query params; cxRunHandoff() (below) consumes it
+// once on arrival. Ids must be plain positive integers: nothing here is ever rendered as HTML.
+function cxQuickAddUrl(deviceId, port){
+  return '/lab/connections?qa=' + encodeURIComponent(deviceId + ':' + port);
+}
+function cxParseQuickAddParam(search){
+  const v = new URLSearchParams(search || '').get('qa');
+  if(!v) return null;
+  const i = v.indexOf(':');
+  if(i < 1 || !/^\d+$/.test(v.slice(0, i))) return null;
+  return {deviceId: Number(v.slice(0, i)), port: v.slice(i + 1)};
+}
+function cxHighlightUrl(id, opts){
+  let u = '/lab/connections?hc=' + encodeURIComponent(id);
+  if(opts && opts.edit) u += '&hcedit=1';
+  if(opts && opts.focus) u += '&hcfocus=' + encodeURIComponent(opts.focus);
+  return u;
+}
+function cxParseHighlightParam(search){
+  const q = new URLSearchParams(search || '');
+  const v = q.get('hc');
+  if(!v || !/^\d+$/.test(v) || Number(v) < 1) return null;
+  const f = q.get('hcfocus');
+  return {id: Number(v), edit: q.get('hcedit') === '1',
+          focus: f && /^[a-z_]+$/.test(f) ? f : null};
+}
+
 // Up-but-unrecorded tile: open quick add with the switch and port filled in.
 function cxQuickAddAt(deviceId, port){
   const view = document.getElementById('view-connections');
-  if(view && !view.classList.contains('active')) setTab('connections');   // from the Overview copy
+  if(!view){ location.href = cxQuickAddUrl(deviceId, port); return; }   // called from Home's port card
+  if(!view.classList.contains('active')) setTab('connections');
   const box = document.getElementById('cx-quick');
   if(!box) return;
   const qa = renderQuickAdd(box, {b_id: deviceId, parent_port: port, onAdded: () => connectionsChanged()});
@@ -1181,3 +1214,27 @@ function cxQuickAddAt(deviceId, port){
 }
 
 nwOnSubview('connections', function(){ mountConnectionsTab(); });
+
+// Consume a ?qa= / ?hc= hand-off exactly once. The params are stripped BEFORE acting so a reload
+// never repeats the action. Both waits are bounded: the quick-add box / the connection row may not
+// exist yet (mount + first fetch are still in flight), and a stale link must not poll forever.
+function cxRunHandoff(){
+  const qa = cxParseQuickAddParam(location.search);
+  const hc = cxParseHighlightParam(location.search);
+  if(!qa && !hc) return;
+  const q = new URLSearchParams(location.search);
+  ['qa', 'hc', 'hcedit', 'hcfocus'].forEach(k => q.delete(k));
+  const rest = q.toString();
+  history.replaceState(history.state, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  let tries = 0;
+  const t = setInterval(function(){
+    const ready = qa ? !!document.getElementById('cx-quick')
+                     : !!(document.getElementById('cx-table') && cxFindConnection(hc.id));
+    if(!ready && ++tries <= 40) return;
+    clearInterval(t);
+    if(!ready) return;    // never appeared (deleted link, fetch failed): give up quietly
+    if(qa) cxQuickAddAt(qa.deviceId, qa.port);
+    else cxHighlightConnection(hc.id, {edit: hc.edit, focus: hc.focus});
+  }, 150);
+}
+nwOnSubview('connections', function(){ cxRunHandoff(); });

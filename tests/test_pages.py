@@ -137,3 +137,13 @@ def test_core_js_declarations_are_preserved():
     lost = sorted(n for n in CORE_JS_ORIGINAL_DECLARATIONS
                   if n not in now and n not in INTENTIONALLY_REMOVED)
     assert not lost, f"declarations from the original core.js disappeared: {lost}"
+
+
+def test_no_reference_to_the_never_defined_showtab():
+    assert "showTab" not in read(os.path.join(STATIC, "proxmox.js"))
+
+
+def test_infra_panel_choice_comes_from_the_url_not_localstorage():
+    src = read(os.path.join(STATIC, "proxmox.js"))
+    assert "nw-servers-panel" not in src
+    assert "popstate" in src

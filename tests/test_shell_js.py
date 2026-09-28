@@ -2,7 +2,7 @@
 import os
 import subprocess
 
-from js_harness import STATIC, needs_node
+from js_harness import STATIC, js_part, needs_node, run_js
 
 SHELL = os.path.join(STATIC, "shell.js")
 
@@ -216,14 +216,165 @@ def test_compute_summary_matches_the_old_kpi_math_and_survives_empty_data():
 
 
 @needs_node
-def test_edit_hosts_opens_in_place_on_monitor_and_hops_there_elsewhere():
+def test_host_param_parsing():
+    drawer = os.path.join(STATIC, "drawer.js")
+    parts = [(drawer, "function nwHostParam")]
+    ok = run_js(parts, "[nwHostParam('?host=10.0.0.2'), nwHostParam('?host='), nwHostParam(''), nwHostParam('?x=1'), nwHostParam('?host=%3Cimg%3E')]")
+    assert ok == ["10.0.0.2", None, None, None, "<img>"]
+
+
+@needs_node
+def test_quickadd_param_roundtrip():
+    conn = os.path.join(STATIC, "connections.js")
+    parts = [(conn, "function cxParseQuickAddParam"), (conn, "function cxQuickAddUrl")]
+    out = run_js(parts, "[cxQuickAddUrl(7, 'Port 4'), cxParseQuickAddParam('?qa=7%3APort%204'), cxParseQuickAddParam('?qa=bad'), cxParseQuickAddParam('')]")
+    assert out == ["/lab/connections?qa=7%3APort%204", {"deviceId": 7, "port": "Port 4"}, None, None]
+
+
+@needs_node
+def test_quickadd_param_rejects_non_integer_device_ids():
+    conn = os.path.join(STATIC, "connections.js")
+    parts = [(conn, "function cxParseQuickAddParam")]
+    out = run_js(parts, "['?qa=1.5%3AP', '?qa=x%3AP', '?qa=%3AP', '?qa=:P', '?qa=7'].map(cxParseQuickAddParam)")
+    assert out == [None, None, None, None, None]
+
+
+@needs_node
+def test_highlight_param_roundtrip():
+    conn = os.path.join(STATIC, "connections.js")
+    parts = [(conn, "function cxParseHighlightParam"), (conn, "function cxHighlightUrl")]
+    out = run_js(parts, """[
+      cxHighlightUrl(12), cxHighlightUrl(12, {edit: true}), cxHighlightUrl(12, {edit: true, focus: 'child_port'}),
+      cxParseHighlightParam('?hc=12'), cxParseHighlightParam('?hc=12&hcedit=1'),
+      cxParseHighlightParam('?hc=12&hcedit=1&hcfocus=child_port'),
+      cxParseHighlightParam('?hc=12&hcfocus=%22%3E%3Cx'),
+      cxParseHighlightParam(cxHighlightUrl(5, {edit: true, focus: 'child_port'}).slice(cxHighlightUrl(5).indexOf('?')))
+    ]""")
+    assert out == [
+        "/lab/connections?hc=12", "/lab/connections?hc=12&hcedit=1",
+        "/lab/connections?hc=12&hcedit=1&hcfocus=child_port",
+        {"id": 12, "edit": False, "focus": None}, {"id": 12, "edit": True, "focus": None},
+        {"id": 12, "edit": True, "focus": "child_port"},
+        {"id": 12, "edit": False, "focus": None},
+        {"id": 5, "edit": True, "focus": "child_port"},
+    ]
+
+
+@needs_node
+def test_highlight_param_garbage_is_null():
+    conn = os.path.join(STATIC, "connections.js")
+    parts = [(conn, "function cxParseHighlightParam")]
+    out = run_js(parts, "['', '?hc=', '?hc=abc', '?hc=1.5', '?hc=-3', '?hc=0', '?x=1', '?hc=1e3', '?hc=%3Cimg%3E'].map(cxParseHighlightParam)")
+    assert out == [None] * 9
+
+
+HANDOFF_PRELUDE = r"""
+const log = [];
+let present = {};                       // element ids currently "in the DOM"
+let known = {};                         // connection ids currently loaded
+const timers = []; let cleared = 0;
+global.setInterval = fn => { timers.push(fn); return timers.length; };
+global.clearInterval = () => { cleared++; };
+global.document = { getElementById: id => present[id] ? {id} : null };
+global.history = { state: {sub: 'connections'}, replaceState(s, t, url){ log.push('replace:' + url); } };
+global.location = { pathname: '/lab/connections', search: '', hash: '' };
+function cxFindConnection(id){ return known[id] ? {id} : null; }
+function cxQuickAddAt(d, p){ log.push('qa:' + d + ':' + p); }
+function cxHighlightConnection(id, o){ log.push('hc:' + id + ':' + o.edit + ':' + o.focus); }
+"""
+
+
+def _handoff(js):
+    conn = os.path.join(STATIC, "connections.js")
+    parts = [(conn, "function cxParseQuickAddParam"), (conn, "function cxParseHighlightParam"),
+             (conn, "function cxRunHandoff")]
+    return run_js(parts, js, prelude=HANDOFF_PRELUDE)
+
+
+@needs_node
+def test_handoff_no_params_does_nothing():
+    out = _handoff("(cxRunHandoff(), [log, timers.length])")
+    assert out == [[], 0]
+
+
+@needs_node
+def test_handoff_quickadd_strips_params_first_then_waits_for_the_box_then_acts_once():
+    out = _handoff("""(() => {
+      location.search = '?qa=7%3APort%204&keep=1';
+      cxRunHandoff();
+      const afterStart = log.slice();            // stripped, nothing acted yet
+      timers[0]();                               // box not there yet
+      const waiting = log.slice();
+      present['cx-quick'] = true; timers[0]();   // now it exists
+      return [afterStart, waiting, log, cleared];
+    })()""")
+    assert out == [["replace:/lab/connections?keep=1"],
+                   ["replace:/lab/connections?keep=1"],
+                   ["replace:/lab/connections?keep=1", "qa:7:Port 4"], 1]
+
+
+@needs_node
+def test_handoff_highlight_waits_for_the_connection_then_passes_edit_and_focus():
+    out = _handoff("""(() => {
+      location.search = '?hc=12&hcedit=1&hcfocus=child_port';
+      cxRunHandoff();
+      present['cx-table'] = true; timers[0]();          // table but no loaded connection yet
+      const early = log.slice();
+      known[12] = true; timers[0]();
+      return [early, log];
+    })()""")
+    assert out == [["replace:/lab/connections"],
+                   ["replace:/lab/connections", "hc:12:true:child_port"]]
+
+
+@needs_node
+def test_handoff_gives_up_quietly_after_bounded_retries():
+    out = _handoff("""(() => {
+      location.search = '?hc=99';
+      cxRunHandoff();
+      for(let i = 0; i < 60; i++) timers[0]();          // connection never appears
+      return [log, cleared];
+    })()""")
+    assert out[0] == ["replace:/lab/connections"]
+    assert out[1] >= 1
+
+
+@needs_node
+def test_home_connection_paths_all_land_on_the_lab_connections_view():
     out = run("""
-      global.location = {pathname:'/lab', search:'', href:''};
-      nwEditHosts();                                   // no openEditor on this page
-      const hopped = location.href;
-      let opened = 0; global.openEditor = () => { opened++; };
-      location.href = '';
-      nwEditHosts();
-      console.log(hopped + '|' + opened + '|' + location.href);
+      document.body.dataset = {page:'home', subviews:''};
+      global.location = {pathname:'/', search:'', href:''};
+      setTab('connections');
+      console.log(location.href);
     """)
-    assert out == "/monitor?edit=1|1|"
+    assert out == "/lab/connections"
+
+
+@needs_node
+def test_home_port_tiles_hand_off_to_the_lab_when_the_view_is_not_on_the_page():
+    conn = os.path.join(STATIC, "connections.js")
+    parts = [(conn, "function cxQuickAddUrl"), (conn, "function cxHighlightUrl"),
+             (conn, "function cxHighlightConnection"), (conn, "function cxQuickAddAt")]
+    out = run_js(parts, """(() => {
+      cxQuickAddAt(3, 'Port 9');
+      cxHighlightConnection(5, {edit: true, focus: 'child_port'});
+      cxHighlightConnection(6);
+      return urls;
+    })()""", prelude=r"""
+      const urls = [];
+      global.location = {pathname: '/', search: '', hash: '', set href(v){ urls.push(v); }};
+      global.document = {getElementById: () => null};      // Home has no #view-connections
+    """)
+    assert out == ["/lab/connections?qa=3%3APort%209",
+                   "/lab/connections?hc=5&hcedit=1&hcfocus=child_port",
+                   "/lab/connections?hc=6"]
+
+
+@needs_node
+def test_navigate_to_host_drawer_goes_to_monitor_with_host_param():
+    inv = os.path.join(STATIC, "inventory.js")
+    out = run_js([(inv, "function navigateToHostDrawer")], """(() => {
+      navigateToHostDrawer('10.0.0.2');
+      return [closed, location.href];
+    })()""", prelude="let closed = 0; function closeDrawer(){ closed++; }\nglobal.location = {href: ''};")
+    assert out == [1, "/monitor/hosts?host=10.0.0.2"]

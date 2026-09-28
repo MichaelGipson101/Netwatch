@@ -1086,19 +1086,9 @@ function openHostDrawerByIp(ip){
 }
 
 function navigateToHostDrawer(ip){
-  // Switch to the Hosts tab (if not already there) and open the host
-  // drawer for the given IP. This gives the user a coherent landing
-  // experience: tab matches drawer content.
-  closeDrawer();  // closes the inventory drawer (same #drawer element)
-  // Pages that carry the host drawer (Lab) open it in place; setTab('hosts') would now be a
-  // full page navigation to Monitor and the drawer open below would be lost.
-  if(typeof setTab === 'function' && !document.getElementById('drawer')){
-    setTab('hosts');
-  }
-  // Small delay lets the tab switch settle before opening the drawer.
-  // Without it, the drawer can render before the tab transition completes
-  // and look like it's appearing in the wrong place.
-  setTimeout(() => { openDrawer(ip); }, 80);
+  // Hosts live on the Monitor page now; ?host= opens the drawer there.
+  closeDrawer();
+  location.href = '/monitor/hosts?host=' + encodeURIComponent(ip);
 }
 
 // Wrapper that adds basic diagnostic logging if the drawer fails to open.
