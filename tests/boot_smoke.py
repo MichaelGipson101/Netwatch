@@ -18,6 +18,8 @@ _STUB = """<script>
 try { localStorage.setItem('nw-theme', %(theme)s); } catch (e) {}
 window.__nwPath = %(pathname)s;
 window.__nwErrors = [];
+// a blocking alert() would hang headless Chromium; record it as an error instead
+window.alert = function (m) { window.__nwErrors.push('alert: ' + String(m)); };
 window.addEventListener('error', function (e) {
   var t = e.target;
   if (t && t !== window && (t.src || t.href)) { window.__nwErrors.push('resource failed: ' + (t.src || t.href)); }

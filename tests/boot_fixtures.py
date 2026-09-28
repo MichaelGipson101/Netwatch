@@ -55,7 +55,10 @@ def default_fixtures(tmpdir=None, logged_in=True):
         "/api/inventory": {"items": []},
         "/api/topology": {"nodes": [], "edges": [], "suggested_edges": []},
         "/api/brief": {"briefs": []},
-        "/api/quicklinks": {"links": []},
+        "/api/quicklinks": {"links": [
+            {"id": 1, "label": "Proxmox VE", "url": "https://pve.lan:8006", "icon": "\U0001F5A5", "sort_order": 0},
+            {"id": 2, "label": "Grafana", "url": "http://grafana.lan:3000", "icon": "\U0001F4C8", "sort_order": 1},
+        ]},
         "/api/suggestions": {"suggestions": [], "counts": {}},
         "/api/connections": {"connections": []},
         "/api/discovery/status": {"configured": False, "port_maps": []},

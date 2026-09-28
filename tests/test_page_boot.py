@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from boot_fixtures import default_fixtures
@@ -52,11 +54,23 @@ def _page(name):
 @needs_chromium
 @pytest.mark.parametrize("name", list(PAGE_TABLE))
 def test_logged_out_visit_shows_landing_without_errors(name, tmp_path):
-    """Every page, unauthenticated: the landing/login flow appears and nothing throws."""
+    """Every page, unauthenticated: the login landing is visible and nothing throws."""
     fx = default_fixtures(tmp_path, logged_in=False)
     fx["__status401"] = True
     r = render(_page(name).html, fx, pathname=PAGE_TABLE[name].path)
     assert r.errors == [], f"{name}: {r.errors}"
+    assert '<div id="landing-page">' in r.dom, f"{name}: landing page is hidden for a logged-out visitor"
+    assert re.search(r'id="landing-login-form"(?![^>]*display:\s*none)', r.dom), f"{name}: login form not shown"
+
+
+@needs_chromium
+@pytest.mark.parametrize("name", list(PAGE_TABLE))
+def test_logged_in_visit_hides_the_landing(name, tmp_path):
+    """Control for the logged-out test: the landing is visible in the static HTML, so it is
+    only `hidden` if auth.js actually ran against the logged-in fixture."""
+    r = render(_page(name).html, default_fixtures(tmp_path), pathname=PAGE_TABLE[name].path)
+    assert r.errors == [], f"{name}: {r.errors}"
+    assert '<div id="landing-page" class="hidden">' in r.dom, name
 
 
 @needs_chromium
@@ -90,10 +104,14 @@ def test_known_host_deep_link_opens_the_drawer(tmp_path):
 
 @needs_chromium
 def test_hostile_host_param_is_not_rendered_as_markup(tmp_path):
+    """An injected element would serialize as <img src="x" onerror="alert(1)"> (attributes
+    quoted), and its failed load of `x` would land in r.errors as a 'resource failed'
+    entry, so check both the DOM (by regex on the real serialization) and the error log."""
     r = render(_page("monitor").html, default_fixtures(tmp_path),
                url_path="host=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E", pathname="/monitor/hosts")
     assert r.errors == []
-    assert "<img src=x onerror" not in r.dom
+    assert not re.search(r"<img\b[^>]*\bonerror\b", r.dom, re.I)
+    assert not re.search(r'<img\b[^>]*\bsrc="?x"?[\s>]', r.dom, re.I)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +188,9 @@ def test_infra_renders_the_panel_named_by_the_url(panel, marker, tmp_path):
 
 
 @needs_chromium
-def test_links_renders_its_grid(tmp_path):
+def test_links_renders_its_cards_from_the_quicklinks_fixture(tmp_path):
     dom = _boot("links", "", tmp_path)
-    assert 'id="ql-page-grid"' in dom
+    grid = dom[dom.index('id="ql-page-grid"'):]
+    for label, domain in (("Proxmox VE", "pve.lan"), ("Grafana", "grafana.lan")):
+        assert f'<span class="ql-card-label">{label}</span>' in grid, label
+        assert f'<span class="ql-card-domain">{domain}</span>' in grid, domain
