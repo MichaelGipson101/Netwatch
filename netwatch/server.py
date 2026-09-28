@@ -313,7 +313,7 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_get_inventory(inventory_db, host_manager))
                 return
-            if self.path == "/api/attention":
+            if self.path == "/api/attention" or self.path.startswith("/api/attention?"):
                 if not self._require_auth(): return
                 self._send_json(*_h_get_attention(host_manager, inventory_db, ledger, drift_monitor))
                 return

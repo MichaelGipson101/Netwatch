@@ -149,7 +149,7 @@ def test_attention_handler_groups_a_topology_outage_end_to_end():
 def test_attention_handler_includes_ledger_and_drift(hdb):
     led = AlertLedger(hdb)
     led.fire("pool_health_tank", "nas", "critical", 'Pool "tank" is DEGRADED', "TrueNAS", now=999_000)
-    mon = IPDriftMonitor(_HMgr([_host("vf2", "10.0.0.7", True, "aa:bb:cc:dd:ee:01")]), _Inv(),
+    mon = IPDriftMonitor(_HMgr([_host("vf2", "10.0.0.7", False, "aa:bb:cc:dd:ee:01")]), _Inv(),
                          lambda: {"aa:bb:cc:dd:ee:01": {"10.0.0.8"}})
     mon.refresh()
     _, p = H._h_get_attention(_HMgr([_host("vf2", "10.0.0.7", True, "aa:bb:cc:dd:ee:01")]),
@@ -181,6 +181,36 @@ def test_attention_handler_survives_inventory_and_ledger_failures():
     assert status == 200 and [i["kind"] for i in p["items"]] == ["host_down"]
 
 
+def test_attention_handler_never_500s_when_the_host_manager_raises():
+    class BoomHM:
+        def list_hosts(self):
+            raise RuntimeError("hosts")
+
+    status, p = H._h_get_attention(BoomHM(), None, None, None)
+    assert status == 200 and p["items"] == []
+
+
+def test_heartbeat_error_is_not_cached(hdb):
+    real = hdb.heartbeat
+    calls = {"n": 0}
+
+    def flaky(start, bucket_seconds, n):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return real(start, bucket_seconds, n)
+
+    class Stub:
+        heartbeat = staticmethod(flaky)
+
+    hm = _HM(["10.0.0.1"])
+    _ping(hdb, "10.0.0.1", NOW - 5, True)
+    _, first = H._h_get_heartbeat(Stub(), hm, "", now=NOW)
+    assert first["hosts"]["10.0.0.1"] == [None] * 48
+    _, second = H._h_get_heartbeat(Stub(), hm, "", now=NOW + 5)
+    assert second["hosts"]["10.0.0.1"][-1] == 1
+
+
 # ── HTTP level: auth on the new routes ──────────────────────────────────────
 
 def _server(auth, **kw):
@@ -197,7 +227,7 @@ def _auth(tmp_path):
     return auth
 
 
-@pytest.mark.parametrize("path", ["/api/attention", "/api/heartbeat", "/api/heartbeat?hours=6"])
+@pytest.mark.parametrize("path", ["/api/attention", "/api/attention?_=123", "/api/heartbeat", "/api/heartbeat?hours=6"])
 def test_new_get_routes_require_a_session(tmp_path, path):
     server, port, t = _server(_auth(tmp_path))
     try:

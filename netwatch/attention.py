@@ -263,7 +263,7 @@ def _host_down_items(facts, records, parents, now):
     for ip, g in groups.items():
         f, affected = g["fact"], sorted(g["affected"])
         since = f["first_down_at"] or None
-        detail = f"Down {fmt_duration(now - (since or now))}"
+        detail = f"Down {fmt_duration(now - since)}" if since else "Down"
         if affected:
             detail += f" · root cause of {len(affected)} host alert{'s' if len(affected) != 1 else ''}"
         items.append({
@@ -355,14 +355,19 @@ def build_attention(facts, records, parents, ledger_rows, suggestions_pending, d
 
 
 def check_ip_drift(facts, records, neighbors):
-    """Hosts whose MAC is currently seen only at IPs other than the monitored one."""
+    """Hosts whose MAC is currently seen only at IPs other than the monitored one.
+
+    Only hosts that are checked AND currently down are considered: a device that changed IP
+    stops answering at its old monitored IP, whereas a healthy host that is reachable off-LAN
+    (Tailscale/routed) or multi-homed keeps answering and would be a false positive. Hosts in
+    maintenance are skipped. No same-subnet restriction: a cross-subnet move is still drift."""
     rec_mac_by_ip = {}
     for rec in records:
         if rec.get("ip") and rec.get("mac"):
             rec_mac_by_ip[rec["ip"]] = _norm(rec["mac"])
     out = []
     for f in facts:
-        if f["in_maintenance"]:
+        if f["in_maintenance"] or not f["checked"] or f["is_up"]:
             continue
         mac = f["mac"] or rec_mac_by_ip.get(f["ip"], "")
         if not mac:

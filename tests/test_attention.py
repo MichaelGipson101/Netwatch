@@ -422,7 +422,17 @@ def test_items_sort_by_severity_then_longest_running_first():
 def test_host_down_with_unknown_since_has_null_since_and_still_a_detail():
     p = build([F("a", "10.0.0.2", up=False, down_since=0.0)])
     (it,) = items_of(p, "host_down")
-    assert it["since"] is None and it["detail"] == "Down under a minute"
+    assert it["since"] is None and it["detail"] == "Down"
+
+
+def test_unchecked_child_of_a_down_root_is_not_counted_as_affected():
+    facts = [F("sw", "10.0.0.2", up=False, mac="aa:aa:aa:aa:aa:01", down_since=NOW - 60),
+             F("ap", "10.0.0.3", up=False, mac="aa:aa:aa:aa:aa:02", checked=False)]
+    recs = [R(1, mac="aa:aa:aa:aa:aa:01"), R(2, mac="aa:aa:aa:aa:aa:02")]
+    p = build(facts, recs, parents={2: 1})
+    (it,) = items_of(p, "host_down")
+    assert it["affected"] == [] and p["verdict"]["counts"]["affected"] == 0
+    assert p["verdict"]["headline"] == "sw is down."
 
 
 # ── host_facts ───────────────────────────────────────────────────────────────
@@ -451,26 +461,40 @@ MAC1 = "aa:bb:cc:dd:ee:01"
 
 
 def test_drift_detected_when_mac_seen_only_at_another_ip():
-    d = check_ip_drift([F("vf2", "10.0.0.7", mac=MAC1)], [], {MAC1: {"10.0.0.8"}})
+    d = check_ip_drift([F("vf2", "10.0.0.7", up=False, mac=MAC1)], [], {MAC1: {"10.0.0.8"}})
     assert d == [{"mac": MAC1, "name": "vf2", "monitored_ip": "10.0.0.7", "seen_ip": "10.0.0.8"}]
 
 
+def test_drift_is_detected_across_subnets():
+    d = check_ip_drift([F("ap", "192.168.5.160", up=False, mac=MAC1)], [], {MAC1: {"192.168.4.44"}})
+    assert d and d[0]["seen_ip"] == "192.168.4.44"
+
+
+def test_no_drift_for_an_up_host_even_if_its_mac_is_seen_only_elsewhere():
+    assert check_ip_drift([F("ts", "100.64.0.7", up=True, mac=MAC1)], [], {MAC1: {"10.0.0.8"}}) == []
+
+
+def test_no_drift_for_an_unchecked_host():
+    assert check_ip_drift([F("a", "10.0.0.7", up=False, checked=False, mac=MAC1)], [],
+                          {MAC1: {"10.0.0.8"}}) == []
+
+
 def test_no_drift_when_monitored_ip_is_among_the_seen_ips():
-    assert check_ip_drift([F("pve", "10.0.0.7", mac=MAC1)], [], {MAC1: {"10.0.0.7", "10.0.0.8"}}) == []
+    assert check_ip_drift([F("pve", "10.0.0.7", up=False, mac=MAC1)], [], {MAC1: {"10.0.0.7", "10.0.0.8"}}) == []
 
 
 def test_no_drift_when_mac_absent_from_neighbor_table_or_host_has_no_mac():
-    assert check_ip_drift([F("a", "10.0.0.7", mac=MAC1)], [], {}) == []
-    assert check_ip_drift([F("a", "10.0.0.7")], [], {MAC1: {"10.0.0.8"}}) == []
+    assert check_ip_drift([F("a", "10.0.0.7", up=False, mac=MAC1)], [], {}) == []
+    assert check_ip_drift([F("a", "10.0.0.7", up=False)], [], {MAC1: {"10.0.0.8"}}) == []
 
 
 def test_drift_uses_the_inventory_mac_when_the_host_has_none():
-    d = check_ip_drift([F("a", "10.0.0.7")], [R(1, ip="10.0.0.7", mac=MAC1.upper())], {MAC1: {"10.0.0.8"}})
+    d = check_ip_drift([F("a", "10.0.0.7", up=False)], [R(1, ip="10.0.0.7", mac=MAC1.upper())], {MAC1: {"10.0.0.8"}})
     assert d and d[0]["seen_ip"] == "10.0.0.8"
 
 
 def test_drift_skips_hosts_in_maintenance():
-    assert check_ip_drift([F("a", "10.0.0.7", mac=MAC1, maint=True)], [], {MAC1: {"10.0.0.8"}}) == []
+    assert check_ip_drift([F("a", "10.0.0.7", up=False, mac=MAC1, maint=True)], [], {MAC1: {"10.0.0.8"}}) == []
 
 
 # ── ip neigh parsing ─────────────────────────────────────────────────────────
@@ -525,10 +549,10 @@ class _Inv:
         return self._c
 
 
-def _hs(name, ip, mac):
+def _hs(name, ip, mac, up=False):
     h = HostState(name=name, ip=ip, group="g", interval=30, specs={"mac": mac})
     h.last_checked = datetime.now()
-    h.history.append(True)
+    h.history.append(up)
     return h
 
 

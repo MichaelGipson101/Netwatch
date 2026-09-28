@@ -212,7 +212,13 @@ def test_prune_loop_prunes_the_alert_ledger(monkeypatch):
     from netwatch import storage
 
     stop = threading.Event()
-    monkeypatch.setattr(storage.time, "sleep", lambda s: None)   # skip the ~60s boot delay
+    sleeps = {"n": 0}
+
+    def fake_sleep(s):                                           # skip the ~60s boot delay
+        sleeps["n"] += 1
+        if sleeps["n"] > 30:                                     # a regression fails fast, not hangs
+            stop.set()
+    monkeypatch.setattr(storage.time, "sleep", fake_sleep)
     ledger = MagicMock()
     ledger.prune.side_effect = lambda: stop.set() or 0           # stop right after the first prune
     storage._prune_loop(MagicMock(), stop, None, ledger)

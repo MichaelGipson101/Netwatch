@@ -322,10 +322,12 @@ def _h_get_heartbeat(history_db, host_manager, query="", now=None) -> tuple:
     end = (int(now) // bucket_seconds + 1) * bucket_seconds
     start = end - bucket_seconds * n
     data = {}
+    failed = False
     if history_db is not None:
         try:
             data = history_db.heartbeat(start, bucket_seconds, n)
         except Exception as e:
+            failed = True
             logging.warning(f"heartbeat query failed: {e}")
     payload = {
         "generated": datetime.fromtimestamp(now).isoformat(),
@@ -333,6 +335,8 @@ def _h_get_heartbeat(history_db, host_manager, query="", now=None) -> tuple:
         "start": start,
         "hosts": {ip: data.get(ip, [None] * n) for ip in ips},
     }
+    if failed:
+        return 200, payload      # a transient DB error must not be served as all-None for 60s
     if len(_HEARTBEAT_CACHE) >= _HEARTBEAT_CACHE_MAX:
         _HEARTBEAT_CACHE.clear()
     _HEARTBEAT_CACHE[key] = (now + _HEARTBEAT_TTL_SECONDS, payload)
@@ -342,7 +346,11 @@ def _h_get_heartbeat(history_db, host_manager, query="", now=None) -> tuple:
 def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None, now=None) -> tuple:
     """The verdict + needs-attention list for Home. Every input is optional and every
     failure degrades to fewer items, never an error."""
-    facts = host_facts(host_manager.list_hosts()) if host_manager else []
+    try:
+        facts = host_facts(host_manager.list_hosts()) if host_manager else []
+    except Exception as e:
+        logging.warning(f"attention: build failed: {e}")
+        return 200, build_attention([], [], {}, [], 0, [], now=now)
     records, parents = [], {}
     if inventory_db is not None:
         try:
@@ -364,8 +372,12 @@ def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None
             pending = suggestions.count_pending()
         except Exception as e:
             logging.warning(f"attention: suggestion count failed: {e}")
-    drift = drift_monitor.get() if drift_monitor is not None else []
-    return 200, build_attention(facts, records, parents, rows, pending, drift, now=now)
+    try:
+        drift = drift_monitor.get() if drift_monitor is not None else []
+        return 200, build_attention(facts, records, parents, rows, pending, drift, now=now)
+    except Exception as e:
+        logging.warning(f"attention: build failed: {e}")
+        return 200, build_attention([], [], {}, [], 0, [], now=now)
 
 
 NAS_BACKUP_STATUS_PATH = "/mnt/nas-shared/netwatch/backup/_status.json"
