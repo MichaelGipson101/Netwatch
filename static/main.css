@@ -972,7 +972,9 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
   .nw-logo{height:22px}
   .nav-glow{width:360px;height:260px;top:-130px}
   #pip{display:none}
-  .nav-right{gap:8px}
+  /* When the icon row wraps under the logo (e.g. UPS icon showing), span the full width
+     instead of clustering at the left edge. */
+  .nav-right{gap:8px;flex:1 1 auto;justify-content:space-between}
   #nav-auth{font-size:10px;gap:6px}
   #nav-auth button{padding:5px 8px}
 
