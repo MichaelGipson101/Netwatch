@@ -1,3 +1,182 @@
+/* ── Home helpers ─────────────────────────────────────────────────────────────
+   Pure functions (no DOM, no fetch) so tests/test_home_js.py can extract and run them under
+   node. They depend only on escapeHtml (utils.js) and, for hmFreePorts, cxLivePortMaps
+   (connections.js). */
+
+function hmHostClass(status){
+  var map = {UP:'up', DOWN:'down', IDLE:'idle', DEGRADED:'degraded', MAINTENANCE:'idle'};
+  return 'topo-status-' + (map[String(status || '').toUpperCase()] || 'unknown');
+}
+
+function hmIsNotUp(h){
+  return ['DOWN', 'DEGRADED', 'MAINTENANCE'].indexOf(String((h && h.status) || '').toUpperCase()) >= 0;
+}
+
+function hmGroupHosts(hosts){
+  var order = [], by = {};
+  (hosts || []).forEach(function(h){
+    var g = h.group || 'Other';
+    if(!by[g]){ by[g] = {name: g, hosts: [], up: 0}; order.push(g); }
+    by[g].hosts.push(h);
+    if(h.is_up) by[g].up++;
+  });
+  return order.map(function(g){
+    return {name: g, hosts: by[g].hosts, up: by[g].up, total: by[g].hosts.length};
+  });
+}
+
+function hmAvgWatts(history){
+  var v = (history || []).map(function(d){ return d && d.watts; })
+    .filter(function(w){ return typeof w === 'number' && isFinite(w); });
+  if(!v.length) return null;
+  return Math.round(v.reduce(function(a, b){ return a + b; }, 0) / v.length);
+}
+
+function hmItemHref(link){
+  if(!link || typeof link.page !== 'string') return null;
+  var paths = {home: '/', monitor: '/monitor', lab: '/lab', infra: '/infra', links: '/links'};
+  var base = paths[link.page];
+  if(!base) return null;
+  if(link.subview && /^[a-z]+$/.test(link.subview)) base = (base === '/' ? '' : base) + '/' + link.subview;
+  var params = link.params || {};
+  var qs = Object.keys(params)
+    .filter(function(k){ return params[k] !== null && params[k] !== undefined; })
+    .map(function(k){ return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+    .join('&');
+  return base + (qs ? '?' + qs : '');
+}
+
+function hmAgo(seconds){
+  if(typeof seconds !== 'number' || !isFinite(seconds)) return '';
+  var s = Math.max(0, Math.floor(seconds));
+  if(s < 60) return s + 's';
+  var m = Math.floor(s / 60);
+  if(m < 60) return m + 'm';
+  var h = Math.floor(m / 60);
+  if(h < 48) return h + 'h';
+  return Math.floor(h / 24) + 'd';
+}
+
+function hmStatsLine(s, watts, checkedAgo){
+  var p = [];
+  if(s && s.total > 0) p.push(s.up + '/' + s.total + ' up');
+  if(s && typeof s.avgLat === 'number') p.push(s.avgLat.toFixed(1) + ' ms');
+  if(s && typeof s.avgUpt === 'number') p.push(s.avgUpt.toFixed(1) + '% uptime');
+  if(typeof watts === 'number' && isFinite(watts)) p.push(Math.round(watts) + ' W');
+  if(typeof checkedAgo === 'number' && isFinite(checkedAgo)) p.push('checked ' + hmAgo(checkedAgo) + ' ago');
+  return p.join(' · ');
+}
+
+function hmVerdictLevelClass(level, stale){
+  if(stale) return 'hm-led-stale';
+  return {ok: 'hm-led-ok', warn: 'hm-led-warn', down: 'hm-led-down'}[level] || 'hm-led-stale';
+}
+
+function hmHeartbeatBackground(states){
+  if(!Array.isArray(states) || !states.length) return 'none';
+  var colors = {1: 'var(--green)', 0: 'var(--red)', 2: 'var(--amber)'};
+  var n = states.length;
+  var stops = states.map(function(st, i){
+    var c = (st === 0 || st === 1 || st === 2) ? colors[st] : 'var(--border)';
+    var a = +(i * 100 / n).toFixed(3), b = +((i + 1) * 100 / n).toFixed(3);
+    return c + ' ' + a + '% ' + b + '%';
+  });
+  return 'linear-gradient(90deg, ' + stops.join(', ') + ')';
+}
+
+function hmHeartbeatLabel(states){
+  if(!Array.isArray(states)) return '24h: no data';
+  var known = states.filter(function(s){ return s === 0 || s === 1 || s === 2; });
+  if(!known.length) return '24h: no data';
+  var up = known.filter(function(s){ return s === 1; }).length;
+  return '24h: ' + up + ' of ' + known.length + ' periods fully up';
+}
+
+function hmAttentionRowHtml(item, isAdmin){
+  var sev = {critical: 'crit', warning: 'warn', info: 'info'}[item.severity] || 'info';
+  var href = hmItemHref(item.link);
+  var badge = (item.kind === 'host_down' && item.affected && item.affected.length)
+    ? '<span class="hm-badge hm-badge-dn">' + item.affected.length + ' affected</span>' : '';
+  var open = href ? '<a class="hm-go" href="' + escapeHtml(href) + '">Open →</a>' : '';
+  var dismiss = (isAdmin && item.kind === 'poller_condition')
+    ? '<button type="button" class="hm-dismiss" data-dismiss="' + escapeHtml(item.id) + '">Dismiss</button>' : '';
+  return '<div class="hm-arow">'
+    + '<span class="hm-aico hm-aico-' + sev + '" aria-hidden="true"></span>'
+    + '<div class="hm-at"><b>' + escapeHtml(item.title) + '</b>' + badge
+    + '<div class="hm-ad">' + escapeHtml(item.detail || '') + '</div></div>'
+    + '<div class="hm-aact">' + open + dismiss + '</div></div>';
+}
+
+function hmHostTileHtml(h, states){
+  var type = /^[a-z]+$/.test(h.device_type || '') ? h.device_type : 'host';
+  var label = (h.name || h.ip) + ' · ' + String(h.status || '').toLowerCase();
+  return '<a class="hm-h3 ' + hmHostClass(h.status) + '" href="/monitor/hosts?host=' + encodeURIComponent(h.ip)
+    + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">'
+    + '<svg class="hm-ic topo-node-icon" aria-hidden="true"><use href="#topo-icon-' + type + '"/></svg>'
+    + '<span class="hm-hb" role="img" aria-label="' + escapeHtml(hmHeartbeatLabel(states)) + '" style="background:'
+    + hmHeartbeatBackground(states) + '"></span></a>';
+}
+
+function hmNotUpLineHtml(h){
+  var st = String(h.status || '').toLowerCase();
+  var ago = (typeof h.last_seen_up_seconds === 'number') ? ' ' + hmAgo(h.last_seen_up_seconds) : '';
+  var word = st === 'down' ? 'down' + ago : st;
+  return '<div class="hm-nu"><span class="hm-nu-name">' + escapeHtml(h.name || h.ip) + '</span>'
+    + '<span class="hm-nu-meta">' + escapeHtml(word) + '</span></div>';
+}
+
+function hmGroupHtml(g, hb){
+  var tiles = g.hosts.map(function(h){ return hmHostTileHtml(h, hb && hb[h.ip]); }).join('');
+  var nu = g.hosts.filter(hmIsNotUp).map(hmNotUpLineHtml).join('');
+  return '<div class="hm-group"><div class="hm-grow"><div class="hm-gl"><span>' + escapeHtml(g.name)
+    + '</span><em>' + g.up + '/' + g.total + '</em></div><div class="hm-gi">' + tiles + '</div></div>'
+    + (nu ? '<div class="hm-nulist">' + nu + '</div>' : '') + '</div>';
+}
+
+function hmExplainMessage(status, data){
+  data = data || {};
+  if(status === 200 && typeof data.explanation === 'string' && data.explanation){
+    return {ok: true, text: data.explanation, note: data.stale ? 'cached' : ''};
+  }
+  if(status === 404 && data.error === 'ai_not_configured'){
+    return {ok: false, text: 'Add an OpenRouter key in Settings to enable explanations.'};
+  }
+  if(status === 429) return {ok: false, text: 'Try again in a moment.'};
+  return {ok: false, text: "Couldn't generate an explanation right now."};
+}
+
+function hmUpsText(live){
+  if(!live) return 'unknown';
+  var flags = String(live.status || '').toUpperCase().split(/\s+/);
+  var word = flags.indexOf('LB') >= 0 ? 'low battery'
+    : flags.indexOf('OB') >= 0 ? 'on battery'
+    : flags.indexOf('OL') >= 0 ? 'on line' : 'unknown';
+  return typeof live.charge_percent === 'number'
+    ? word + ' · ' + Math.round(live.charge_percent) + '%' : word;
+}
+
+function hmPoolPct(pool){
+  var total = pool && pool.capacity_total_bytes;
+  if(!total) return null;
+  return Math.round((pool.capacity_used_bytes || 0) / total * 100);
+}
+
+function hmFreePorts(maps){
+  var free = 0, total = 0;
+  cxLivePortMaps(maps).forEach(function(m){
+    m.data.ports.forEach(function(p){
+      total++;
+      if(!p.up && !(p.occupants && p.occupants.length)) free++;
+    });
+  });
+  return {free: free, total: total};
+}
+
+function hmSafeUrl(url){
+  var u = String(url == null ? '' : url).trim();
+  return /^https?:\/\//i.test(u) ? u : '#';
+}
+
 /* Overview tab — read-only glance across every other tab. Pulls from data the
    other modules already fetch (or the server already caches); no new endpoints. */
 (function () {
