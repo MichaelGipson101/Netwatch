@@ -104,32 +104,6 @@ function toggleUserMenu(){
   }
 }
 
-async function openEditor(){
-  // If auth is configured but we are not logged in, offer login first
-  if(_authState.setup_required){
-    openSetup();
-    return;
-  }
-  if(!_authState.logged_in){
-    openLogin(() => openEditor());
-    return;
-  }
-  try {
-    const res = await fetch('/api/hosts');
-    if(res.status === 401){
-      openLogin(() => openEditor());
-      return;
-    }
-    const data = await res.json();
-    const container = document.getElementById('edit-rows');
-    container.innerHTML = '';
-    (data.hosts || []).forEach(h => addRow(h));
-    if(!data.hosts || !data.hosts.length) addRow();
-    setStatus('Changes apply immediately on save', '');
-    document.getElementById('modal-overlay').classList.add('open');
-  } catch(e) { toast('Could not load host list.', 'error'); }
-}
-
 // ── Landing page ──────────────────────────────────────────────────────────
 // `force` re-applies the mode even when the landing page is already visible
 // (used by the login ⇄ setup toggle link); auth-status callers omit it so a
@@ -158,13 +132,16 @@ function showLanding(mode, force){
   if(modeToggle) modeToggle.textContent =
     mode === 'setup' ? 'Back to log in' : 'First time? Create an admin account';
 }
+
 function toggleLandingMode(){
   const setupVisible = document.getElementById('landing-setup-form').style.display !== 'none';
   showLanding(setupVisible ? 'login' : 'setup', true);
 }
+
 function hideLanding(){
   document.getElementById('landing-page').classList.add('hidden');
 }
+
 async function submitLandingLogin(ev){
   if(ev) ev.preventDefault();
   const username = document.getElementById('landing-username').value.trim();
@@ -186,6 +163,7 @@ async function submitLandingLogin(ev){
     refresh();
   } catch(e){ err.textContent = 'Network error'; }
 }
+
 async function submitLandingSetup(ev){
   if(ev) ev.preventDefault();
   const username = document.getElementById('landing-setup-username').value.trim();
@@ -221,9 +199,11 @@ function openLogin(thenCallback){
   document.getElementById('login-password').value = '';
   setTimeout(() => document.getElementById('login-username').focus(), 50);
 }
+
 function closeLogin(){
   document.getElementById('login-overlay').classList.remove('open');
 }
+
 async function submitLogin(ev){
   if(ev) ev.preventDefault();
   const username = document.getElementById('login-username').value.trim();
@@ -245,6 +225,7 @@ async function submitLogin(ev){
     if(_afterLogin){ _afterLogin(); _afterLogin = null; }
   } catch(e){ err.textContent = 'Network error'; }
 }
+
 async function logout(){
   await fetch('/api/auth/logout', { method: 'POST' });
   _authState = { logged_in: false, username: null, admin: false, setup_required: false, csrf_token: null };
@@ -291,9 +272,11 @@ function openSetup(){
   document.getElementById('setup-error').textContent = '';
   setTimeout(() => document.getElementById('setup-username').focus(), 50);
 }
+
 function closeSetup(){
   document.getElementById('setup-overlay').classList.remove('open');
 }
+
 async function submitSetup(ev){
   if(ev) ev.preventDefault();
   const username = document.getElementById('setup-username').value.trim();

@@ -4791,18 +4791,18 @@ def test_h_get_ups_returns_live_cache_when_configured():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# static/core.js — _upsFillClass() nav-icon color logic (findings 2 & 5 of the
+# static/ups.js (moved from core.js) — _upsFillClass() nav-icon color logic (findings 2 & 5 of the
 # final whole-branch review). There's no JS test runner/DOM shim anywhere in
 # this repo, so rather than reimplementing the logic in Python (which
 # wouldn't actually exercise the shipped source and could silently drift from
 # it), this extracts the real _upsFillClass function body straight out of
-# static/core.js and runs it under `node`, which is present on this dev box.
+# static/ups.js and runs it under `node`, which is present on this dev box.
 # Skips gracefully if `node` isn't available (e.g. a minimal prod host).
 
 import shutil as _shutil
 import subprocess as _subprocess
 
-_CORE_JS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "core.js")
+_UPS_JS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "ups.js")
 
 
 def _extract_js_function(path, fn_name):
@@ -4825,7 +4825,7 @@ def _extract_js_function(path, fn_name):
 
 
 def _run_ups_fill_class(live_json):
-    fn_src = _extract_js_function(_CORE_JS_PATH, "_upsFillClass")
+    fn_src = _extract_js_function(_UPS_JS_PATH, "_upsFillClass")
     script = (
         fn_src
         + f"\nconsole.log(_upsFillClass({live_json}));"

@@ -5,27 +5,42 @@
 // Default view: web for new visitors. Existing localStorage preference
 // (if set) wins, so anyone who explicitly chose cards keeps cards.
 let _topoView = localStorage.getItem('nw-topo-view') || 'web';
+
 let _topoSimulation = null;
+
 let _topoSvg = null;
+
 let _topoResizeObserver = null;
+
 let _topoData = { nodes: [], edges: [] };
+
 let _topoZoom = null;
+
 let _topoIncludeUnconnected = false;
+
 let _topoLastStatus = {};  // id -> status (for change detection / pulse)
-let _topoD3Loaded = false;
-let _topoD3Loading = null;  // Promise during load
+
 let _topoUserAdjusted = false;   // true once the user pans/zooms/drags
+
 let _flowRaf = null;             // requestAnimationFrame id for flow dots
+
 let _topoEdgeSel = null;         // d3 selection of edge groups; set by renderTopologyWeb
+
 const _reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 // ── Layout state (plan 5) ───────────────────────────────────────────────────
 const TOPO_LAYOUT_KEY = 'nw-topo-layout';
+
 const TOPO_COLLAPSED_KEY = 'nw-topo-collapsed';
+
 const TOPO_GHOSTS_KEY = 'nw-topo-ghosts';
+
 let _topoLayout = localStorage.getItem(TOPO_LAYOUT_KEY) === 'tree' ? 'tree' : 'force';
+
 let _topoShowGhosts = localStorage.getItem(TOPO_GHOSTS_KEY) !== '0';
+
 let _topoTreeOrient = null;
+
 let _topoRelayoutTimer = null;
 
 // ── Pure helpers (unit-tested in node; keep brackets balanced in literals) ──
@@ -251,6 +266,7 @@ function topoTreePositions(trees, orient){
 // Flow-dot speeds (fraction of path per second) per connection type.
 // Defined at module level so the flow loop can be restarted without a full re-render.
 const _FLOW_SPEEDS = {ethernet:.10, fiber:.16, wifi:.06, virtual:.07, power:.05, usb:.13, console:.065, other:.10};
+
 function _flowFrame(ts){
   if(!_topoEdgeSel) return;
   _topoEdgeSel.each(function(d){
@@ -266,17 +282,20 @@ function _flowFrame(ts){
   });
   _flowRaf = requestAnimationFrame(_flowFrame);
 }
+
 const TOPO_POSITIONS_KEY = 'nw-topo-positions';
 
 function loadTopoPositions(){
   try { return JSON.parse(localStorage.getItem(TOPO_POSITIONS_KEY) || '{}'); }
   catch(e){ return {}; }
 }
+
 function saveTopoPosition(id, x, y){
   const all = loadTopoPositions();
   all[id] = { x, y };
   localStorage.setItem(TOPO_POSITIONS_KEY, JSON.stringify(all));
 }
+
 function clearTopoPositions(){
   localStorage.removeItem(TOPO_POSITIONS_KEY);
 }
@@ -287,26 +306,11 @@ function loadTopoLastLayout(){
   try { return JSON.parse(localStorage.getItem(TOPO_LAST_LAYOUT_KEY) || '{}'); }
   catch(e){ return {}; }
 }
+
 function saveTopoLastLayout(nodes){
   const snapshot = {};
   nodes.forEach(n => { snapshot[n.id] = { x: n.x, y: n.y }; });
   localStorage.setItem(TOPO_LAST_LAYOUT_KEY, JSON.stringify(snapshot));
-}
-
-function ensureD3(){
-  if(_topoD3Loaded) return Promise.resolve();
-  if(_topoD3Loading) return _topoD3Loading;
-  _topoD3Loading = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    // Vendored copy — no {{VERSION}} templating inside JS files, and the
-    // file content is immutable for this filename, so a bare URL is safe.
-    s.src = '/static/d3.v7.min.js';
-    s.async = true;
-    s.onload = () => { _topoD3Loaded = true; resolve(); };
-    s.onerror = () => reject(new Error('failed to load /static/d3.v7.min.js'));
-    document.head.appendChild(s);
-  });
-  return _topoD3Loading;
 }
 
 function setTopoView(view){
@@ -1095,6 +1099,7 @@ function updateTopologyWebStatus(statusData){
 }
 
 let _resetArmTimer = null;
+
 function topologyResetPositions(){
   const btn = document.getElementById('topo-reset-btn');
   if(!btn) return;
@@ -1111,6 +1116,7 @@ function topologyResetPositions(){
   clearTopoPositions();
   fetchAndRenderTopologyWeb();
 }
+
 function disarmReset(btn){
   btn.dataset.armed = '';
   if(btn.dataset.label) btn.textContent = btn.dataset.label;
@@ -1277,7 +1283,6 @@ document.addEventListener('click', (ev) => {
   if(legend.contains(ev.target) || btn.contains(ev.target)) return;
   legend.classList.remove('open');
 });
-
 
 // Fit the graph to the current viewport. Computes the bounding box of
 // all nodes and applies a smooth zoom transform that frames them

@@ -68,6 +68,15 @@ _STATIC_FILES = {
     'mira-avatar.png': 'image/png',
     'quicklinks.js':'application/javascript; charset=utf-8',
     'connections.js': 'application/javascript; charset=utf-8',
+    'shell.js': 'application/javascript; charset=utf-8',
+    'hosts.js': 'application/javascript; charset=utf-8',
+    'topology-cards.js': 'application/javascript; charset=utf-8',
+    'events.js': 'application/javascript; charset=utf-8',
+    'briefs.js': 'application/javascript; charset=utf-8',
+    'drawer.js': 'application/javascript; charset=utf-8',
+    'hosts-editor.js': 'application/javascript; charset=utf-8',
+    'power.js': 'application/javascript; charset=utf-8',
+    'ups.js': 'application/javascript; charset=utf-8',
 }
 
 

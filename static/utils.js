@@ -194,3 +194,25 @@ function nwSparkPoints(values, w, h, pad){
     (pad + (1 - (v - min) / span) * innerH).toFixed(1)
   ).join(' ');
 }
+
+// utils.js — extracted from topology.js (Netwatch 4.0 page split). Code moved verbatim.
+
+let _topoD3Loaded = false;
+
+let _topoD3Loading = null;  // Promise during load
+
+function ensureD3(){
+  if(_topoD3Loaded) return Promise.resolve();
+  if(_topoD3Loading) return _topoD3Loading;
+  _topoD3Loading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    // Vendored copy — no {{VERSION}} templating inside JS files, and the
+    // file content is immutable for this filename, so a bare URL is safe.
+    s.src = '/static/d3.v7.min.js';
+    s.async = true;
+    s.onload = () => { _topoD3Loaded = true; resolve(); };
+    s.onerror = () => reject(new Error('failed to load /static/d3.v7.min.js'));
+    document.head.appendChild(s);
+  });
+  return _topoD3Loading;
+}
