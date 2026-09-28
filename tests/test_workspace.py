@@ -1343,7 +1343,7 @@ def test_port_faces_renderer_is_shared_and_skips_switches_without_live_ports():
     assert empty == ""
     with open(os.path.join(STATIC, "overview.js"), encoding="utf-8") as f:
         ov = f.read()
-    assert "cxPortFacesHtml(maps)" in ov and "_card('ports', 'Switch ports', 'connections'" in ov
+    assert "cxPortFacesHtml(maps)" in ov and 'hm-network-body' in ov
 
 
 def test_connections_table_scroller_contains_its_sr_only_header():

@@ -177,190 +177,268 @@ function hmSafeUrl(url){
   return /^https?:\/\//i.test(u) ? u : '#';
 }
 
-/* Overview tab — read-only glance across every other tab. Pulls from data the
-   other modules already fetch (or the server already caches); no new endpoints. */
+/* ── Home controller ──────────────────────────────────────────────────────────
+   The glance page. Verdict text comes from the server (/api/attention); this file only formats
+   and wires. Attention refreshes every 15s and the slower sources every 60s, both throttled off
+   the existing 5s /api/status poll (so nothing is fetched before login or while the poll
+   is stopped). Any endpoint that returns nothing/garbage leaves that section as it was and
+   turns the LED to the stale state. */
 (function () {
   'use strict';
 
+  var ATTN_EVERY_MS = 15000, SLOW_EVERY_MS = 60000, STATUS_STALE_MS = 30000;
   var INV_TYPE_COLORS = { host: 'var(--blue)', vm: '#7c3aed', network: '#0891b2',
     ups: 'var(--amber)', disk: '#059669', peripheral: '#6b7280',
     tablet: '#0d9488', phone: '#a21caf', printer: '#92400e' };
 
-  var _mounted = { proxmox: null, nas: null, inventory: null, briefs: null, ports: null };
+  var _hb = {};                       // ip -> heartbeat buckets
+  var _lastStatus = null, _statusAt = 0;
+  var _lastAttn = 0, _lastSlow = 0, _attnBusy = false, _slowBusy = false;
+  var _attnStale = false, _level = null, _explainBusy = false;
+  var _srv = { proxmox: null, nas: null, ups: null };
+  var _inv = null, _brief = null, _links = null, _ports = null;
 
-  window.initOverviewTab = function () {
-    _renderShell();
-    if (typeof updateAuthUI === 'function') updateAuthUI();
-    var hour = new Date().getHours();
-    var greet = hour < 5 ? 'Good night.' : hour < 12 ? 'Good morning.'
-              : hour < 18 ? 'Good afternoon.' : 'Good evening.';
-    document.getElementById('ov-greeting-title').textContent = greet;
-    if (window.nwLastData) window.renderOverviewLive(window.nwLastData);
-    // Lightweight fetch-on-mount for data whose tabs may not have been opened.
-    // /api/proxmox and /api/nas serve from server-side poller caches — cheap.
-    fetch('/api/proxmox').then(function (r) { return r.json(); })
-      .then(function (d) { _mounted.proxmox = d; _renderServers(); }).catch(function () {});
-    fetch('/api/nas').then(function (r) { return r.json(); })
-      .then(function (d) { _mounted.nas = d; _renderServers(); }).catch(function () {});
-    fetch('/api/inventory').then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d) { _mounted.inventory = d; _renderInventory(); } }).catch(function () {});
-    _renderPorts();
-    if (typeof cxLoadPortMaps === 'function') {
-      cxLoadPortMaps().then(function (maps) { _mounted.ports = maps; _renderPorts(); }).catch(function () {});
-    }
-    fetch('/api/brief').then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d) { _mounted.briefs = d; _renderBrief(); } }).catch(function () {});
-    if (typeof mountQuickLinksCard === 'function') mountQuickLinksCard();
-  };
-
-  // Called by the nwStatus subscriber (bottom of file) on every poll while the tab is active.
-  window.renderOverviewLive = function (data) {
-    if (!document.getElementById('ov-hosts-num')) return;
-    var hosts = data.hosts || [];
-    var up = hosts.filter(function (h) { return h.is_up; }).length;
-    document.getElementById('ov-hosts-num').innerHTML =
-      up + '<span class="ov-num-dim">/' + hosts.length + '</span>';
-    var ongoing = (data.events || []).filter(function (e) { return e.ongoing; });
-    document.getElementById('ov-hosts-down').innerHTML = ongoing.slice(0, 4).map(function (e) {
-      return '<div class="ov-row"><span class="ov-dot" style="background:var(--red)"></span>'
-        + '<span class="ov-row-name">' + escapeHtml(e.host_name) + '</span>'
-        + '<span class="ov-row-meta">down ' + _ago(e.started_ts * 1000) + '</span></div>';
-    }).join('') || '<div class="ov-empty">All hosts up</div>';
-
-    var evs = (data.events || []).slice(0, 3);
-    document.getElementById('ov-events-list').innerHTML = evs.map(function (e) {
-      var color = e.ongoing ? 'var(--red)' : 'var(--green)';
-      var text = escapeHtml(e.host_name) + (e.ongoing ? ' down' : ' recovered');
-      return '<div class="ov-row"><span class="ov-dot" style="background:' + color + '"></span>'
-        + '<span class="ov-row-name ov-trunc">' + text + '</span>'
-        + '<span class="ov-row-meta">' + _ago(e.started_ts * 1000) + '</span></div>';
-    }).join('') || '<div class="ov-empty">No incidents</div>';
-
-    _renderPower();
-  };
-
-  // Static illustration: deliberately status-free (no red/green), links to the Lab.
-  var TOPO_PLACEHOLDER =
-    '<a class="ov-topo-box" href="/lab/topology" aria-label="Open the topology map" style="display:block">'
-    + '<svg viewBox="0 0 260 150" width="100%" height="100%" style="color:var(--hint)" aria-hidden="true">'
-    + '<g stroke="var(--border)" stroke-width="1.4" fill="none">'
-    + '<path d="M130 75L64 34M130 75L200 30M130 75L214 108M130 75L60 116M64 34L26 60M60 116L24 128M200 30L238 52"/></g>'
-    + '<use href="#topo-icon-host" x="48" y="18" width="32" height="32"/>'
-    + '<use href="#topo-icon-host" x="184" y="14" width="32" height="32"/>'
-    + '<use href="#topo-icon-ups" x="198" y="92" width="32" height="32"/>'
-    + '<use href="#topo-icon-disk" x="44" y="100" width="32" height="32"/>'
-    + '<use href="#topo-icon-network" x="10" y="44" width="30" height="30"/>'
-    + '<use href="#topo-icon-vm" x="8" y="116" width="26" height="26"/>'
-    + '<use href="#topo-icon-phone" x="226" y="38" width="26" height="26"/>'
-    + '<use href="#topo-icon-network" x="112" y="57" width="36" height="36"/></svg></a>';
-
-  function _renderShell () {
-    var grid = document.getElementById('ov-grid');
-    if (grid.childElementCount) return;   // build once
-    grid.innerHTML =
-      _card('hosts', 'Hosts', 'hosts', 'ov-span2',
-        '<div class="ov-hosts-line"><span class="ov-big" id="ov-hosts-num">-</span>'
-        + '<span class="ov-big-sub">hosts up</span></div><div id="ov-hosts-down"></div>')
-      + _card('power', 'Power', null, '',
-        '<div class="ov-big" id="ov-power-watts">-</div>'
-        + '<svg width="100%" height="26" viewBox="0 0 100 26" preserveAspectRatio="none">'
-        + '<polyline id="ov-power-spark" points="" fill="none" stroke="var(--blue)" stroke-width="1.6"/></svg>')
-      + _card('topology', 'Topology', 'topology', '', TOPO_PLACEHOLDER)
-      + _card('ports', 'Switch ports', 'connections', 'ov-span2', '<div id="ov-ports-body"></div>')
-      + _card('servers', 'Servers', 'servers', '', '<div id="ov-servers-list" class="ov-rows"></div>')
-      + _card('events', 'Events', 'events', '', '<div id="ov-events-list" class="ov-rows"></div>')
-      + _card('inventory', 'Inventory', 'inventory', '',
-        '<div class="ov-big" id="ov-inv-count">-</div><div class="ov-chips" id="ov-inv-chips"></div>')
-      + _card('briefs', 'Latest brief', 'briefs', '', '<div id="ov-brief-body" class="ov-empty">No briefs yet</div>')
-      + _card('quicklinks', 'Quick Links', 'quicklinks', '',
-        '<div class="ov-big" id="ov-ql-count">-</div><div class="ov-big-sub">quick links</div>');
+  function $(id) { return document.getElementById(id); }
+  function _isAdmin() { return typeof _authState !== 'undefined' && _authState.logged_in && _authState.admin; }
+  function _getJson(url) {
+    return fetch(url).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
   }
-
-  function _card (id, title, tab, extraCls, body, headerControl) {
-    var link = headerControl || (tab ? '<button class="ov-viewall" onclick="setTab(\'' + tab + '\')">View all →</button>' : '');
-    return '<div class="ov-card ' + extraCls + '" id="ov-card-' + id + '">'
-      + '<div class="ov-card-hdr"><span class="ov-card-title">' + title + '</span>' + link + '</div>'
-      + body + '</div>';
+  function _post(url, body) {
+    return apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) });
   }
-
-  // Copy of the Connections tab's port map; hidden until a switch is found.
-  function _renderPorts () {
-    var card = document.getElementById('ov-card-ports');
-    if (!card) return;
-    var maps = _mounted.ports || [];
-    var has = typeof cxLivePortMaps === 'function' && cxLivePortMaps(maps).length > 0;
-    card.style.display = has ? '' : 'none';
-    if (has) document.getElementById('ov-ports-body').innerHTML = cxPortFacesHtml(maps);
+  function _row(name, meta, bad) {
+    return '<div class="hm-row"><span class="hm-row-name">' + escapeHtml(name) + '</span>'
+      + '<span class="hm-row-meta' + (bad ? ' hm-bad' : '') + '">' + escapeHtml(meta) + '</span></div>';
   }
+  function _statusStale() { return !_statusAt || (Date.now() - _statusAt) > STATUS_STALE_MS; }
 
-  function _renderPower () {
+  // ── verdict / stats ────────────────────────────────────────────────────────
+  function _renderLed() {
+    var led = $('hm-led');
+    if (led) led.className = 'hm-led ' + hmVerdictLevelClass(_level, _attnStale || _statusStale());
+  }
+  function _renderStats() {
+    var el = $('hm-stats');
+    if (!el || !_lastStatus) return;
     var p = window.nwLastPower;
-    var card = document.getElementById('ov-card-power');
-    if (!card) return;
-    if (!p || !p.configured) { card.style.display = 'none'; return; }
-    card.style.display = '';
-    var live = p.live || {};
-    document.getElementById('ov-power-watts').innerHTML =
-      (live.watts != null ? live.watts.toFixed(0) : '-') + '<span class="ov-num-dim">W</span>';
-    var watts = (p.history || []).filter(function (d) { return d.watts !== null; })
-      .slice(-15).map(function (d) { return d.watts; });
-    document.getElementById('ov-power-spark').setAttribute('points', nwSparkPoints(watts, 100, 26));
+    var watts = (p && p.configured && p.live && typeof p.live.watts === 'number') ? p.live.watts : null;
+    el.textContent = hmStatsLine(nwComputeSummary(_lastStatus), watts, (Date.now() - _statusAt) / 1000);
+    _renderLed();
   }
 
-  function _renderServers () {
-    var el = document.getElementById('ov-servers-list');
+  // ── needs attention ────────────────────────────────────────────────────────
+  function _renderAttention(d) {
+    _level = d.verdict.level;
+    var hl = $('hm-headline');
+    if (hl.textContent !== d.verdict.headline) hl.textContent = d.verdict.headline;
+    var items = d.items;
+    var admin = _isAdmin();
+    $('hm-attention-list').innerHTML = items.length
+      ? items.map(function (i) { return hmAttentionRowHtml(i, admin); }).join('')
+      : '<div class="hm-mut">Nothing needs attention.</div>';
+    var dismissed = (d.verdict.counts && d.verdict.counts.dismissed) || 0;
+    var dEl = $('hm-dismissed');
+    if (dismissed > 0) {
+      dEl.hidden = false;
+      dEl.innerHTML = escapeHtml(String(dismissed)) + ' dismissed'
+        + (admin ? ' · <button type="button" class="hm-link" id="hm-restore">Restore</button>' : '');
+    } else { dEl.hidden = true; dEl.textContent = ''; }
+    var problems = items.some(function (i) { return i.severity === 'critical' || i.severity === 'warning'; });
+    $('hm-explain').hidden = !problems;
+    if (!problems) { $('hm-explain-body').hidden = true; $('hm-explain-btn').setAttribute('aria-expanded', 'false'); }
+    _renderLed();
+  }
+  function _loadAttention() {
+    _attnBusy = true;
+    _getJson('/api/attention').then(function (d) {
+      _attnBusy = false;
+      if (!d || !d.verdict || !Array.isArray(d.items)) { _attnStale = true; _renderLed(); return; }
+      _attnStale = false;
+      _renderAttention(d);
+    });
+  }
+  function _msg(t) { var el = $('hm-attention-msg'); if (el) el.textContent = t; }
+  function _refreshAttentionSoon() { _lastAttn = 0; _tick(); }
+  function _dismiss(id) {
+    _post('/api/attention/dismiss', { id: id }).then(function (r) {
+      if (!r.ok) throw new Error('dismiss');
+      _msg(''); _refreshAttentionSoon();
+    }).catch(function () { _msg("Couldn't dismiss that item."); });
+  }
+  function _restore() {
+    _post('/api/attention/dismiss', { restore_all: true }).then(function (r) {
+      if (!r.ok) throw new Error('restore');
+      _msg(''); _refreshAttentionSoon();
+    }).catch(function () { _msg("Couldn't restore dismissed items."); });
+  }
+  function _onExplain() {
+    var btn = $('hm-explain-btn'), body = $('hm-explain-body');
+    if (_explainBusy) return;
+    if (!body.hidden) { body.hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
+    _explainBusy = true;
+    btn.disabled = true; btn.setAttribute('aria-expanded', 'true');
+    body.hidden = false; body.textContent = 'Thinking…';
+    var status = 0;
+    _post('/api/attention/explain', {})
+      .then(function (r) { status = r.status; return r.json().catch(function () { return null; }); })
+      .then(function (d) {
+        var m = hmExplainMessage(status, d);
+        body.textContent = m.text + (m.note ? ' (' + m.note + ')' : '');
+      })
+      .catch(function () { body.textContent = hmExplainMessage(0, null).text; })
+      .then(function () { _explainBusy = false; btn.disabled = false; });
+  }
+
+  // ── hosts ──────────────────────────────────────────────────────────────────
+  function _renderHosts(data) {
+    var body = $('hm-hosts-body');
+    if (!body) return;
+    var hosts = data.hosts || [];
+    var groups = hmGroupHosts(hosts);
+    if (!groups.length) {
+      body.innerHTML = '<div class="hm-mut">Add hosts in Monitor → Edit hosts.</div>';
+      $('hm-hosts-sum').textContent = '';
+      return;
+    }
+    body.innerHTML = groups.map(function (g) { return hmGroupHtml(g, _hb); }).join('');
+    var up = hosts.filter(function (h) { return h.is_up; }).length;
+    $('hm-hosts-sum').textContent = up + ' of ' + hosts.length + ' up · 24h heartbeat';
+  }
+  function _renderRecent(data) {
+    var el = $('hm-recent-body');
     if (!el) return;
+    var now = Date.now() / 1000;
+    el.innerHTML = (data.events || []).slice(0, 3).map(function (e) {
+      return '<div class="hm-row"><span class="hm-dot ' + (e.ongoing ? 'hm-dot-dn' : 'hm-dot-up') + '"></span>'
+        + '<span class="hm-row-name">' + escapeHtml(e.host_name) + (e.ongoing ? ' down' : ' recovered') + '</span>'
+        + '<span class="hm-row-meta">' + escapeHtml(hmAgo(now - e.started_ts)) + '</span></div>';
+    }).join('') || '<div class="hm-mut">No incidents</div>';
+  }
+
+  // ── lower sections ─────────────────────────────────────────────────────────
+  function _renderServers() {
     var rows = [];
-    var pve = _mounted.proxmox;
-    (pve && pve.nodes || []).forEach(function (n) {
-      rows.push('<div class="ov-row"><span class="ov-row-name">' + escapeHtml(n.name) + ' CPU</span>'
-        + '<span class="ov-row-meta">' + (n.cpu_percent || 0).toFixed(0) + '%</span></div>');
+    var pve = _srv.proxmox;
+    ((pve && pve.nodes) || []).forEach(function (n) {
+      rows.push(_row(n.name + ' CPU', (n.cpu_percent || 0).toFixed(0) + '%'));
     });
-    var nas = _mounted.nas;
-    (nas && nas.pools || []).forEach(function (p) {
-      var cls = p.status === 'ONLINE' ? 'nas-badge-ok' : 'nas-badge-err';
-      rows.push('<div class="ov-row ov-row-top"><span class="ov-row-name">' + escapeHtml(p.name) + ' pool</span>'
-        + '<span class="nas-badge ' + cls + '">' + escapeHtml(p.status) + '</span></div>');
+    var nas = _srv.nas;
+    ((nas && nas.pools) || []).forEach(function (p) {
+      var pct = hmPoolPct(p);
+      var bad = p.status && p.status !== 'ONLINE';
+      rows.push(_row(p.name + ' pool', bad ? p.status : (pct == null ? '' : pct + '% used'), bad));
     });
-    el.innerHTML = rows.join('') || '<div class="ov-empty">No servers configured</div>';
-    var card = document.getElementById('ov-card-servers');
-    if (!card) return;
-    if (rows.length) card.style.display = '';
-    else if (!(pve && pve.reachable) && nas && !nas.reachable) card.style.display = 'none';
+    var ups = _srv.ups;
+    if (ups && ups.configured && ups.live) rows.push(_row('UPS', hmUpsText(ups.live)));
+    $('hm-servers-body').innerHTML = rows.join('');
+    $('hm-servers').hidden = rows.length === 0;
   }
-
-  function _renderInventory () {
-    var inv = _mounted.inventory;
-    var items = (inv && inv.items) || [];
-    document.getElementById('ov-inv-count').innerHTML =
-      items.length + '<span class="ov-num-dim"> devices</span>';
-    var counts = {};
-    items.forEach(function (it) { counts[it.device_type] = (counts[it.device_type] || 0) + 1; });
-    document.getElementById('ov-inv-chips').innerHTML = Object.keys(counts).map(function (t) {
-      var c = INV_TYPE_COLORS[t] || 'var(--hint)';
-      return '<span class="ov-chip" style="color:' + c + '">' + counts[t] + ' ' + escapeHtml(t) + '</span>';
-    }).join('');
+  function _renderPower() {
+    var p = window.nwLastPower, sec = $('hm-power');
+    if (!sec) return;
+    if (!p || !p.configured) { sec.hidden = true; return; }
+    var live = p.live || {};
+    var w = typeof live.watts === 'number' ? Math.round(live.watts) : null;
+    var avg = hmAvgWatts(p.history);
+    $('hm-power-big').innerHTML = (w == null ? '–' : w) + '<small>W</small>';
+    $('hm-power-avg').textContent = avg == null ? '' : '7-day avg ' + avg + ' W';
+    var vals = (p.history || []).filter(function (d) { return d && typeof d.watts === 'number'; })
+      .slice(-48).map(function (d) { return d.watts; });
+    $('hm-power-spark').setAttribute('points', nwSparkPoints(vals, 100, 26));
+    sec.hidden = false;
   }
-
-  function _renderBrief () {
-    var briefs = (_mounted.briefs && _mounted.briefs.briefs) || [];
+  function _renderNetwork() {
+    var sec = $('hm-network'), maps = _ports || [];
+    var has = typeof cxLivePortMaps === 'function' && cxLivePortMaps(maps).length > 0;
+    sec.hidden = !has;
+    if (!has) return;
+    $('hm-network-sum').textContent = hmFreePorts(maps).free + ' free';
+    $('hm-network-body').innerHTML = cxPortFacesHtml(maps);
+  }
+  function _renderBrief() {
+    var briefs = (_brief && _brief.briefs) || [];
+    var sec = $('hm-brief');
+    sec.hidden = !briefs.length;
     if (!briefs.length) return;
     var b = briefs[0];
-    document.getElementById('ov-brief-body').outerHTML =
-      '<div><div class="ov-brief-date">' + _ago(b.created_ts * 1000) + ' ago</div>'
-      + '<div class="ov-brief-title">' + escapeHtml(b.subject || 'Brief') + '</div>'
-      + '<p class="ov-brief-text">' + escapeHtml(String(b.narrative || '').slice(0, 180)) + '</p></div>';
+    $('hm-brief-body').innerHTML =
+      '<div class="hm-brief-date">' + escapeHtml(hmAgo(Date.now() / 1000 - b.created_ts)) + ' ago</div>'
+      + '<div class="hm-brief-title">' + escapeHtml(b.subject || 'Brief') + '</div>'
+      + '<p class="hm-brief-text">' + escapeHtml(String(b.narrative || '').slice(0, 180)) + '</p>';
+  }
+  function _renderInventory() {
+    var items = (_inv && _inv.items) || [];
+    var sec = $('hm-inventory');
+    sec.hidden = !items.length;
+    if (!items.length) return;
+    $('hm-inv-count').innerHTML = items.length + '<small> devices</small>';
+    var counts = {};
+    items.forEach(function (it) { counts[it.device_type] = (counts[it.device_type] || 0) + 1; });
+    $('hm-inv-chips').innerHTML = Object.keys(counts).map(function (t) {
+      return '<span class="hm-chip" style="color:' + (INV_TYPE_COLORS[t] || 'var(--hint)') + '">'
+        + counts[t] + ' ' + escapeHtml(t) + '</span>';
+    }).join('');
+  }
+  function _renderLinks() {
+    var links = (_links && _links.links) || [];
+    var sec = $('hm-links');
+    sec.hidden = !links.length;
+    if (!links.length) return;
+    var html = links.slice(0, 6).map(function (l) {
+      return '<a class="hm-ql" href="' + escapeHtml(hmSafeUrl(l.url)) + '" target="_blank" rel="noopener noreferrer">'
+        + '<span aria-hidden="true">' + escapeHtml(l.icon || '\u{1F517}') + '</span> ' + escapeHtml(l.label) + '</a>';
+    }).join('');
+    if (links.length > 6) html += '<a class="hm-ql hm-go" href="/links">+' + (links.length - 6) + '</a>';
+    $('hm-links-body').innerHTML = html;
   }
 
-  function _ago (ts) {
-    var t = typeof ts === 'string' ? new Date(ts).getTime() : ts;
-    if (!t || isNaN(t)) return '';
-    var m = Math.max(1, Math.round((Date.now() - t) / 60000));
-    if (m < 60) return m + 'm';
-    if (m < 1440) return Math.round(m / 60) + 'h';
-    return Math.round(m / 1440) + 'd';
+  // ── polling ────────────────────────────────────────────────────────────────
+  function _loadSlow() {
+    _slowBusy = true;
+    var jobs = [
+      _getJson('/api/heartbeat?hours=24&buckets=48').then(function (d) {
+        if (d && d.hosts && typeof d.hosts === 'object') { _hb = d.hosts; if (_lastStatus) _renderHosts(_lastStatus); }
+      }),
+      _getJson('/api/proxmox').then(function (d) { _srv.proxmox = d; }),
+      _getJson('/api/nas').then(function (d) { _srv.nas = d; }),
+      _getJson('/api/ups').then(function (d) { _srv.ups = d; }),
+      _getJson('/api/inventory').then(function (d) { if (d) _inv = d; }),
+      _getJson('/api/brief').then(function (d) { if (d) _brief = d; }),
+      _getJson('/api/quicklinks').then(function (d) { if (d) _links = d; }),
+      (typeof cxLoadPortMaps === 'function'
+        ? cxLoadPortMaps().then(function (m) { _ports = m; }).catch(function () {})
+        : Promise.resolve())
+    ];
+    Promise.all(jobs).then(function () {
+      _slowBusy = false;
+      _renderServers(); _renderBrief(); _renderInventory(); _renderLinks(); _renderNetwork();
+    });
   }
+  function _tick() {
+    var now = Date.now();
+    if (now - _lastAttn >= ATTN_EVERY_MS && !_attnBusy) { _lastAttn = now; _loadAttention(); }
+    if (now - _lastSlow >= SLOW_EVERY_MS && !_slowBusy) { _lastSlow = now; _loadSlow(); }
+  }
+  function _onStatus(data) {
+    if (!$('hm-headline')) return;
+    _lastStatus = data; _statusAt = Date.now();
+    _renderHosts(data); _renderRecent(data); _renderPower(); _renderStats();
+    _tick();
+  }
+
+  nwStatus.subscribe(_onStatus);
+  nwOnReady(function () {
+    $('hm-attention-list').addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-dismiss]') : null;
+      if (b) _dismiss(b.getAttribute('data-dismiss'));
+    });
+    $('hm-dismissed').addEventListener('click', function (e) { if (e.target.id === 'hm-restore') _restore(); });
+    $('hm-explain-btn').addEventListener('click', _onExplain);
+    setInterval(function () { if (!document.hidden) _renderStats(); }, 1000);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { _lastAttn = 0; _lastSlow = 0; _tick(); }
+    });
+    if (_lastStatus) _onStatus(_lastStatus);
+  });
 })();
-
-nwStatus.subscribe(function (data) { if (window.renderOverviewLive) window.renderOverviewLive(data); });
-nwOnReady(function () { if (window.initOverviewTab) window.initOverviewTab(); });

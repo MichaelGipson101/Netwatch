@@ -1,4 +1,4 @@
-/* Quick Links — Overview count summary, dedicated page card grid, and admin
+/* Quick Links — dedicated page card grid, and admin
    edit modal. Fetches /api/quicklinks on mount; edit mutations patch the
    local _links array and re-render in place (no refetch, no full edit-row
    rebuild on field save — rebuilding those rows would blow away focus and
@@ -8,21 +8,9 @@
 
   var _links = [];
 
-  window.mountQuickLinksCard = function () {
-    fetch('/api/quicklinks').then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d) { _links = d.links || []; _renderCount(); } })
-      .catch(function () {});
-  };
-
-  function _renderCount () {
-    var el = document.getElementById('ov-ql-count');
-    if (!el) return;
-    el.textContent = String(_links.length);
-  }
-
   window.mountQuickLinksPage = function () {
     fetch('/api/quicklinks').then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d) { _links = d.links || []; _renderCount(); _renderCards(); } })
+      .then(function (d) { if (d) { _links = d.links || []; _renderCards(); } })
       .catch(function () {});
   };
 
@@ -123,7 +111,6 @@
       .then(function (res) {
         if (!res || !res.ok) return;
         _links = _links.filter(function (l) { return l.id !== id; });
-        _renderCount();
         _renderCards();
         _renderEditRows();
       }).catch(function () {});
@@ -145,7 +132,6 @@
         document.querySelector('.ql-add-label').value = '';
         document.querySelector('.ql-add-url').value = '';
         _links.push({id: res.body.id, label: label, url: url, icon: icon});
-        _renderCount();
         _renderCards();
         _renderEditRows();
       }).catch(function () {});

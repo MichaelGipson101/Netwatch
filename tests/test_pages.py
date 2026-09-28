@@ -23,7 +23,6 @@ GUARDED_IDS = {
         "drawer",               # focus trap: `drawer && drawer.classList...`
     },
     "quicklinks.js": {
-        "ov-ql-count",          # _renderCount(): `if (!el) return` (Links page has no Home card)
         "ql-page-grid",         # _renderCards() `if (!el) return`, and the boot hook checks it first
     },
     "auth.js": {

@@ -1,11 +1,75 @@
-  <div class="view" id="view-overview">
-    <div class="ov-greeting">
-      <div>
-        <div class="ov-greeting-title" id="ov-greeting-title">Overview</div>
-        <div class="ov-greeting-sub">Here's a glimpse at everything, without clicking in.</div>
+  <div class="view hm" id="view-overview">
+    <section class="hm-verdict" aria-labelledby="hm-headline">
+      <div class="hm-vt">
+        <span class="hm-led hm-led-stale" id="hm-led" aria-hidden="true"></span>
+        <h1 class="hm-headline" id="hm-headline" aria-live="polite">Checking…</h1>
       </div>
+      <div class="hm-stats" id="hm-stats"></div>
+    </section>
+
+    <section class="hm-sec" id="hm-attention" aria-labelledby="hm-attention-h">
+      <div class="hm-hdr">
+        <h2 class="hm-lbl" id="hm-attention-h">Needs attention</h2>
+        <span class="hm-sum" id="hm-dismissed" hidden></span>
+        <a class="hm-go" href="/monitor/events">History →</a>
+      </div>
+      <div id="hm-attention-list"><div class="hm-mut">Checking…</div></div>
+      <div class="hm-mut" id="hm-attention-msg" role="status" aria-live="polite"></div>
+      <div class="hm-explain" id="hm-explain" hidden>
+        <button type="button" class="hm-explain-btn" id="hm-explain-btn" aria-expanded="false" aria-controls="hm-explain-body">Explain</button>
+        <div class="hm-explain-body" id="hm-explain-body" hidden></div>
+      </div>
+    </section>
+
+    <section class="hm-sec" id="hm-hosts" aria-labelledby="hm-hosts-h">
+      <div class="hm-hdr">
+        <h2 class="hm-lbl" id="hm-hosts-h">Hosts</h2>
+        <span class="hm-sum" id="hm-hosts-sum"></span>
+        <a class="hm-go" href="/monitor/hosts">Monitor →</a>
+      </div>
+      <div id="hm-hosts-body"><div class="hm-mut">Checking…</div></div>
+    </section>
+
+    <div class="hm-cols">
+      <section class="hm-sec" id="hm-servers" aria-labelledby="hm-servers-h" hidden>
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-servers-h">Servers</h2><a class="hm-go" href="/infra/proxmox">Infra →</a></div>
+        <div id="hm-servers-body"></div>
+      </section>
+      <section class="hm-sec" id="hm-power" aria-labelledby="hm-power-h" hidden>
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-power-h">Power</h2><span class="hm-sum" id="hm-power-avg"></span></div>
+        <div class="hm-big" id="hm-power-big">–</div>
+        <svg class="hm-spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true">
+          <polyline id="hm-power-spark" points="" fill="none" stroke="var(--blue)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+        </svg>
+      </section>
+      <section class="hm-sec" id="hm-network" aria-labelledby="hm-network-h" hidden>
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-network-h">Network</h2><span class="hm-sum" id="hm-network-sum"></span><a class="hm-go" href="/lab/connections">Lab →</a></div>
+        <div class="hm-scroll" id="hm-network-body"></div>
+      </section>
     </div>
-    <div class="ov-grid" id="ov-grid"></div>
+
+    <div class="hm-row2">
+      <section class="hm-sec" id="hm-recent" aria-labelledby="hm-recent-h">
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-recent-h">Recent</h2><a class="hm-go" href="/monitor/events">Events →</a></div>
+        <div id="hm-recent-body"><div class="hm-mut">Checking…</div></div>
+      </section>
+      <section class="hm-sec" id="hm-brief" aria-labelledby="hm-brief-h" hidden>
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-brief-h">Latest brief</h2><a class="hm-go" href="/monitor/briefs">All →</a></div>
+        <div id="hm-brief-body"></div>
+      </section>
+    </div>
+
+    <div class="hm-row2">
+      <section class="hm-sec" id="hm-inventory" aria-labelledby="hm-inventory-h" hidden>
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-inventory-h">Inventory</h2><a class="hm-go" href="/lab/inventory">Lab →</a></div>
+        <div class="hm-big" id="hm-inv-count">–</div>
+        <div class="hm-chips" id="hm-inv-chips"></div>
+      </section>
+      <section class="hm-sec" id="hm-links" aria-labelledby="hm-links-h" hidden>
+        <div class="hm-hdr"><h2 class="hm-lbl" id="hm-links-h">Quick links</h2><a class="hm-go" href="/links">All →</a></div>
+        <div class="hm-qls" id="hm-links-body"></div>
+      </section>
+    </div>
   </div>
 <!--@modals-->
 {{> ql-edit}}
