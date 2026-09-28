@@ -8,10 +8,6 @@ function hmHostClass(status){
   return 'topo-status-' + (map[String(status || '').toUpperCase()] || 'unknown');
 }
 
-function hmIsNotUp(h){
-  return ['DOWN', 'DEGRADED', 'MAINTENANCE', 'IDLE'].indexOf(String((h && h.status) || '').toUpperCase()) >= 0;
-}
-
 function hmGroupHosts(hosts){
   var order = [], by = {};
   (hosts || []).forEach(function(h){
@@ -111,6 +107,9 @@ function hmHostTileHtml(h, states){
   var icons = ['host', 'vm', 'network', 'ups', 'disk', 'peripheral', 'tablet', 'phone', 'printer'];
   var type = icons.indexOf(h.device_type) >= 0 ? h.device_type : 'host';
   var label = (h.name || h.ip) + ' · ' + String(h.status || '').toLowerCase();
+  if(String(h.status || '').toUpperCase() === 'DOWN' && typeof h.last_seen_up_seconds === 'number'){
+    label += ' · last seen ' + hmAgo(h.last_seen_up_seconds) + ' ago';
+  }
   return '<a class="hm-h3 ' + hmHostClass(h.status) + '" href="/monitor/hosts?host=' + encodeURIComponent(h.ip)
     + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">'
     + '<svg class="hm-ic topo-node-icon" aria-hidden="true"><use href="#topo-icon-' + type + '"/></svg>'
@@ -118,20 +117,10 @@ function hmHostTileHtml(h, states){
     + hmHeartbeatBackground(states) + '"></span></a>';
 }
 
-function hmNotUpLineHtml(h){
-  var st = String(h.status || '').toLowerCase();
-  var ago = (typeof h.last_seen_up_seconds === 'number') ? ' ' + hmAgo(h.last_seen_up_seconds) : '';
-  var word = st === 'down' ? 'down' + ago : st;
-  return '<div class="hm-nu"><span class="hm-nu-name">' + escapeHtml(h.name || h.ip) + '</span>'
-    + '<span class="hm-nu-meta">' + escapeHtml(word) + '</span></div>';
-}
-
 function hmGroupHtml(g, hb){
   var tiles = g.hosts.map(function(h){ return hmHostTileHtml(h, hb && hb[h.ip]); }).join('');
-  var nu = g.hosts.filter(hmIsNotUp).map(hmNotUpLineHtml).join('');
   return '<div class="hm-group"><div class="hm-grow"><div class="hm-gl"><span>' + escapeHtml(g.name)
-    + '</span><em>' + g.up + '/' + g.total + '</em></div><div class="hm-gi">' + tiles + '</div></div>'
-    + (nu ? '<div class="hm-nulist">' + nu + '</div>' : '') + '</div>';
+    + '</span><em>' + g.up + '/' + g.total + '</em></div><div class="hm-gi">' + tiles + '</div></div></div>';
 }
 
 function hmExplainMessage(status, data){

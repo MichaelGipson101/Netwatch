@@ -180,13 +180,12 @@ def test_home_renders_every_section_with_real_content(tmp_path):
     assert 'class="hm-dismiss" data-dismiss="alert:pool_health_tank"' in dom and dom.count("data-dismiss=") == 1
     assert re.search(r'id="hm-dismissed"[^>]*>1 dismissed', dom) and 'id="hm-restore"' in dom
     assert not re.search(r'id="hm-explain"[^>]*hidden', dom)            # problems exist -> Explain shown
-    # hosts: group labels, status-classed tiles, heartbeat strips, problem and idle hosts listed by name
+    # hosts: group labels, status-classed tiles, heartbeat strips, names on hover/tap only
     assert re.search(r'id="hm-hosts-sum">2 of 4 up', dom)
     assert "<span>Homelab</span><em>2/2</em>" in dom and "<span>Virtual Machines</span><em>0/1</em>" in dom
     assert 'class="hm-h3 topo-status-down"' in dom and 'class="hm-hb"' in dom and "linear-gradient(90deg" in dom
-    assert 'hm-nu-name">jellyfin</span><span class="hm-nu-meta">down' in dom
-    assert 'hm-nu-name">laptop</span><span class="hm-nu-meta">idle' in dom
-    assert 'hm-nu-name">pve' not in dom
+    assert 'title="jellyfin · down"' in dom and 'title="laptop · idle"' in dom     # names on hover/tap only
+    assert 'hm-nu' not in dom                                                       # no per-host name lines
     # columns
     assert 'class="hm-row-name">pve CPU</span><span class="hm-row-meta">12%</span>' in dom
     assert 'class="hm-row-name">tank pool</span><span class="hm-row-meta">61% used</span>' in dom
@@ -297,7 +296,7 @@ def test_home_long_strings_fixture_really_renders(tmp_path):
     assert "<span>" + "G" * 70 + "</span>" in r.dom
     assert "Q" * 70 + "</a>" in r.dom and 'class="hm-brief-title">' + "S" * 70 in r.dom
     assert "<b>A very long alert title " + "x" * 60 + "</b>" in r.dom
-    assert 'hm-nu-name">jellyfin-' + "y" * 60 in r.dom
+    assert 'aria-label="jellyfin-' + "y" * 60 + ' · down"' in r.dom
 
 
 @needs_chromium

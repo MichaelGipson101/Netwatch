@@ -23,13 +23,6 @@ def test_host_class_maps_every_status():
 
 
 @needs_node
-def test_is_not_up_lists_problems_and_idle_hosts():
-    out = run_js(hm("hmIsNotUp"),
-                 "['DOWN','down','DEGRADED','MAINTENANCE','UP','IDLE','WAIT',null].map(s => hmIsNotUp({status:s}))")
-    assert out == [True, True, True, True, False, True, False, False]   # idle is listed; up/WAIT/null are not
-
-
-@needs_node
 def test_group_hosts_keeps_first_seen_order_and_counts():
     out = run_js(hm("hmGroupHosts"), """[hmGroupHosts([
         {name:'a',group:'Homelab',is_up:true},{name:'b',group:'VMs',is_up:false},
@@ -127,14 +120,19 @@ def test_attention_row_html():
 
 @needs_node
 def test_host_tile_html():
-    names = ("hmHostTileHtml", "hmHostClass", "hmHeartbeatBackground", "hmHeartbeatLabel")
+    names = ("hmHostTileHtml", "hmHostClass", "hmHeartbeatBackground", "hmHeartbeatLabel", "hmAgo")
     out = run_js(hm(*names), """[
       hmHostTileHtml({name:'jellyfin',ip:'10.0.0.4',status:'DOWN',device_type:'vm'}, [1,0]),
       hmHostTileHtml({name:'<b>x</b>',ip:'10.0.0.4&x=1',status:'UP',device_type:'<x>'}, undefined),
       hmHostTileHtml({name:'m',ip:'10.0.0.9',status:'UP',device_type:'foo'}, undefined),
+      hmHostTileHtml({name:'jf',ip:'10.0.0.4',status:'DOWN',device_type:'vm',last_seen_up_seconds:720}, [1]),
+      hmHostTileHtml({name:'up',ip:'10.0.0.4',status:'UP',device_type:'vm',last_seen_up_seconds:5}, [1]),
       ['host','vm','network','ups','disk','peripheral','tablet','phone','printer'].map(
         t => hmHostTileHtml({name:'m',ip:'10.0.0.9',status:'UP',device_type:t}, undefined).includes('#topo-icon-' + t + '"'))]""")
-    tile, evil, unknown, known = out
+    tile, evil, unknown, seen, up_seen, known = out
+    assert 'title="jf · down · last seen 12m ago"' in seen and 'aria-label="jf · down · last seen 12m ago"' in seen
+    assert 'last seen' not in up_seen and 'title="up · up"' in up_seen            # only DOWN hosts get last-seen
+    assert 'title="jellyfin · down"' in tile                                       # no last-seen data -> plain label
     assert '#topo-icon-host"' in unknown and 'topo-icon-foo' not in unknown     # unknown type -> host icon
     assert known == [True] * 9
     assert 'class="hm-h3 topo-status-down"' in tile and 'href="/monitor/hosts?host=10.0.0.4"' in tile
@@ -146,20 +144,20 @@ def test_host_tile_html():
 
 
 @needs_node
-def test_group_html_lists_problem_and_idle_hosts_by_name():
+def test_group_html_is_tiles_only_with_no_name_lines():
     names = ("hmGroupHtml", "hmHostTileHtml", "hmHostClass", "hmHeartbeatBackground",
-             "hmHeartbeatLabel", "hmIsNotUp", "hmNotUpLineHtml", "hmAgo")
-    out = run_js(hm(*names), """hmGroupHtml({name:'Homelab', up:1, total:3, hosts:[
+             "hmHeartbeatLabel", "hmAgo")
+    out = run_js(hm(*names), """hmGroupHtml({name:'Homelab', up:1, total:4, hosts:[
         {name:'pve',ip:'10.0.0.2',status:'UP',device_type:'host'},
         {name:'jellyfin',ip:'10.0.0.4',status:'DOWN',device_type:'vm',last_seen_up_seconds:720},
         {name:'laptop',ip:'10.0.0.5',status:'IDLE',device_type:'host'},
         {name:'pending',ip:'10.0.0.6',status:'WAIT',device_type:'host'}]}, {'10.0.0.2':[1,1]})""")
-    assert '<span>Homelab</span><em>1/3</em>' in out
-    assert 'hm-nu-name">jellyfin</span><span class="hm-nu-meta">down 12m' in out
-    assert 'hm-nu-name">laptop</span><span class="hm-nu-meta">idle' in out       # idle hosts are listed too
-    assert 'hm-nu-name">pve' not in out                                          # up hosts are not
-    assert 'hm-nu-name">pending' not in out                                      # WAIT is not listed
+    assert '<span>Homelab</span><em>1/4</em>' in out
     assert out.count('class="hm-h3 ') == 4                                       # every host has a tile
+    assert 'hm-nu' not in out                                                    # no per-host name lines
+    for name in ("pve", "jellyfin", "laptop", "pending"):
+        assert '<span>' + name + '</span>' not in out                            # names live only in title/aria-label
+    assert 'title="jellyfin · down · last seen 12m ago"' in out
 
 
 @needs_node
