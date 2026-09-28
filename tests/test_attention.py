@@ -187,3 +187,55 @@ def test_alert_cooldown_setting_rejects_out_of_range(tmp_path):
     status, body = _h_post_settings({"alert_cooldown_seconds": -5}, str(tmp_path / "hosts.yaml"), {},
                                     auth_manager=am)
     assert status == 400 and "alert_cooldown_seconds" in body["error"]
+
+
+# ── per-thread pass tracking ─────────────────────────────────────────────────
+
+def test_overlapping_passes_on_two_threads_do_not_clear_each_others_rows(hdb):
+    led = AlertLedger(hdb)
+    g = AlertGate("nas", "TrueNAS", led)
+    fired = threading.Event()
+    second_began = threading.Event()
+    errors = []
+
+    def first():
+        try:
+            g.begin_pass()
+            g.fire("kept", "warning", "m")
+            fired.set()
+            assert second_began.wait(5)      # the other pass begins between our fire and end_pass
+            g.end_pass()
+        except Exception as e:               # surface assertion failures from the thread
+            errors.append(e)
+
+    def second():
+        try:
+            assert fired.wait(5)
+            g.begin_pass()
+            second_began.set()
+        except Exception as e:
+            errors.append(e)
+
+    t1, t2 = threading.Thread(target=first), threading.Thread(target=second)
+    t1.start(); t2.start(); t1.join(10); t2.join(10)
+    assert not errors
+    assert led.active_ids("nas") == {"kept"}
+
+
+def test_end_pass_without_begin_pass_on_this_thread_is_a_noop(hdb):
+    led = AlertLedger(hdb)
+    led.fire("orphan", "nas", "warning", "t", "TrueNAS", now=1)
+    g = AlertGate("nas", "TrueNAS", led)
+    g.fire("also", "warning", "m")           # outside a pass: harmless, tracks nothing
+    g.end_pass()
+    assert led.active_ids("nas") == {"orphan", "also"}
+
+
+def test_end_pass_consumes_the_pass_so_a_second_end_pass_is_a_noop(hdb):
+    led = AlertLedger(hdb)
+    g = AlertGate("nas", "TrueNAS", led)
+    g.begin_pass()
+    g.end_pass()
+    led.fire("late", "nas", "warning", "t", "TrueNAS", now=1)
+    g.end_pass()
+    assert led.active_ids("nas") == {"late"}

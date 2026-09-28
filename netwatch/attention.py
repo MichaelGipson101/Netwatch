@@ -107,10 +107,17 @@ class AlertGate:
         self.source = source
         self.label = label
         self.ledger = ledger
-        self._touched = set()
+        # Pass tracking is per-thread: NAS/PBS passes can overlap (poller thread + a manual
+        # refresh on a request thread) and must not see or reset each other's touched set.
+        self._local = threading.local()
+
+    def _touch(self, condition_id):
+        touched = getattr(self._local, "touched", None)
+        if touched is not None:
+            touched.add(condition_id)
 
     def fire(self, condition_id, severity, message):
-        self._touched.add(condition_id)
+        self._touch(condition_id)
         if self.ledger is None:
             return True
         try:
@@ -120,7 +127,7 @@ class AlertGate:
             return True
 
     def clear(self, condition_id):
-        self._touched.add(condition_id)
+        self._touch(condition_id)
         if self.ledger is None:
             return
         try:
@@ -146,14 +153,19 @@ class AlertGate:
             return set()
 
     def begin_pass(self):
-        self._touched = set()
+        self._local.touched = set()
 
     def end_pass(self, prefixes=None):
         """Clear ledger rows of this source that no fire/clear touched during the pass
         (conditions that vanished while netwatch was down or since). `prefixes` restricts this
-        to level-triggered condition ids; edge-triggered ones must be left alone."""
+        to level-triggered condition ids; edge-triggered ones must be left alone. Without a
+        begin_pass() on this thread it is a no-op."""
+        touched = getattr(self._local, "touched", None)
+        if touched is None:
+            return
+        del self._local.touched
         if self.ledger is None:
             return
-        for cid in self.active_ids() - self._touched:
+        for cid in self.active_ids() - touched:
             if prefixes is None or cid.startswith(tuple(prefixes)):
                 self.clear(cid)

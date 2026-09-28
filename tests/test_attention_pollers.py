@@ -146,3 +146,74 @@ def test_proxmox_fully_read_pass_clears_genuinely_absent_guests(hdb, sent):
     assert led.active_ids("proxmox") == {"stop:100", "pause:7"}
     mk()._check_alerts([{"name": "pve", "status": "online", "guests": [], "guests_ok": True}], [])
     assert led.active_ids("proxmox") == set()
+
+
+def test_proxmox_empty_node_list_keeps_stop_and_pause_rows(hdb, sent):
+    led = AlertLedger(hdb)
+    _seed_stop_and_pause(led)
+    P.ProxmoxPoller(None, alert_settings={}, ledger=led)._check_alerts([], [])
+    assert led.active_ids("proxmox") == {"stop:100", "pause:7"}
+
+
+# ── failure / plumbing coverage ──────────────────────────────────────────────
+
+def test_a_pass_that_raises_midway_leaves_untouched_ledger_rows_intact(hdb, sent, monkeypatch):
+    led = AlertLedger(hdb)
+    led.fire("truenas_alert_old", "nas", "warning", "t", "TrueNAS", now=1)
+    p = _nas(led)
+    real = p._fire_alert
+
+    def boom(cid, *a, **kw):
+        if cid.startswith("replication_"):
+            raise RuntimeError("boom")
+        return real(cid, *a, **kw)
+
+    monkeypatch.setattr(p, "_fire_alert", boom)
+    tasks = [{"id": 1, "name": "r", "enabled": True, "last_state": "ERROR", "last_run": None}]
+    with pytest.raises(RuntimeError, match="boom"):
+        p._check_alerts(POOL_BAD, tasks, [])
+    # end_pass never ran, so the untouched row is still active (and the earlier fire persisted)
+    assert led.active_ids("nas") == {"truenas_alert_old", "pool_health_tank"}
+
+
+def test_mark_notified_is_set_after_a_successful_send(hdb, monkeypatch):
+    def send(settings, title, message, **kw):
+        kw["on_success"]()
+    monkeypatch.setattr(P, "_send_alert_async", send)
+    led = AlertLedger(hdb)
+    _nas(led)._check_alerts(POOL_BAD, [], [])
+    assert led.active()[0]["notified_at"] is not None
+
+
+def test_failed_send_leaves_notified_at_unset(hdb, sent):
+    led = AlertLedger(hdb)
+    _nas(led)._check_alerts(POOL_BAD, [], [])           # `sent` never calls on_success
+    assert led.active()[0]["notified_at"] is None
+
+
+class _RaisingLedger:
+    def fire(self, *a, **kw):
+        raise RuntimeError("db locked")
+
+    clear = mark_notified = active_ids = fire
+
+
+def test_poller_still_sends_first_time_ntfy_when_the_ledger_raises(sent):
+    p = _nas(_RaisingLedger())
+    p._check_alerts(POOL_BAD, [], [])
+    assert len(sent) == 1
+    p._check_alerts(POOL_BAD, [], [])                   # in-memory dedupe still holds
+    assert len(sent) == 1
+
+
+def test_prune_loop_prunes_the_alert_ledger(monkeypatch):
+    import threading
+    from unittest.mock import MagicMock
+    from netwatch import storage
+
+    stop = threading.Event()
+    monkeypatch.setattr(storage.time, "sleep", lambda s: None)   # skip the ~60s boot delay
+    ledger = MagicMock()
+    ledger.prune.side_effect = lambda: stop.set() or 0           # stop right after the first prune
+    storage._prune_loop(MagicMock(), stop, None, ledger)
+    ledger.prune.assert_called_once_with()

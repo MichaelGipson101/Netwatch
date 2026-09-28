@@ -549,7 +549,7 @@ class ProxmoxPoller:
         # list was actually read; otherwise it means "unknown", so neither the
         # edge-triggered stop: rows nor the pause: rows may be reconciled away.
         # node:<name> is fired/cleared for every node each pass, so it is always safe.
-        all_read = all(n["status"] == "online" and n.get("guests_ok") is not False for n in nodes)
+        all_read = bool(nodes) and all(n["status"] == "online" and n.get("guests_ok") is not False for n in nodes)
         if all_read:
             current_vmids = {str(g["vmid"]) for n in nodes for g in n.get("guests", [])}
             for cid in self._gate.active_ids():
