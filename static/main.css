@@ -1929,6 +1929,9 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .cx-filter-chips{display:flex;flex-wrap:wrap;gap:6px}
 .cx-search{flex:1 1 160px;min-width:0}
 .cx-table{width:100%;min-width:560px;border-collapse:collapse;font-size:13px}
+/* Contain the table's absolutely-positioned sr-only header text inside the
+   scroller; otherwise it's placed against the page and widens it at 390px. */
+#cx-table .pve-table-scroll{position:relative}
 @media (max-width:600px){.cx-table{min-width:640px}}
 .cx-table th{text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font:600 11px/1 'DM Sans',sans-serif;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
 .cx-table td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle}

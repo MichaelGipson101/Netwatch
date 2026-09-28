@@ -1338,3 +1338,10 @@ def test_port_faces_renderer_is_shared_and_skips_switches_without_live_ports():
     with open(os.path.join(STATIC, "overview.js"), encoding="utf-8") as f:
         ov = f.read()
     assert "cxPortFacesHtml(maps)" in ov and "_card('ports', 'Switch ports', 'connections'" in ov
+
+
+def test_connections_table_scroller_contains_its_sr_only_header():
+    # The absolutely-positioned sr-only "Actions" header was placed against the
+    # page (no positioned ancestor) and widened it by ~97px at 390px.
+    with open(os.path.join(STATIC, "main.css"), encoding="utf-8") as f:
+        assert "#cx-table .pve-table-scroll{position:relative}" in f.read()
