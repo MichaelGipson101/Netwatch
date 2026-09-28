@@ -595,3 +595,10 @@ async function clearMaintenanceFromDrawer(ip){
     btn.disabled = false;
   }
 }
+
+nwStatus.subscribe(function(data){
+  if(openDrawerIp){
+    const h = data.hosts.find(x => x.ip === openDrawerIp);
+    if(h) renderDrawer(h, data);
+  }
+});

@@ -30,7 +30,7 @@
 
   const _MIRA_STATES = ['idle', 'nominal', 'advisory', 'warning', 'critical'];
 
-  // Reflects live network health on Mira's avatar ring. Called from core.js
+  // Reflects live network health on Mira's avatar ring. Called from shell.js
   // after each /api/status refresh (and on fetch failure, with no args).
   function updateMiraStatus(data){
     let state = 'idle';

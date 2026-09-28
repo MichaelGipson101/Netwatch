@@ -86,3 +86,5 @@ function openUpsModal() {
 function closeUpsModal() {
   document.getElementById('ups-modal-overlay').classList.remove('open');
 }
+
+nwStatus.subscribe(function(){ refreshUpsIcon(); });

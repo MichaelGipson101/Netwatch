@@ -94,3 +94,5 @@ async function refreshPowerCard() {
     renderPowerSparkline(data.history || []);
   } catch (_) { /* non-critical */ }
 }
+
+nwStatus.subscribe(function(){ refreshPowerCard(); });

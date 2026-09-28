@@ -1722,7 +1722,7 @@ def test_static_assets_do_not_depend_on_config_directory(tmp_path):
     config_dir.mkdir()
     static_dir = tmp_path / "assets"
     static_dir.mkdir()
-    (static_dir / "core.js").write_text("window.netwatchTest = true;", encoding="utf-8")
+    (static_dir / "utils.js").write_text("window.netwatchTest = true;", encoding="utf-8")
 
     handler = make_handler(
         None, {}, str(config_dir / "hosts.yaml"),
@@ -1733,7 +1733,7 @@ def test_static_assets_do_not_depend_on_config_directory(tmp_path):
     t = _threading.Thread(target=server.handle_request)
     t.start()
     try:
-        with _urlreq.urlopen(f"http://127.0.0.1:{server.server_address[1]}/static/core.js?v=test") as r:
+        with _urlreq.urlopen(f"http://127.0.0.1:{server.server_address[1]}/static/utils.js?v=test") as r:
             assert r.status == 200
             assert r.read() == b"window.netwatchTest = true;"
     finally:

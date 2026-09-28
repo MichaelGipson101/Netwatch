@@ -51,3 +51,5 @@ function renderEvents(data){
   });
   list.innerHTML = html;
 }
+
+nwStatus.subscribe(renderEvents);

@@ -42,7 +42,7 @@
     _mountTopoPreview();
   };
 
-  // Called from core.js refresh() on every poll while the tab is active.
+  // Called by the nwStatus subscriber (bottom of file) on every poll while the tab is active.
   window.renderOverviewLive = function (data) {
     if (!document.getElementById('ov-hosts-num')) return;
     var hosts = data.hosts || [];
@@ -342,3 +342,8 @@
     return Math.round(m / 1440) + 'd';
   }
 })();
+
+nwStatus.subscribe(function (data) {
+  var v = document.getElementById('view-overview');
+  if (v && v.classList.contains('active') && window.renderOverviewLive) window.renderOverviewLive(data);
+});

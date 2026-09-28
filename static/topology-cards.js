@@ -58,3 +58,5 @@ function renderTopology(data){
     banner.classList.remove('show');
   }
 }
+
+nwStatus.subscribe(renderTopology);

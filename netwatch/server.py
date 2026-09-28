@@ -43,7 +43,6 @@ _STATIC_FILES = {
     'fonts.css':   'text/css; charset=utf-8',
     'utils.js':    'application/javascript; charset=utf-8',
     'overview.js': 'application/javascript; charset=utf-8',
-    'core.js':     'application/javascript; charset=utf-8',
     'topology.js': 'application/javascript; charset=utf-8',
     'inventory.js':'application/javascript; charset=utf-8',
     'quickadd.js': 'application/javascript; charset=utf-8',

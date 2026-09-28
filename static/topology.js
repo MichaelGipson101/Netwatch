@@ -1400,3 +1400,6 @@ document.addEventListener('visibilitychange', () => {
     if(!_flowRaf) _flowRaf = requestAnimationFrame(_flowFrame);
   }
 });
+
+nwStatus.subscribe(function(data){ updateTopologyWebStatus(data); });
+nwOnReady(function(){ if(typeof setTopoView === 'function') setTopoView(_topoView); });

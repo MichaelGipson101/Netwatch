@@ -219,7 +219,7 @@ function connectionsChanged(){
   }
 }
 
-// Called from refresh() in core.js with /api/status's suggestions_pending.
+// Called from refresh() in shell.js with /api/status's suggestions_pending.
 function updateConnectionsBadge(n){
   n = n || 0;
   const el = document.getElementById('conn-count');

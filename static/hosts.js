@@ -134,3 +134,23 @@ function renderSummary(data){
   totEl.style.color = 'var(--text)';
   document.getElementById('s-interval').textContent = data.settings.default_interval + 's poll interval';
 }
+
+nwStatus.subscribe(function(data){
+  renderSummary(data);
+  renderGroups(data);
+  if(_hostStatusChip !== 'all' || (document.getElementById('hosts-filter') && document.getElementById('hosts-filter').value)){
+    applyHostFilter();
+  }
+});
+
+nwOnReady(function(){
+  const cm = document.getElementById('compact-mode');
+  if(!cm) return;
+  const compactSaved = localStorage.getItem('nw-compact') === 'true';
+  cm.checked = compactSaved;
+  document.body.classList.toggle('compact', compactSaved);
+  cm.addEventListener('change', e => {
+    document.body.classList.toggle('compact', e.target.checked);
+    localStorage.setItem('nw-compact', e.target.checked);
+  });
+});

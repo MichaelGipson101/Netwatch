@@ -414,7 +414,7 @@ def test_every_static_script_parses(name):
 # ── Task 5: workspace shell ─────────────────────────────────────────────────
 
 CX_JS = os.path.join(STATIC, "connections.js")
-CORE_JS = os.path.join(STATIC, "core.js")
+CORE_JS = os.path.join(STATIC, "shell.js")
 AUTH_JS = os.path.join(STATIC, "auth.js")
 
 # Every workspace panel renderer; cxRender() must call each one. Later
