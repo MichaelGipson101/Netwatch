@@ -38,6 +38,7 @@ from netwatch.http_handlers import (
     _h_get_unmonitored_guests, _h_post_monitor_guests,
     _h_get_discovery_status, _h_post_discovery_scan,
     _h_get_attention, _h_get_heartbeat, _h_post_attention_explain,
+    _h_post_attention_dismiss,
 )
 
 
@@ -699,6 +700,12 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 if not self._require_auth(): return
                 self._send_json(*_h_post_attention_explain(
                     host_manager, inventory_db, ledger, drift_monitor, auth_manager, settings, explainer))
+                return
+            if self.path == "/api/attention/dismiss":
+                if not self._require_auth(admin_only=True): return
+                data, err = self._read_json_body()
+                if err: return
+                self._send_json(*_h_post_attention_dismiss(data, ledger))
                 return
             if self.path == "/api/ai/chat":
                 if not self._require_auth(): return

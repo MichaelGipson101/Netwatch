@@ -287,7 +287,7 @@ def test_all_up_is_ok():
     p = build([F("a", "10.0.0.1"), F("b", "10.0.0.2")])
     assert p["verdict"]["level"] == "ok" and p["verdict"]["headline"] == "Everything looks good."
     assert p["verdict"]["counts"] == {"hosts_total": 2, "hosts_up": 2, "hosts_down": 0,
-                                      "affected": 0, "maintenance": 0}
+                                      "affected": 0, "maintenance": 0, "dismissed": 0}
 
 
 def test_single_down_host_without_inventory_is_its_own_root():

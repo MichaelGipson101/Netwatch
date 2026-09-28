@@ -109,7 +109,8 @@ class HistoryDB:
         detail       TEXT NOT NULL,
         since        INTEGER NOT NULL,
         notified_at  INTEGER,
-        cleared_at   INTEGER
+        cleared_at   INTEGER,
+        dismissed_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_alert_state_cleared ON alert_state(cleared_at);
     """
@@ -134,6 +135,9 @@ class HistoryDB:
         if not _column_exists(self.conn, "incidents", "alert_sent"):
             self.conn.execute("ALTER TABLE incidents ADD COLUMN alert_sent INTEGER DEFAULT 0")
             logging.info("HistoryDB: added alert_sent column to incidents")
+        if not _column_exists(self.conn, "alert_state", "dismissed_at"):
+            self.conn.execute("ALTER TABLE alert_state ADD COLUMN dismissed_at INTEGER")
+            logging.info("HistoryDB: added dismissed_at column to alert_state")
         logging.info(f"HistoryDB: opened {db_path} (retention {retention_days} days)")
 
     def close(self):

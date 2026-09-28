@@ -365,6 +365,12 @@ def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None
             rows = ledger.active()
         except Exception as e:
             logging.warning(f"attention: ledger read failed: {e}")
+    dismissed = 0
+    if ledger is not None:
+        try:
+            dismissed = ledger.dismissed_count()
+        except Exception as e:
+            logging.warning(f"attention: dismissed count failed: {e}")
     pending = 0
     suggestions = getattr(inventory_db, "suggestions", None)
     if suggestions is not None:
@@ -374,7 +380,8 @@ def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None
             logging.warning(f"attention: suggestion count failed: {e}")
     try:
         drift = drift_monitor.get() if drift_monitor is not None else []
-        return 200, build_attention(facts, records, parents, rows, pending, drift, now=now)
+        return 200, build_attention(facts, records, parents, rows, pending, drift, now=now,
+                                    dismissed=dismissed)
     except Exception as e:
         logging.warning(f"attention: build failed: {e}")
         return 200, build_attention([], [], {}, [], 0, [], now=now)
@@ -391,6 +398,27 @@ def _h_post_attention_explain(host_manager, inventory_db, ledger, drift_monitor,
     if model not in ALLOWED_AI_MODELS:
         model = "openrouter/free"
     return explainer.explain(payload["items"], _get_openrouter_key(auth_manager), model, now=now)
+
+
+def _h_post_attention_dismiss(data, ledger) -> tuple:
+    """Hide one poller-condition attention item (or restore all hidden ones). Admin only at the
+    route. A dismissed condition that later clears and fires again is a fresh alert."""
+    if ledger is None:
+        return 503, {"error": "alert ledger not available"}
+    data = data if isinstance(data, dict) else {}
+    try:
+        if data.get("restore_all") is True:
+            return 200, {"ok": True, "restored": ledger.restore_all()}
+        raw = data.get("id")
+        if (not isinstance(raw, str) or not raw.startswith("alert:")
+                or len(raw) == len("alert:") or len(raw) > 200):
+            return 400, {"error": "id must be an alert:<condition> item id"}
+        if not ledger.dismiss(raw[len("alert:"):]):
+            return 404, {"error": "not_found"}
+        return 200, {"ok": True}
+    except Exception as e:
+        logging.warning(f"attention dismiss failed: {e}")
+        return 500, {"error": "dismiss failed"}
 
 
 NAS_BACKUP_STATUS_PATH = "/mnt/nas-shared/netwatch/backup/_status.json"

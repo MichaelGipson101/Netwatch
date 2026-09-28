@@ -76,10 +76,12 @@ class AlertLedger:
                 (self._now(now), condition_id))
             return cur.rowcount > 0
 
-    def active(self, source=None):
+    def active(self, source=None, include_dismissed=False):
         sql = ("SELECT condition_id, source, severity, title, detail, since, notified_at "
                "FROM alert_state WHERE cleared_at IS NULL")
         args = ()
+        if not include_dismissed:
+            sql += " AND dismissed_at IS NULL"
         if source is not None:
             sql += " AND source = ?"
             args = (source,)
@@ -90,7 +92,30 @@ class AlertLedger:
         return out
 
     def active_ids(self, source):
-        return {r["condition_id"] for r in self.active(source)}
+        # Includes dismissed rows: the poller must still be able to clear them when the
+        # condition resolves.
+        return {r["condition_id"] for r in self.active(source, include_dismissed=True)}
+
+    def dismiss(self, condition_id, now=None):
+        with self.lock:
+            cur = self.conn.execute(
+                "UPDATE alert_state SET dismissed_at = ? WHERE condition_id = ? "
+                "AND cleared_at IS NULL AND dismissed_at IS NULL",
+                (self._now(now), condition_id))
+            return cur.rowcount > 0
+
+    def restore_all(self):
+        with self.lock:
+            cur = self.conn.execute(
+                "UPDATE alert_state SET dismissed_at = NULL "
+                "WHERE cleared_at IS NULL AND dismissed_at IS NOT NULL")
+            return cur.rowcount
+
+    def dismissed_count(self):
+        with self.lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM alert_state "
+                "WHERE cleared_at IS NULL AND dismissed_at IS NOT NULL").fetchone()[0]
 
     def prune(self, older_than_days=30, now=None):
         cutoff = self._now(now) - int(older_than_days) * 86400
@@ -305,7 +330,7 @@ def _sentence(title):
     return title if title.endswith((".", "!", "?")) else title + "."
 
 
-def _verdict(facts, items):
+def _verdict(facts, items, dismissed=0):
     roots = [i for i in items if i["kind"] == "host_down"]
     affected = sum(len(i["affected"]) for i in roots)
     counts = {
@@ -314,6 +339,7 @@ def _verdict(facts, items):
         "hosts_down": len(roots) + affected,
         "affected": affected,
         "maintenance": sum(1 for f in facts if f["in_maintenance"]),
+        "dismissed": int(dismissed or 0),
     }
     problems = [i for i in items if i["severity"] in ("critical", "warning")]
     if any(i["severity"] == "critical" for i in items):
@@ -337,7 +363,7 @@ def _verdict(facts, items):
     return {"level": level, "headline": headline, "counts": counts}
 
 
-def build_attention(facts, records, parents, ledger_rows, suggestions_pending, drift, now=None):
+def build_attention(facts, records, parents, ledger_rows, suggestions_pending, drift, now=None, dismissed=0):
     now = time.time() if now is None else float(now)
     items = _host_down_items(facts, records, parents, now)
     items.extend(_ledger_item(r, now) for r in ledger_rows)
@@ -351,7 +377,7 @@ def build_attention(facts, records, parents, ledger_rows, suggestions_pending, d
     items.extend(_drift_item(d, records) for d in drift)
     items.sort(key=_sort_key)
     return {"generated": datetime.fromtimestamp(now).isoformat(),
-            "verdict": _verdict(facts, items), "items": items}
+            "verdict": _verdict(facts, items, dismissed), "items": items}
 
 
 def check_ip_drift(facts, records, neighbors):
