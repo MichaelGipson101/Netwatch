@@ -700,7 +700,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/attention/explain":
                 if not self._require_auth(): return
                 self._send_json(*_h_post_attention_explain(
-                    host_manager, inventory_db, ledger, drift_monitor, auth_manager, settings, explainer))
+                    host_manager, inventory_db, ledger, drift_monitor, auth_manager, settings, explainer,
+                    incident_log=incident_log))
                 return
             if self.path == "/api/attention/dismiss":
                 if not self._require_auth(admin_only=True): return

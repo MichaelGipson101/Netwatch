@@ -375,3 +375,27 @@ def test_attention_handler_ignores_resolved_incidents_and_survives_a_failing_log
     assert p["items"][0]["since"] is None and p["items"][0]["detail"] == "Down"
     _, p = H._h_get_attention(hm, None, None, None, now=1_000_000, incident_log=_IncLog(boom=True))
     assert p["items"][0]["kind"] == "host_down"                  # degraded, not an error
+
+
+class _RecordingExplainer:
+    def __init__(self):
+        self.items = None
+
+    def explain(self, items, api_key, model, now=None):
+        self.items = items
+        return 200, {"explanation": "ok"}
+
+
+def test_explain_handler_sees_the_same_seeded_down_since_as_get_attention():
+    hm = _HMgr([_host("jellyfin", "10.0.0.4", False)])          # first_down_at is 0 (never set)
+    started = 1_000_000 - 3 * 86400
+    log = _IncLog([{"host_ip": "10.0.0.4", "host_name": "jellyfin", "ongoing": True,
+                    "started_ts": started}])
+    ex = _RecordingExplainer()
+    s, _ = H._h_post_attention_explain(hm, _Inv(), None, None, _Auth("k"), {}, ex,
+                                       now=1_000_000, incident_log=log)
+    assert s == 200 and len(ex.items) == 1 and ex.items[0]["since"] == started
+    # without incident_log the handler still works and simply has no seeded start
+    ex2 = _RecordingExplainer()
+    s, _ = H._h_post_attention_explain(hm, _Inv(), None, None, _Auth("k"), {}, ex2, now=1_000_000)
+    assert s == 200 and ex2.items[0]["since"] is None

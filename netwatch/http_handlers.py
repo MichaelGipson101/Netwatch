@@ -402,12 +402,13 @@ def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None
 
 
 def _h_post_attention_explain(host_manager, inventory_db, ledger, drift_monitor, auth_manager,
-                              settings, explainer, now=None) -> tuple:
+                              settings, explainer, now=None, incident_log=None) -> tuple:
     """Plain-language explanation of the current attention items. The server reads the items
     itself (nothing from the client reaches the prompt) and holds the API key."""
     if explainer is None:
         return 404, {"error": "ai_not_configured"}
-    _, payload = _h_get_attention(host_manager, inventory_db, ledger, drift_monitor, now=now)
+    _, payload = _h_get_attention(host_manager, inventory_db, ledger, drift_monitor, now=now,
+                                     incident_log=incident_log)
     model = ((settings or {}).get("ai_model") or "").strip()
     if model not in ALLOWED_AI_MODELS:
         model = "openrouter/free"
