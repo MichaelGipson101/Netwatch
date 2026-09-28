@@ -378,3 +378,25 @@ def test_navigate_to_host_drawer_goes_to_monitor_with_host_param():
       return [closed, location.href];
     })()""", prelude="let closed = 0; function closeDrawer(){ closed++; }\nglobal.location = {href: ''};")
     assert out == [1, "/monitor/hosts?host=10.0.0.2"]
+
+
+@needs_node
+def test_page_key_matches_the_old_tab_names():
+    out = run("""
+      const key = (page, sub) => { document.body.dataset = {page: page}; _currentSubview = sub; return nwPageKey(); };
+      console.log([key('home',''), key('monitor','hosts'), key('monitor','events'), key('monitor','briefs'),
+                   key('lab','topology'), key('lab','connections'), key('lab','inventory'),
+                   key('infra',''), key('links','')].join(','));
+    """)
+    assert out == "overview,hosts,events,briefs,topology,connections,inventory,servers,quicklinks"
+
+
+@needs_node
+def test_compute_summary_tolerates_missing_latency_and_uptime_fields():
+    out = run("""
+      const s = nwComputeSummary({hosts:[
+        {is_up:true, status:'UP', always_on:true},
+        {is_up:true, status:'UP', latency_ms:4, always_on:true, uptime_pct:100}]});
+      console.log(JSON.stringify([s.avgLat, s.avgUpt]));
+    """)
+    assert out == "[4,100]"

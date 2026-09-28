@@ -45,11 +45,13 @@ function nwPageUrl(page, sub){
 }
 function nwOnSubview(name, fn){ (_subviewHooks[name] = _subviewHooks[name] || []).push(fn); }
 function nwCurrentSubview(){ return _currentSubview; }
-// Legacy tab name for the current view (what setTab/nw-tab used to track): the sub-view
-// if the page has one, else the page's own legacy name. Used by Mira for page context.
-function nwCurrentTab(){
-  if(_currentSubview) return _currentSubview;
-  return {home:'overview', infra:'servers', links:'quicklinks'}[document.body.dataset.page] || '';
+// The context key Mira (and anything else page-aware) uses; same values the old tab names had.
+function nwPageKey(){
+  const p = document.body.dataset.page;
+  if(p === 'home') return 'overview';
+  if(p === 'infra') return 'servers';
+  if(p === 'links') return 'quicklinks';
+  return _currentSubview || '';
 }
 function _subviewNames(){
   const s = document.body.dataset.subviews;
@@ -132,8 +134,8 @@ function nwComputeSummary(data){
     down: hosts.filter(h => !h.is_up && h.status === 'DOWN').length,
     degraded: hosts.filter(h => h.status === 'DEGRADED').length,
     maintenance: hosts.filter(h => h.status === 'MAINTENANCE').length,
-    avgLat: mean(hosts.filter(h => h.latency_ms !== null).map(h => h.latency_ms)),
-    avgUpt: mean(hosts.filter(h => h.always_on !== false && h.uptime_pct !== null).map(h => h.uptime_pct)),
+    avgLat: mean(hosts.filter(h => h.latency_ms != null).map(h => h.latency_ms)),
+    avgUpt: mean(hosts.filter(h => h.always_on !== false && h.uptime_pct != null).map(h => h.uptime_pct)),
   };
 }
 

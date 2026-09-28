@@ -80,7 +80,7 @@
   }
 
   function _buildContext(){
-    const tab = (typeof nwCurrentTab === 'function' && nwCurrentTab()) || 'topology';
+    const tab = nwPageKey() || 'topology';
     if(tab === 'inventory'){
       return {
         page: 'inventory',
@@ -193,6 +193,7 @@
     _aiHistory.push({role:'user', content:text});
     if(_aiHistory.length > 20) _aiHistory.splice(0, _aiHistory.length - 20);
 
+    await _hydrateContext(nwPageKey());
     const ctx = _buildContext();
     const systemPrompt = _buildSystemPrompt(ctx);
 
@@ -473,15 +474,29 @@
     _msgs.appendChild(note);
   }
 
-  // Clear conversation when the user switches tabs so stale context doesn't bleed across pages
-  (function(){
-    const _origSetTab = window.setTab;
-    window.setTab = function(tab){
-      const prev = (typeof nwCurrentTab === 'function') ? nwCurrentTab() : null;
-      if(_origSetTab) _origSetTab.call(this, tab);
-      if(prev && tab !== prev && _aiHistory.length > 0) _clearConversation(tab);
-    };
-  })();
+  // Sub-view switches inside a page clear the conversation (full-page navigation starts fresh anyway).
+  window.addEventListener('nw:subview', function (e) {
+    if (_aiHistory.length > 0) _clearConversation(e.detail.name);
+  });
+
+  // Pages only hold the data they fetch themselves. Before a message is sent, pull whatever
+  // the current page's context needs but this page never loaded (cheap cached endpoints).
+  async function _hydrateContext(key){
+    const jobs = [];
+    const get = (path, assign) => fetch(path).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) assign(d); }).catch(() => {});
+    if (!window.nwLastPower) jobs.push(get('/api/power', d => { window.nwLastPower = d; }));
+    if (key === 'servers') {
+      if (!window.nwLastProxmox) jobs.push(get('/api/proxmox', d => { window.nwLastProxmox = d; }));
+      if (!window.nwLastNas) jobs.push(get('/api/nas', d => { window.nwLastNas = d; }));
+      if (!window.nwLastPbs) jobs.push(get('/api/pbs', d => { window.nwLastPbs = d; }));
+    }
+    if (key === 'inventory' && typeof _inventoryData !== 'undefined' && !_inventoryData.length) {
+      jobs.push(get('/api/inventory', d => { _inventoryData = d.items || []; }));
+    }
+    if (!jobs.length) return;
+    await Promise.race([Promise.all(jobs), new Promise(r => setTimeout(r, 3000))]);
+  }
 
   _btn.addEventListener('click', ()=>{
     _panel.classList.toggle('hidden');
