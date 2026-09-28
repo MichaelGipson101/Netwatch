@@ -107,7 +107,11 @@ Major subsystems, by module:
   cached, rate-limited one-shot OpenRouter call that sees only the attention items. Poller
   conditions can be dismissed from Home (`AlertLedger.dismiss/restore_all/dismissed_count`, stamped
   in `alert_state.dismissed_at`); dismissed rows stay visible to `AlertGate` so the poller can still
-  clear them, and a recurrence after a clear is a fresh alert that shows again. `host_facts` seeds
+  clear them, and a recurrence after a clear is a fresh alert that shows again. An `ip_drift` item carries `data` (`mac`/`from_ip`/`to_ip`);
+  an admin can apply it with the Update IP action (`change_host_ip` rewrites `hosts.yaml`, and the host's ping
+  history, incidents and maintenance windows move to the new IP via `HistoryDB.migrate_host_ip`, which
+  skips rather than mix history if the new IP already has some; the matching inventory record's IP is
+  updated too), and the request must match a current drift result or it is a 409. `host_facts` seeds
   `first_down_at` from ongoing incidents so "down for X" survives restarts.
 - `netwatch/http_handlers.py` — `build_topology_payload` / `build_api_payload` (assemble the
   JSON the frontend polls; topology payload merges live host status onto inventory records +
@@ -118,7 +122,8 @@ Major subsystems, by module:
   following the existing naming convention. Home's attention endpoints live here:
   `GET /api/attention` (verdict + items, never errors), `GET /api/heartbeat` (per-host 48
   half-hour buckets over 24h, cached 60s), `POST /api/attention/explain`, and
-  `POST /api/attention/dismiss` (admin only; `{"id":"alert:<cond>"}` or `{"restore_all":true}`).
+  `POST /api/attention/dismiss` (admin only; `{"id":"alert:<cond>"}` or `{"restore_all":true}`),
+  and `POST /api/attention/apply-ip` (admin only; `{"mac","from_ip","to_ip"}` from an `ip_drift` item).
 - `netwatch/server.py` — **HTTP layer**: `make_handler()` builds a `BaseHTTPRequestHandler`
   subclass with `do_GET`/`do_POST` implemented as long if/elif chains over `self.path` (no
   routing library/decorator table), dispatching to the `_h_*` handlers in `http_handlers.py`.
