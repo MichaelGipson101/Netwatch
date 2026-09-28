@@ -198,7 +198,8 @@ def test_proxmox_snapshot_joins_cache_status_and_configs():
         ("pve", 108), ("pve", 116), ("prodesk1", 301)]
     assert snap["guests"][0] == {
         "node": "pve", "vmid": 108, "name": "haos13.2", "guest_type": "qemu",
-        "macs": [HA_MAC], "cores": 2, "memory_mb": 4096, "onboot": True, "status": "running"}
+        "macs": [HA_MAC], "ip": None, "cores": 2, "memory_mb": 4096, "onboot": True,
+        "status": "running"}
     assert snap["guests"][1]["macs"] == [SOL_MAC0, SOL_MAC1]
     assert snap["guests"][1]["onboot"] is False
     assert snap["failed"] == []
@@ -222,7 +223,7 @@ def test_proxmox_observations_shapes():
     [mc] = [o for o in obs if o["type"] == "guest" and o["vmid"] == 301]
     assert mc == {"type": "guest", "source": "proxmox", "node": "prodesk1", "vmid": 301,
                   "name": "Minecraft", "guest_type": "lxc", "macs": [MC_MAC], "cores": 2,
-                  "memory_mb": 4096, "onboot": True,
+                  "memory_mb": 4096, "onboot": True, "ip": None,
                   "external_key": "proxmox:guest:prodesk1:301"}
 
 

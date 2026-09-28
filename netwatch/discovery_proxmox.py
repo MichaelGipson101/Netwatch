@@ -18,6 +18,31 @@ _NET_KEY = re.compile(r"^net(\d+)$")
 _MAC_VALUE = re.compile(r"=((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})(?=,|$)")
 
 
+def pick_guest_ip(macs, raw):
+    """A guest's LAN IPv4 from an LXC /interfaces list or a QEMU agent
+    {"result": [...]} reply: the address on the interface whose MAC is one of
+    the guest's config MACs (net0 first), so Docker bridges, Tailscale and
+    loopback never win. None when nothing matches."""
+    ifaces = raw.get("result") if isinstance(raw, dict) else raw
+    by_mac = {}
+    for i in ifaces if isinstance(ifaces, list) else []:
+        if not isinstance(i, dict):
+            continue
+        mac = _norm_mac(i.get("hardware-address") or i.get("hwaddr"))
+        v4 = [a.get("ip-address") for a in i.get("ip-addresses") or []
+              if isinstance(a, dict) and a.get("ip-address-type") in ("inet", "ipv4")]
+        if not v4 and i.get("inet"):
+            v4 = [str(i["inet"]).split("/")[0]]
+        v4 = [ip for ip in v4 if isinstance(ip, str) and ip
+              and not ip.startswith(("127.", "169.254."))]
+        if mac and v4:
+            by_mac.setdefault(mac, v4[0])
+    for mac in macs or []:
+        if mac in by_mac:
+            return by_mac[mac]
+    return None
+
+
 class ProxmoxUnavailable(Exception):
     """The Proxmox poller has no fresh node/guest data to build on."""
 
@@ -44,9 +69,11 @@ def parse_net_macs(config):
     return macs
 
 
-def proxmox_snapshot(nodes, cluster_status, configs):
+def proxmox_snapshot(nodes, cluster_status, configs, interfaces=None):
     """Join the poller's node/guest cache, /cluster/status (node IPs) and
-    per-guest configs (keyed (node, vmid); a non-dict means the read failed)."""
+    per-guest configs (keyed (node, vmid); a non-dict means the read failed).
+    `interfaces`: running guests' raw interface replies, same keys; a missing
+    or unreadable one just leaves that guest's ip None."""
     ips = {e.get("name"): e.get("ip") for e in (cluster_status or [])
            if isinstance(e, dict) and e.get("type") == "node" and e.get("name")}
     out_nodes, guests, failed = [], [], []
@@ -70,12 +97,14 @@ def proxmox_snapshot(nodes, cluster_status, configs):
             if not isinstance(cfg, dict):
                 failed.append({"node": name, "vmid": vmid})
                 continue
+            macs = parse_net_macs(cfg)
             guests.append({
                 "node": name, "vmid": vmid,
                 "name": (g.get("name") or cfg.get("name") or cfg.get("hostname")
                          or f"{kind} {vmid}"),
                 "guest_type": kind,
-                "macs": parse_net_macs(cfg),
+                "macs": macs,
+                "ip": pick_guest_ip(macs, (interfaces or {}).get((name, vmid))),
                 "cores": _int(cfg.get("cores")),
                 "memory_mb": _int(cfg.get("memory")),
                 "onboot": bool(_int(cfg.get("onboot"))),
@@ -94,6 +123,7 @@ def proxmox_observations(snap):
             "type": "guest", "source": "proxmox", "node": g["node"], "vmid": g["vmid"],
             "name": g["name"], "guest_type": g["guest_type"], "macs": list(g["macs"]),
             "cores": g["cores"], "memory_mb": g["memory_mb"], "onboot": g["onboot"],
+            "ip": g.get("ip"),
             "external_key": f"proxmox:guest:{g['node']}:{g['vmid']}",
         })
     for f in snap["failed"]:
@@ -104,13 +134,14 @@ def proxmox_observations(snap):
 
 def fetch_proxmox(poller):
     """One discovery read: the poller's (fresh) node/guest list, node IPs from
-    /cluster/status, and each online guest's config for its MACs. A failed
-    config read is recorded, not raised, so one slow guest can't sink the scan."""
+    /cluster/status, each online guest's config for its MACs, and each running
+    guest's interfaces for its IP (LXC directly, QEMU via the guest agent). A
+    failed read is recorded, not raised, so one slow guest can't sink the scan."""
     nodes = poller.fresh_nodes()
     if nodes is None:
         raise ProxmoxUnavailable()
     cluster = poller.api_get("/api2/json/cluster/status")
-    configs = {}
+    configs, interfaces = {}, {}
     for n in nodes:
         name = n.get("name")
         if not name or n.get("status") != "online" or n.get("guests_ok", True) is False:
@@ -124,4 +155,12 @@ def fetch_proxmox(poller):
                 configs[(name, vmid)] = poller.api_get(path)
             except Exception:
                 configs[(name, vmid)] = None
-    return proxmox_snapshot(nodes, cluster, configs)
+            if g.get("status") != "running":
+                continue
+            base = f"/api2/json/nodes/{urllib.parse.quote(name, safe='')}/{kind}/{vmid}"
+            try:
+                interfaces[(name, vmid)] = poller.api_get(
+                    base + ("/interfaces" if kind == "lxc" else "/agent/network-get-interfaces"))
+            except Exception:
+                pass   # no guest agent (HTTP 500) or unreachable: ARP may still know it
+    return proxmox_snapshot(nodes, cluster, configs, interfaces)
