@@ -292,6 +292,52 @@ def _h_get_status(host_manager, settings, incident_log, inventory_db) -> tuple:
     return 200, build_api_payload(host_manager, settings, incident_log, inventory_db)
 
 
+_HEARTBEAT_CACHE = {}
+_HEARTBEAT_TTL_SECONDS = 60
+_HEARTBEAT_CACHE_MAX = 32
+
+
+def _clamp_int(raw, default, lo, hi):
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def _h_get_heartbeat(history_db, host_manager, query="", now=None) -> tuple:
+    """24h-style per-host heartbeat for the Home page. Never errors: missing pieces degrade
+    to all-None buckets. Cached for 60s because it scans a day of pings."""
+    params = parse_qs(query or "")
+    hours = _clamp_int((params.get("hours") or [None])[0], 24, 1, 72)
+    n = _clamp_int((params.get("buckets") or [None])[0], 48, 1, 96)
+    now = time.time() if now is None else float(now)
+    ips = sorted(h.ip for h in host_manager.list_hosts()) if host_manager else []
+    key = (hours, n, tuple(ips))
+    hit = _HEARTBEAT_CACHE.get(key)
+    if hit and hit[0] > now:
+        return 200, hit[1]
+    bucket_seconds = max(1, hours * 3600 // n)
+    end = (int(now) // bucket_seconds + 1) * bucket_seconds
+    start = end - bucket_seconds * n
+    data = {}
+    if history_db is not None:
+        try:
+            data = history_db.heartbeat(start, bucket_seconds, n)
+        except Exception as e:
+            logging.warning(f"heartbeat query failed: {e}")
+    payload = {
+        "generated": datetime.fromtimestamp(now).isoformat(),
+        "bucket_seconds": bucket_seconds,
+        "start": start,
+        "hosts": {ip: data.get(ip, [None] * n) for ip in ips},
+    }
+    if len(_HEARTBEAT_CACHE) >= _HEARTBEAT_CACHE_MAX:
+        _HEARTBEAT_CACHE.clear()
+    _HEARTBEAT_CACHE[key] = (now + _HEARTBEAT_TTL_SECONDS, payload)
+    return 200, payload
+
+
 NAS_BACKUP_STATUS_PATH = "/mnt/nas-shared/netwatch/backup/_status.json"
 NAS_INVENTORY_STATUS_PATH = "/mnt/nas-shared/Homelab Inventory/_status.json"
 

@@ -211,6 +211,26 @@ class HistoryDB:
             return None
         return (bool(row[0]), row[1], row[2])
 
+    def heartbeat(self, start_ts, bucket_seconds, n_buckets):
+        """Per-host uptime state per time bucket over [start_ts, start_ts + n * bucket).
+        {host_ip: [state, ...]} where state is 1 all up, 0 all down, 2 mixed, None no pings.
+        Only hosts with at least one ping in the window appear."""
+        start_ts, bucket_seconds, n_buckets = int(start_ts), int(bucket_seconds), int(n_buckets)
+        end_ts = start_ts + bucket_seconds * n_buckets
+        with self.lock:
+            self._flush_pings_locked()
+            rows = self.conn.execute(
+                "SELECT host_ip, (timestamp - ?) / ? AS b, COUNT(*), SUM(is_up) "
+                "FROM pings WHERE timestamp >= ? AND timestamp < ? GROUP BY host_ip, b",
+                (start_ts, bucket_seconds, start_ts, end_ts)).fetchall()
+        out = {}
+        for ip, b, total, up in rows:
+            if not 0 <= b < n_buckets:
+                continue
+            arr = out.setdefault(ip, [None] * n_buckets)
+            arr[int(b)] = 1 if up == total else (0 if up == 0 else 2)
+        return out
+
     def history_series(self, host_ip, hours=24, target_points=180):
         """Bucketed latency/uptime series for charting, oldest first.
 
