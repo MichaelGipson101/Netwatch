@@ -88,3 +88,152 @@ def test_heartbeat_cache_is_bounded(hdb):
     for buckets in range(1, 60):
         H._h_get_heartbeat(hdb, hm, f"buckets={buckets}", now=NOW)
     assert len(H._HEARTBEAT_CACHE) <= 32
+
+
+import json
+import threading
+import urllib.error
+import urllib.request
+from datetime import datetime
+from http.server import ThreadingHTTPServer
+
+from netwatch.attention import AlertLedger, IPDriftMonitor
+from netwatch.auth import AuthManager
+from netwatch.hosts import HostState
+from netwatch.server import make_handler
+
+
+class _Inv:
+    def __init__(self, records=(), conns=(), pending=0):
+        self._r, self._c = list(records), list(conns)
+        self.suggestions = type("S", (), {"count_pending": staticmethod(lambda: pending)})()
+
+    def list_all(self):
+        return self._r
+
+    def list_all_connections(self):
+        return self._c
+
+
+def _host(name, ip, up, mac=""):
+    h = HostState(name=name, ip=ip, group="g", interval=30, specs={"mac": mac} if mac else {})
+    h.last_checked = datetime.now()
+    h.history.append(up)
+    return h
+
+
+class _HMgr:
+    def __init__(self, hosts):
+        self._h = hosts
+
+    def list_hosts(self):
+        return self._h
+
+
+def test_attention_handler_groups_a_topology_outage_end_to_end():
+    hm = _HMgr([_host("sw", "10.0.0.2", False, "aa:aa:aa:aa:aa:01"),
+                _host("ap", "10.0.0.3", False, "aa:aa:aa:aa:aa:02"),
+                _host("pi", "10.0.0.4", True)])
+    inv = _Inv(records=[{"id": 1, "mac": "aa:aa:aa:aa:aa:01", "ip": "", "system": "sw"},
+                        {"id": 2, "mac": "aa:aa:aa:aa:aa:02", "ip": "", "system": "ap"}],
+               conns=[{"id": 1, "from_device_id": 2, "to_device_id": 1, "connection_type": "ethernet"}],
+               pending=2)
+    status, p = H._h_get_attention(hm, inv, None, None, now=1_000_000)
+    assert status == 200
+    kinds = [i["kind"] for i in p["items"]]
+    assert kinds == ["host_down", "connection_suggestions"]
+    assert p["items"][0]["affected"] == ["10.0.0.3"]
+    assert p["verdict"]["headline"] == "sw is down. 1 host unreachable."
+
+
+def test_attention_handler_includes_ledger_and_drift(hdb):
+    led = AlertLedger(hdb)
+    led.fire("pool_health_tank", "nas", "critical", 'Pool "tank" is DEGRADED', "TrueNAS", now=999_000)
+    mon = IPDriftMonitor(_HMgr([_host("vf2", "10.0.0.7", True, "aa:bb:cc:dd:ee:01")]), _Inv(),
+                         lambda: {"aa:bb:cc:dd:ee:01": {"10.0.0.8"}})
+    mon.refresh()
+    _, p = H._h_get_attention(_HMgr([_host("vf2", "10.0.0.7", True, "aa:bb:cc:dd:ee:01")]),
+                              _Inv(), led, mon, now=1_000_000)
+    assert {i["kind"] for i in p["items"]} == {"poller_condition", "ip_drift"}
+
+
+def test_attention_handler_never_errors_on_missing_pieces():
+    status, p = H._h_get_attention(None, None, None, None)
+    assert status == 200 and p["items"] == []
+    assert p["verdict"]["headline"] == "No hosts are being monitored yet."
+
+
+def test_attention_handler_survives_inventory_and_ledger_failures():
+    class BoomInv:
+        suggestions = None
+
+        def list_all(self):
+            raise RuntimeError("db")
+
+        def list_all_connections(self):
+            raise RuntimeError("db")
+
+    class BoomLedger:
+        def active(self):
+            raise RuntimeError("db")
+
+    status, p = H._h_get_attention(_HMgr([_host("a", "10.0.0.1", False)]), BoomInv(), BoomLedger(), None)
+    assert status == 200 and [i["kind"] for i in p["items"]] == ["host_down"]
+
+
+# ── HTTP level: auth on the new routes ──────────────────────────────────────
+
+def _server(auth, **kw):
+    handler = make_handler(None, {}, "/dev/null", auth_manager=auth, **kw)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=server.handle_request)
+    t.start()
+    return server, server.server_address[1], t
+
+
+def _auth(tmp_path):
+    auth = AuthManager(str(tmp_path / "auth.json"))
+    auth.create_user("bob", "password123", admin=False)
+    return auth
+
+
+@pytest.mark.parametrize("path", ["/api/attention", "/api/heartbeat", "/api/heartbeat?hours=6"])
+def test_new_get_routes_require_a_session(tmp_path, path):
+    server, port, t = _server(_auth(tmp_path))
+    try:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}{path}")
+        assert e.value.code == 401
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_attention_route_serves_json_to_a_logged_in_user(tmp_path):
+    auth = _auth(tmp_path)
+    cookie = auth.make_session_cookie("bob")
+    server, port, t = _server(auth)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/attention",
+                                     headers={"Cookie": f"nw_session={cookie}"})
+        with urllib.request.urlopen(req) as r:
+            body = json.loads(r.read())
+        assert r.status == 200 and body["verdict"]["level"] == "ok" and body["items"] == []
+    finally:
+        server.server_close()
+        t.join()
+
+
+def test_heartbeat_route_serves_json_and_passes_the_query(tmp_path, hdb):
+    auth = _auth(tmp_path)
+    cookie = auth.make_session_cookie("bob")
+    server, port, t = _server(auth, history_db=hdb)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/heartbeat?hours=6&buckets=12",
+                                     headers={"Cookie": f"nw_session={cookie}"})
+        with urllib.request.urlopen(req) as r:
+            body = json.loads(r.read())
+        assert body["bucket_seconds"] == 1800 and body["hosts"] == {}
+    finally:
+        server.server_close()
+        t.join()

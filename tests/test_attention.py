@@ -500,3 +500,52 @@ def test_read_neighbors_returns_empty_when_ip_is_unavailable(monkeypatch):
         raise FileNotFoundError("ip")
     monkeypatch.setattr(subprocess, "run", boom)
     assert network.read_neighbors() == {}
+
+
+from netwatch.attention import IPDriftMonitor
+
+
+class _HostMgr:
+    def __init__(self, hosts):
+        self._hosts = hosts
+
+    def list_hosts(self):
+        return self._hosts
+
+
+class _Inv:
+    def __init__(self, records=(), conns=(), pending=0):
+        self._r, self._c = list(records), list(conns)
+        self.suggestions = type("S", (), {"count_pending": staticmethod(lambda: pending)})()
+
+    def list_all(self):
+        return self._r
+
+    def list_all_connections(self):
+        return self._c
+
+
+def _hs(name, ip, mac):
+    h = HostState(name=name, ip=ip, group="g", interval=30, specs={"mac": mac})
+    h.last_checked = datetime.now()
+    h.history.append(True)
+    return h
+
+
+def test_drift_monitor_refresh_and_get_return_a_copy():
+    mon = IPDriftMonitor(_HostMgr([_hs("vf2", "10.0.0.7", MAC1)]), _Inv(), lambda: {MAC1: {"10.0.0.8"}})
+    assert mon.get() == []                          # nothing before the first pass
+    d = mon.refresh()
+    assert d[0]["seen_ip"] == "10.0.0.8"
+    got = mon.get()
+    got.clear()
+    assert len(mon.get()) == 1                      # callers cannot mutate the stored list
+
+
+def test_drift_monitor_survives_a_failing_reader():
+    def boom():
+        raise OSError("no ip")
+    mon = IPDriftMonitor(_HostMgr([_hs("a", "10.0.0.7", MAC1)]), None, boom)
+    with pytest.raises(OSError):
+        mon.refresh()                               # refresh itself propagates...
+    assert mon.get() == []                          # ...and leaves the previous result alone

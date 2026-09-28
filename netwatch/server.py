@@ -10,6 +10,7 @@ import json
 import logging
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 from netwatch.auth import parse_cookies
 from netwatch.pages import resolve as _resolve_page
@@ -36,6 +37,7 @@ from netwatch.http_handlers import (
     _h_post_suggestion_accept, _h_post_suggestions_accept_all,
     _h_get_unmonitored_guests, _h_post_monitor_guests,
     _h_get_discovery_status, _h_post_discovery_scan,
+    _h_get_attention, _h_get_heartbeat,
 )
 
 
@@ -80,7 +82,7 @@ _STATIC_FILES = {
 }
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None, pages=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None, pages=None, ledger=None, drift_monitor=None, explainer=None):
     static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
     class Handler(BaseHTTPRequestHandler):
@@ -310,6 +312,14 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             if self.path == "/api/inventory":
                 if not self._require_auth(): return
                 self._send_json(*_h_get_inventory(inventory_db, host_manager))
+                return
+            if self.path == "/api/attention":
+                if not self._require_auth(): return
+                self._send_json(*_h_get_attention(host_manager, inventory_db, ledger, drift_monitor))
+                return
+            if self.path == "/api/heartbeat" or self.path.startswith("/api/heartbeat?"):
+                if not self._require_auth(): return
+                self._send_json(*_h_get_heartbeat(history_db, host_manager, urlparse(self.path).query))
                 return
             if self.path == "/api/topology":
                 if not self._require_auth(): return
@@ -746,8 +756,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None, pages=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db, discovery_runner=discovery_runner, pages=pages))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None, pages=None, ledger=None, drift_monitor=None, explainer=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db, discovery_runner=discovery_runner, pages=pages, ledger=ledger, drift_monitor=drift_monitor, explainer=explainer))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():

@@ -373,3 +373,39 @@ def check_ip_drift(facts, records, neighbors):
         out.append({"mac": mac, "name": f["name"], "monitored_ip": f["ip"],
                     "seen_ip": sorted(seen)[0]})
     return out
+
+
+class IPDriftMonitor:
+    """Periodically compares each monitored host's MAC against the Pi's neighbor table and
+    keeps the latest drift list for the attention endpoint (which never shells out itself)."""
+
+    INTERVAL_SECONDS = 300
+
+    def __init__(self, host_manager, inventory_db, read_neighbors):
+        self._hm = host_manager
+        self._inv = inventory_db
+        self._read = read_neighbors
+        self._lock = threading.Lock()
+        self._drift = []
+
+    def refresh(self):
+        facts = host_facts(self._hm.list_hosts()) if self._hm else []
+        records = self._inv.list_all() if self._inv else []
+        drift = check_ip_drift(facts, records, self._read())
+        with self._lock:
+            self._drift = drift
+        return list(drift)
+
+    def get(self):
+        with self._lock:
+            return list(self._drift)
+
+    def start(self, stop_event):
+        def _loop():
+            while not stop_event.is_set():
+                try:
+                    self.refresh()
+                except Exception as e:
+                    logging.warning(f"IPDriftMonitor: pass failed: {e}")
+                stop_event.wait(self.INTERVAL_SECONDS)
+        threading.Thread(target=_loop, daemon=True, name="ip-drift").start()

@@ -13,6 +13,7 @@ import yaml
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
+from netwatch.attention import build_attention, host_facts
 from netwatch.storage import InventoryDB
 from netwatch.network import (
     _detect_mac_for_ip, send_wol_packet, read_pi_health,
@@ -336,6 +337,35 @@ def _h_get_heartbeat(history_db, host_manager, query="", now=None) -> tuple:
         _HEARTBEAT_CACHE.clear()
     _HEARTBEAT_CACHE[key] = (now + _HEARTBEAT_TTL_SECONDS, payload)
     return 200, payload
+
+
+def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None, now=None) -> tuple:
+    """The verdict + needs-attention list for Home. Every input is optional and every
+    failure degrades to fewer items, never an error."""
+    facts = host_facts(host_manager.list_hosts()) if host_manager else []
+    records, parents = [], {}
+    if inventory_db is not None:
+        try:
+            records = inventory_db.list_all()
+            parents, _ = compute_primary_parents(records, inventory_db.list_all_connections())
+        except Exception as e:
+            logging.warning(f"attention: inventory read failed: {e}")
+            records, parents = [], {}
+    rows = []
+    if ledger is not None:
+        try:
+            rows = ledger.active()
+        except Exception as e:
+            logging.warning(f"attention: ledger read failed: {e}")
+    pending = 0
+    suggestions = getattr(inventory_db, "suggestions", None)
+    if suggestions is not None:
+        try:
+            pending = suggestions.count_pending()
+        except Exception as e:
+            logging.warning(f"attention: suggestion count failed: {e}")
+    drift = drift_monitor.get() if drift_monitor is not None else []
+    return 200, build_attention(facts, records, parents, rows, pending, drift, now=now)
 
 
 NAS_BACKUP_STATUS_PATH = "/mnt/nas-shared/netwatch/backup/_status.json"
