@@ -420,6 +420,47 @@ def test_subview_event_fires_only_on_a_real_change_but_hooks_always_run():
     assert out == "topology,connections|t,t"
 
 
+@needs_node
+def test_subview_is_restored_from_the_path_for_back_forward_navigation():
+    """popstate re-selects the sub-view from location.pathname: known segment wins, an unknown
+    or missing one falls back to the page's first sub-view."""
+    out = run("""
+      document.querySelectorAll = () => [];
+      document.body.dataset = {page:'lab', subviews:'topology,connections,inventory'};
+      global.location = {pathname:'/lab/inventory', search:''};
+      const known = _subviewFromPath();
+      global.location.pathname = '/lab/bogus'; const bad = _subviewFromPath();
+      global.location.pathname = '/lab'; const bare = _subviewFromPath();
+      console.log([known, bad, bare].join(','));
+    """)
+    assert out == "inventory,topology,topology"
+
+
+@needs_node
+def test_inventory_record_card_opens_in_place_on_lab_and_hands_off_from_monitor():
+    drawer = os.path.join(STATIC, "drawer.js")
+    src = js_part(drawer, "function nwOpenInventoryRecord")
+    out = subprocess.run(["node", "-e", """
+      const opened = []; global.location = {href: ''};
+      %s
+      nwOpenInventoryRecord(7);                              // Monitor: no openInventoryDrawer
+      const monitor = location.href;
+      global.openInventoryDrawer = id => opened.push(id);
+      nwOpenInventoryRecord(9);                              // Lab: opens in place
+      console.log(monitor + '|' + opened.join(','));
+    """ % src], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "/lab/inventory?inv=7|9"
+
+
+@needs_node
+def test_inventory_param_accepts_only_numeric_ids():
+    inv = os.path.join(STATIC, "inventory.js")
+    out = run_js([(inv, "function nwInventoryParam")],
+                 "['?inv=12', '?inv=', '?inv=1x', '?inv=%3Cimg%3E', '', '?x=1&inv=5'].map(nwInventoryParam)")
+    assert out == ["12", None, None, None, None, "5"]
+
+
 def test_mira_send_locks_input_before_hydrating_and_always_unlocks():
     """Source-order check only (ai-panel.js has no node harness): the streaming lock must be
     taken before the hydrate await, the send must bail if the conversation was cleared during

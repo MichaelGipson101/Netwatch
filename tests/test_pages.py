@@ -14,27 +14,36 @@ from netwatch.server import _STATIC_FILES
 # ids looked up by literal that are created by JS at runtime, not present in the HTML
 DYNAMIC_IDS = {"nw-toasts"}
 DYNAMIC_ID_PREFIXES = ("ov-card-",)
-# ids intentionally looked up on pages that may not have them; every use site is null-guarded
-# (add an entry here only together with the guard, and say which task added it)
+# ids intentionally looked up, per script, on pages that may not have them; every use site is
+# null-guarded (add an entry here only together with the guard, and only for the script that
+# actually contains the guarded lookup, so a stray unguarded lookup elsewhere still fails)
 GUARDED_IDS = {
-    # Task 7 additions, each with the guard at its use site:
-    "save-status",          # utils.js setStatus(): `if(!el) return`
-    "drawer",               # utils.js focus trap: `drawer && drawer.classList...`
-    "ov-ql-count",          # quicklinks.js _renderCount(): `if (!el) return` (Links page has no Home card)
-    "ql-page-grid",         # quicklinks.js _renderCards() `if (!el) return`, and the boot hook checks it first
-    "ql-page-edit-btn",     # auth.js updateAuthUI(): `if (qlEdit)`
+    "utils.js": {
+        "save-status",          # setStatus(): `if(!el) return`
+        "drawer",               # focus trap: `drawer && drawer.classList...`
+    },
+    "quicklinks.js": {
+        "ov-ql-count",          # _renderCount(): `if (!el) return` (Links page has no Home card)
+        "ql-page-grid",         # _renderCards() `if (!el) return`, and the boot hook checks it first
+    },
+    "auth.js": {
+        "ql-page-edit-btn",     # updateAuthUI(): `if (qlEdit)`
+    },
     # connections.js is loaded by Home for the port-map helpers only; its Connections-tab
     # renderers all bail out when their container is absent:
-    "cx-table",             # cxApplyTableOpen / renderCxTable / cxRenderTableRows: `if(el)` / `if(!el) return`
-    "cx-table-toggle",      # cxApplyTableOpen: `if(btn)`
-    "cx-table-count",       # renderCxTable: `if(countEl)`
-    "cx-status",            # renderCxStatus: `if(!el) return`
-    "cx-suggestions",       # renderCxSuggestions: `if(!el) return`
-    "cx-sugg-count",        # renderCxSuggestions: `if(countEl)`
-    "cx-ports",             # renderCxPortMaps: `if(!panel || !el) return`
-    "cx-ports-panel",       # renderCxPortMaps: `if(!panel || !el) return`
-    "cx-quick",             # mountConnectionsTab (only runs on the Lab subview hook, and guarded) / cxQuickAddAt: `if(!box) return`
-    "view-connections",     # cxHighlight*/cxQuickAddAt: `view && ...`
+    "connections.js": {
+        "cx-table",             # cxApplyTableOpen / renderCxTable / cxRenderTableRows: `if(el)` / `if(!el) return`
+        "cx-table-toggle",      # cxApplyTableOpen: `if(btn)`
+        "cx-table-count",       # renderCxTable: `if(countEl)`
+        "cx-status",            # renderCxStatus: `if(!el) return`
+        "cx-suggestions",       # renderCxSuggestions: `if(!el) return`
+        "cx-sugg-count",        # renderCxSuggestions: `if(countEl)`
+        "cx-ports",             # renderCxPortMaps: `if(!panel || !el) return`
+        "cx-ports-panel",       # renderCxPortMaps: `if(!panel || !el) return`
+        "cx-quick",             # mountConnectionsTab (only runs on the Lab subview hook, and guarded) / cxQuickAddAt: `if(!box) return`
+        "view-connections",     # cxHighlight*/cxQuickAddAt: `view && ...`
+        "drawer",               # openInventoryDrawer hand-off: `typeof ... && document.getElementById('drawer')`
+    },
 }
 
 # Names that existed in the original static/core.js and were deliberately removed
@@ -94,11 +103,20 @@ def test_literal_element_ids_exist(page):
     missing = {}
     for script, src in page.js.items():
         for i in lit_ids(src):
-            if (i in present or i in DYNAMIC_IDS or i in GUARDED_IDS
+            if (i in present or i in DYNAMIC_IDS or i in GUARDED_IDS.get(script, ())
                     or i.startswith(DYNAMIC_ID_PREFIXES)):
                 continue
             missing.setdefault(script, []).append(i)
     assert not missing, f"page {page.name}: scripts look up ids not on the page: {missing}"
+
+
+def test_guarded_id_entries_are_all_live():
+    """A GUARDED_IDS entry that no longer matches a lookup in its script is stale: delete it."""
+    stale = []
+    for script, ids in GUARDED_IDS.items():
+        used = lit_ids(read(os.path.join(STATIC, script)))
+        stale += [f"{script}:{i}" for i in sorted(ids) if i not in used]
+    assert not stale, f"stale GUARDED_IDS entries: {stale}"
 
 
 @pytest.mark.parametrize("page", PAGES, ids=IDS)

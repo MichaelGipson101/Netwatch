@@ -616,3 +616,41 @@ nwOnReady(function(){
     if(data.hosts.some(h => h.ip === ip)) openDrawer(ip);   // unknown IPs: silently ignored
   });
 });
+
+// The drawer's "Inventory record" card. Lives here (not inventory.js) because the Monitor page
+// shows the host drawer but does not load inventory.js.
+async function fetchHostInventoryLink(h){
+  const slot = document.getElementById('d-inv-section');
+  if(!slot) return;
+  const mac = h && h.specs && h.specs.mac;
+  if(!mac){ slot.innerHTML = ''; return; }
+  try {
+    const res = await fetch('/api/inventory');
+    if(!res.ok){ slot.innerHTML = ''; return; }
+    const data = await res.json();
+    // Match by MAC normalised
+    const target = (mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+    const rec = (data.items || []).find(i => {
+      const m = (i.mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+      return m && m === target;
+    });
+    if(!rec){ slot.innerHTML = ''; return; }
+    const sysSafe = escapeHtml(rec.system || '');
+    const catSafe = rec.category ? '<span class="inv-cat-tag">' + escapeHtml(rec.category) + '</span> ' : '';
+    const roleSafe = rec.role ? '<div style="font-size:12px;color:var(--muted);margin-top:3px">' + escapeHtml(rec.role) + '</div>' : '';
+    slot.innerHTML = '<div class="d-section"><div class="d-section-hdr"><span>Inventory record</span></div>'
+      + '<div class="inv-link-host-card" onclick="nwOpenInventoryRecord(' + rec.id + ')">'
+      + '<div><div style="font-weight:500">' + sysSafe + '</div>'
+      + '<div style="margin-top:3px">' + catSafe + '</div>'
+      + roleSafe + '</div>'
+      + '<span class="d-link-arrow" style="color:var(--hint);font-family:DM Mono,monospace">→</span>'
+      + '</div></div>';
+  } catch(e){ slot.innerHTML = ''; }
+}
+
+// The card opens the record in place on Lab (inventory.js is loaded); on Monitor it hands off to
+// the Lab inventory, which opens the record from ?inv=.
+function nwOpenInventoryRecord(id){
+  if(typeof openInventoryDrawer === 'function'){ openInventoryDrawer(id); return; }
+  location.href = '/lab/inventory?inv=' + encodeURIComponent(id);
+}

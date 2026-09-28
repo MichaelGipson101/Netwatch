@@ -1050,35 +1050,6 @@ async function deleteConnection(connId){
   }
 }
 
-async function fetchHostInventoryLink(h){
-  const slot = document.getElementById('d-inv-section');
-  if(!slot) return;
-  const mac = h && h.specs && h.specs.mac;
-  if(!mac){ slot.innerHTML = ''; return; }
-  try {
-    const res = await fetch('/api/inventory');
-    if(!res.ok){ slot.innerHTML = ''; return; }
-    const data = await res.json();
-    // Match by MAC normalised
-    const target = (mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
-    const rec = (data.items || []).find(i => {
-      const m = (i.mac || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
-      return m && m === target;
-    });
-    if(!rec){ slot.innerHTML = ''; return; }
-    const sysSafe = escapeHtml(rec.system || '');
-    const catSafe = rec.category ? '<span class="inv-cat-tag">' + escapeHtml(rec.category) + '</span> ' : '';
-    const roleSafe = rec.role ? '<div style="font-size:12px;color:var(--muted);margin-top:3px">' + escapeHtml(rec.role) + '</div>' : '';
-    slot.innerHTML = '<div class="d-section"><div class="d-section-hdr"><span>Inventory record</span></div>'
-      + '<div class="inv-link-host-card" onclick="openInventoryDrawer(' + rec.id + ')">'
-      + '<div><div style="font-weight:500">' + sysSafe + '</div>'
-      + '<div style="margin-top:3px">' + catSafe + '</div>'
-      + roleSafe + '</div>'
-      + '<span class="d-link-arrow" style="color:var(--hint);font-family:DM Mono,monospace">→</span>'
-      + '</div></div>';
-  } catch(e){ slot.innerHTML = ''; }
-}
-
 function openHostDrawerByIp(ip){
   // openDrawer takes an IP and looks up the host in lastData itself
   closeDrawer();
@@ -1272,3 +1243,19 @@ function showImportResult(cls, msg){
 
 
 nwOnSubview('inventory', function(){ if(typeof fetchInventory === 'function') fetchInventory(); });
+
+// ?inv=<id> hand-off from the Monitor host drawer's "Inventory record" card (see
+// nwOpenInventoryRecord in drawer.js). Consumed once: the param is stripped before acting.
+function nwInventoryParam(search){
+  const v = new URLSearchParams(search || '').get('inv');
+  return v && /^\d+$/.test(v) ? v : null;
+}
+nwOnReady(function(){
+  const id = nwInventoryParam(location.search);
+  if(!id) return;
+  const q = new URLSearchParams(location.search);
+  q.delete('inv');
+  const rest = q.toString();
+  history.replaceState(history.state, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  openInventoryDrawer(id);
+});

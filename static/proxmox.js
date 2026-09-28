@@ -26,7 +26,8 @@
   };
 
   window.initServersTab = function () {
-    var m = location.pathname.match(/^\/infra\/(proxmox|truenas)\/?$/);
+    // window.__nwPath lets the file:// boot smoke tests simulate a URL path (same hook as shell.js)
+    var m = (window.__nwPath || location.pathname).match(/^\/infra\/(proxmox|truenas)\/?$/);
     var saved = m ? m[1] : 'proxmox';
     window.switchServersPanel(saved, false);
   };

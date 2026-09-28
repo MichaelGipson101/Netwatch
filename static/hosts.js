@@ -82,9 +82,12 @@ function renderMonitorSummary(data){
   if(!el) return;
   const s = nwComputeSummary(data);
   el.className = 'mon-summary mon-summary-' + (s.down > 0 ? 'down' : (s.degraded > 0 ? 'warn' : 'ok'));
-  el.textContent = s.up + '/' + s.total + ' up'
+  const text = s.up + '/' + s.total + ' up'
     + (s.avgLat !== null ? ' · ' + s.avgLat.toFixed(1) + ' ms' : '')
     + (s.avgUpt !== null ? ' · ' + s.avgUpt.toFixed(1) + '%' : '');
+  // Only touch the node when the text changed: it is aria-live, so a rewrite on every poll
+  // would make screen readers re-announce an unchanged summary every few seconds.
+  if(el.textContent !== text) el.textContent = text;
 }
 
 nwStatus.subscribe(function(data){
