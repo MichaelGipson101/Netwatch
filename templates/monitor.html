@@ -1,5 +1,6 @@
   <div class="view" id="view-hosts">
     <div class="hosts-toolbar">
+      <span id="mon-summary" class="mon-summary" aria-live="polite"></span>
       <input type="text" id="hosts-filter" class="hosts-filter-input" placeholder="Filter hosts…" oninput="applyHostFilter()" autocomplete="off" aria-label="Filter hosts">
       <div style="display:flex;gap:6px">
         <button class="hosts-status-chip active" data-status="all"   onclick="setHostChip(this)">All</button>

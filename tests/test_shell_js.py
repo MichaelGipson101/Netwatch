@@ -196,3 +196,34 @@ def test_clicking_the_active_subview_never_pushes_a_duplicate_entry():
       console.log(log.join(','));
     """)
     assert out == "replace:/lab/topology,push:/lab/connections"
+
+
+@needs_node
+def test_compute_summary_matches_the_old_kpi_math_and_survives_empty_data():
+    out = run("""
+      const s = nwComputeSummary({hosts:[
+        {is_up:true, status:'UP', latency_ms:2, always_on:true, uptime_pct:100},
+        {is_up:false, status:'DOWN', latency_ms:null, always_on:true, uptime_pct:80},
+        {is_up:false, status:'IDLE', latency_ms:null, always_on:false, uptime_pct:null},
+        {is_up:true, status:'DEGRADED', latency_ms:4, always_on:true, uptime_pct:90},
+        {is_up:false, status:'MAINTENANCE', latency_ms:null, always_on:true, uptime_pct:null}]});
+      const e = nwComputeSummary({hosts:[]});
+      const n = nwComputeSummary({});
+      console.log(JSON.stringify([s.up, s.total, s.down, s.degraded, s.maintenance,
+        s.avgLat, s.avgUpt, e.total, e.avgLat, e.avgUpt, n.total]));
+    """)
+    assert out == "[2,5,1,1,1,3,90,0,null,null,0]"
+
+
+@needs_node
+def test_edit_hosts_opens_in_place_on_monitor_and_hops_there_elsewhere():
+    out = run("""
+      global.location = {pathname:'/lab', search:'', href:''};
+      nwEditHosts();                                   // no openEditor on this page
+      const hopped = location.href;
+      let opened = 0; global.openEditor = () => { opened++; };
+      location.href = '';
+      nwEditHosts();
+      console.log(hopped + '|' + opened + '|' + location.href);
+    """)
+    assert out == "/monitor?edit=1|1|"

@@ -7,11 +7,6 @@ from netwatch.pages import PAGES as PAGE_TABLE
 
 THEMES = ["dark", "light"]
 
-# Temporary: cross-page runtime problems (KPI summary, power card, Home topology preview,
-# missing-id guards) are fixed in Task 7; remove this flag and the xfail marks in Task 7 Step 6.
-# Per-test on purpose (never a file-wide pytestmark).
-PENDING_TASK_7 = True
-
 
 def _cases():
     """(page, sub-view) for every page; a page without sub-views yields one case with ''."""
@@ -26,7 +21,6 @@ def _pathname(page, sub):
 
 
 @needs_chromium
-@pytest.mark.xfail(PENDING_TASK_7, reason="Task 7", strict=False)
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("page,sub", list(_cases()))
 def test_page_boots_without_errors(page, sub, theme, tmp_path):

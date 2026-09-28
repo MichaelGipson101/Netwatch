@@ -203,8 +203,9 @@ function mountConnectionsTab(){
   // mount isn't misread as a login change (mountConnectionsTab already does
   // its own initial cxRefreshAll() below).
   if(typeof _authState !== 'undefined') _cxState.lastLoggedIn = _authState.logged_in;
-  if(!_cxState.quickMounted){
-    _cxQuickAdd = renderQuickAdd(document.getElementById('cx-quick'), {onAdded: () => connectionsChanged()});
+  const quickBox = document.getElementById('cx-quick');
+  if(!_cxState.quickMounted && quickBox){
+    _cxQuickAdd = renderQuickAdd(quickBox, {onAdded: () => connectionsChanged()});
     _cxState.quickMounted = true;
   }
   cxRender();       // paint what we already have...
@@ -380,14 +381,21 @@ function cxFindConnection(id){
   return ((_cxState.connections && _cxState.connections.items) || []).find(c => c.id === id) || null;
 }
 
+// Device buttons in the connections table. The inventory drawer lives on the Lab page (inventory.js);
+// a page that loads connections.js without it (Home) sends the user to the Lab inventory instead.
+function cxOpenDevice(id){
+  if(typeof openInventoryDrawer === 'function' && document.getElementById('drawer')) openInventoryDrawer(id);
+  else location.href = '/lab/inventory';
+}
+
 function cxRowHtml(c, now, isDrift){
   const src = c.source || 'manual';
   return '<tr data-conn="' + c.id + '"' + (isDrift ? ' class="cx-row-drift"' : '') + '>'
     + '<td><div class="cx-pair">'
-      + '<button type="button" class="cx-dev" onclick="openInventoryDrawer(' + c.child_id + ')">'
+      + '<button type="button" class="cx-dev" onclick="cxOpenDevice(' + c.child_id + ')">'
         + deviceIcon(c.child_type || 'host', 16) + '<span>' + escapeHtml(c.child_name) + '</span></button>'
       + '<span class="cx-arrow" aria-hidden="true">→</span>'
-      + '<button type="button" class="cx-dev" onclick="openInventoryDrawer(' + c.parent_id + ')">'
+      + '<button type="button" class="cx-dev" onclick="cxOpenDevice(' + c.parent_id + ')">'
         + deviceIcon(c.parent_type || 'host', 16) + '<span>' + escapeHtml(c.parent_name) + '</span></button>'
       + (isDrift ? '<span class="cx-drift-flag" title="A suggestion disagrees with this connection">⚠</span>' : '')
     + '</div></td>'

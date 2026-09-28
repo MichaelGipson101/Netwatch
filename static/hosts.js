@@ -1,9 +1,5 @@
 // hosts.js — extracted from core.js (Netwatch 4.0 page split). Code moved verbatim.
 
-const LAT_SPARK_SAMPLES = 8;
-
-let _latHistory = [];
-
 function renderHost(h){
   const isIdle = h.status === 'IDLE';
   const isDegraded = h.status === 'DEGRADED';
@@ -80,63 +76,19 @@ function renderGroups(data){
   }).join('');
 }
 
-function renderSummary(data){
-  const up = data.hosts.filter(h => h.is_up).length;
-  const total = data.hosts.length;
-  const down = data.hosts.filter(h => !h.is_up && h.status === 'DOWN').length;
-  const degraded = data.hosts.filter(h => h.status === 'DEGRADED').length;
-  const maintenance = data.hosts.filter(h => h.status === 'MAINTENANCE').length;
-  const lats = data.hosts.filter(h => h.latency_ms !== null).map(h => h.latency_ms);
-  const avgLat = lats.length ? (lats.reduce((a,b)=>a+b,0)/lats.length) : null;
-  const alwaysOnUpts = data.hosts.filter(h => h.always_on !== false && h.uptime_pct !== null).map(h => h.uptime_pct);
-  const avgUpt = alwaysOnUpts.length ? (alwaysOnUpts.reduce((a,b)=>a+b,0)/alwaysOnUpts.length) : null;
-  const upEl = document.getElementById('s-up');
-  upEl.innerHTML = up + ' <sup>/ ' + total + '</sup>';
-  upEl.style.color = down > 0 ? 'var(--red)' : (degraded > 0 ? 'var(--amber)' : 'var(--green)');
-  const upCard = document.getElementById('scard-up');
-  upCard.classList.toggle('scard-health-ok',  down === 0 && degraded === 0 && total > 0);
-  upCard.classList.toggle('scard-health-warn', down > 0 || degraded > 0);
-  // Mirror to overlay
-  const ovUp = document.getElementById('ov-up');
-  const ovTot = document.getElementById('ov-tot');
-  if(ovUp){
-    ovUp.textContent = up;
-    ovUp.style.color = down > 0 ? 'var(--red)' : (degraded > 0 ? 'var(--amber)' : 'var(--green)');
-  }
-  if(ovTot) ovTot.textContent = total;
-  let subTxt;
-  if(down > 0 && degraded > 0) subTxt = down + ' offline, ' + degraded + ' degraded';
-  else if(down > 0) subTxt = down + ' host' + (down>1?'s':'') + ' offline';
-  else if(degraded > 0) subTxt = degraded + ' service issue' + (degraded>1?'s':'');
-  else subTxt = 'all hosts online';
-  document.getElementById('s-up-sub').textContent = subTxt;
-  const latEl = document.getElementById('s-lat');
-  latEl.innerHTML = avgLat !== null ? avgLat.toFixed(1) + ' <sup>ms</sup>' : '-';
-  latEl.style.color = 'var(--blue)';
-  if(avgLat !== null){
-    _latHistory.push(avgLat);
-    if(_latHistory.length > LAT_SPARK_SAMPLES) _latHistory.shift();
-  }
-  const latSpark = document.getElementById('s-lat-spark');
-  if(latSpark) latSpark.setAttribute('points', nwSparkPoints(_latHistory, 100, 22));
-  const ovLat = document.getElementById('ov-lat');
-  if(ovLat) ovLat.innerHTML = (avgLat !== null ? avgLat.toFixed(1) : '-') + '<span class="topo-overlay-unit">ms</span>';
-  const uptEl = document.getElementById('s-upt');
-  uptEl.innerHTML = avgUpt !== null ? avgUpt.toFixed(1) + ' <sup>%</sup>' : '-';
-  uptEl.style.color = avgUpt !== null && avgUpt >= 95 ? 'var(--green)' : 'var(--amber)';
-  const ovUpt = document.getElementById('ov-upt');
-  if(ovUpt){
-    ovUpt.innerHTML = (avgUpt !== null ? avgUpt.toFixed(1) : '-') + '<span class="topo-overlay-unit">%</span>';
-    ovUpt.style.color = avgUpt !== null && avgUpt >= 95 ? 'var(--green)' : 'var(--amber)';
-  }
-  const totEl = document.getElementById('s-tot');
-  totEl.innerHTML = total + ' <sup>hosts</sup>';
-  totEl.style.color = 'var(--text)';
-  document.getElementById('s-interval').textContent = data.settings.default_interval + 's poll interval';
+// Monitor toolbar one-liner, e.g. "21/29 up · 4.2 ms · 99.6%"
+function renderMonitorSummary(data){
+  const el = document.getElementById('mon-summary');
+  if(!el) return;
+  const s = nwComputeSummary(data);
+  el.className = 'mon-summary mon-summary-' + (s.down > 0 ? 'down' : (s.degraded > 0 ? 'warn' : 'ok'));
+  el.textContent = s.up + '/' + s.total + ' up'
+    + (s.avgLat !== null ? ' · ' + s.avgLat.toFixed(1) + ' ms' : '')
+    + (s.avgUpt !== null ? ' · ' + s.avgUpt.toFixed(1) + '%' : '');
 }
 
 nwStatus.subscribe(function(data){
-  renderSummary(data);
+  renderMonitorSummary(data);
   renderGroups(data);
   if(_hostStatusChip !== 'all' || (document.getElementById('hosts-filter') && document.getElementById('hosts-filter').value)){
     applyHostFilter();

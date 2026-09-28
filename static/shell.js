@@ -121,6 +121,29 @@ const nwStatus = {
   refreshNow(){ return refresh(); },
 };
 
+// Pure aggregate over a /api/status payload; the Monitor summary line and the Lab canvas
+// overlay both render from it. avgLat/avgUpt are null when there is nothing to average.
+function nwComputeSummary(data){
+  const hosts = (data && data.hosts) || [];
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  return {
+    up: hosts.filter(h => h.is_up).length,
+    total: hosts.length,
+    down: hosts.filter(h => !h.is_up && h.status === 'DOWN').length,
+    degraded: hosts.filter(h => h.status === 'DEGRADED').length,
+    maintenance: hosts.filter(h => h.status === 'MAINTENANCE').length,
+    avgLat: mean(hosts.filter(h => h.latency_ms !== null).map(h => h.latency_ms)),
+    avgUpt: mean(hosts.filter(h => h.always_on !== false && h.uptime_pct !== null).map(h => h.uptime_pct)),
+  };
+}
+
+// Topbar "Edit hosts": the host editor lives on Monitor. Elsewhere, hop there and let
+// hosts-editor.js open it once the page has loaded (?edit=1).
+function nwEditHosts(){
+  if(typeof openEditor === 'function') openEditor();
+  else location.href = '/monitor?edit=1';
+}
+
 function nwSetConnBadge(n){
   const el = document.getElementById('conn-count');
   if(!el) return;

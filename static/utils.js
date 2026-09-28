@@ -126,6 +126,7 @@ function apiFetch(url, options){
 
 function setStatus(msg, kind){
   const el = document.getElementById('save-status');
+  if(!el) return;
   el.textContent = msg;
   el.className = 'save-status ' + (kind || '');
 }

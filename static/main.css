@@ -1807,7 +1807,6 @@ body.nw-anim .topo-group:nth-child(n+4),body.nw-anim .group:nth-child(n+4) .tabl
 .ov-row-meta{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint);margin-left:auto;flex-shrink:0}
 .ov-empty{font-size:12px;color:var(--hint)}
 .ov-topo-box{background:var(--subtle);border:1px solid var(--border-light);border-radius:8px;height:110px;overflow:hidden}
-.ov-topo-placeholder{display:flex;align-items:center;justify-content:center;height:100%;text-align:center;padding:0 14px}
 .ov-chips{display:flex;gap:6px;flex-wrap:wrap}
 .ov-chip{font-size:10.5px;background:var(--subtle);border:1px solid var(--border-light);padding:2px 8px;border-radius:5px}
 .ov-brief-date{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:6px}
@@ -2020,3 +2019,5 @@ button.cx-tile:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 a.tab{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
 a.servers-pill{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
 .subnav{margin-bottom:16px}
+.mon-summary{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);white-space:nowrap}
+.mon-summary-down{color:var(--red-text)} .mon-summary-warn{color:var(--amber-text)} .mon-summary-ok{color:var(--green-text)}

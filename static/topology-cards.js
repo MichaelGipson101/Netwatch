@@ -60,3 +60,21 @@ function renderTopology(data){
 }
 
 nwStatus.subscribe(renderTopology);
+
+// Topology web-view canvas overlay metrics (#ov-*), formerly part of renderSummary
+function renderTopoOverlay(data){
+  const s = nwComputeSummary(data);
+  const health = s.down > 0 ? 'var(--red)' : (s.degraded > 0 ? 'var(--amber)' : 'var(--green)');
+  const ovUp = document.getElementById('ov-up');
+  const ovTot = document.getElementById('ov-tot');
+  if(ovUp){ ovUp.textContent = s.up; ovUp.style.color = health; }
+  if(ovTot) ovTot.textContent = s.total;
+  const ovLat = document.getElementById('ov-lat');
+  if(ovLat) ovLat.innerHTML = (s.avgLat !== null ? s.avgLat.toFixed(1) : '-') + '<span class="topo-overlay-unit">ms</span>';
+  const ovUpt = document.getElementById('ov-upt');
+  if(ovUpt){
+    ovUpt.innerHTML = (s.avgUpt !== null ? s.avgUpt.toFixed(1) : '-') + '<span class="topo-overlay-unit">%</span>';
+    ovUpt.style.color = s.avgUpt !== null && s.avgUpt >= 95 ? 'var(--green)' : 'var(--amber)';
+  }
+}
+nwStatus.subscribe(renderTopoOverlay);

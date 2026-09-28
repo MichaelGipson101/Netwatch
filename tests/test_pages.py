@@ -11,22 +11,35 @@ from page_analysis import (
 )
 from netwatch.server import _STATIC_FILES
 
-# Temporary: the per-page checks below fail on cross-page runtime issues (KPI summary, power
-# card, Home topology preview, id guards) that Task 7 fixes. Remove this flag and the
-# xfail marks in Task 7 Step 6. Deliberately per-test, never a file-wide pytestmark: the
-# non-page tests in this file stay hard gates.
-PENDING_TASK_7 = True
-
 # ids looked up by literal that are created by JS at runtime, not present in the HTML
 DYNAMIC_IDS = {"nw-toasts"}
 DYNAMIC_ID_PREFIXES = ("ov-card-",)
 # ids intentionally looked up on pages that may not have them; every use site is null-guarded
 # (add an entry here only together with the guard, and say which task added it)
-GUARDED_IDS = set()
+GUARDED_IDS = {
+    # Task 7 additions, each with the guard at its use site:
+    "save-status",          # utils.js setStatus(): `if(!el) return`
+    "drawer",               # utils.js focus trap: `drawer && drawer.classList...`
+    "ov-ql-count",          # quicklinks.js _renderCount(): `if (!el) return` (Links page has no Home card)
+    "ql-page-grid",         # quicklinks.js _renderCards() `if (!el) return`, and the boot hook checks it first
+    "ql-page-edit-btn",     # auth.js updateAuthUI(): `if (qlEdit)`
+    # connections.js is loaded by Home for the port-map helpers only; its Connections-tab
+    # renderers all bail out when their container is absent:
+    "cx-table",             # cxApplyTableOpen / renderCxTable / cxRenderTableRows: `if(el)` / `if(!el) return`
+    "cx-table-toggle",      # cxApplyTableOpen: `if(btn)`
+    "cx-table-count",       # renderCxTable: `if(countEl)`
+    "cx-status",            # renderCxStatus: `if(!el) return`
+    "cx-suggestions",       # renderCxSuggestions: `if(!el) return`
+    "cx-sugg-count",        # renderCxSuggestions: `if(countEl)`
+    "cx-ports",             # renderCxPortMaps: `if(!panel || !el) return`
+    "cx-ports-panel",       # renderCxPortMaps: `if(!panel || !el) return`
+    "cx-quick",             # mountConnectionsTab (only runs on the Lab subview hook, and guarded) / cxQuickAddAt: `if(!box) return`
+    "view-connections",     # cxHighlight*/cxQuickAddAt: `view && ...`
+}
 
 # Names that existed in the original static/core.js and were deliberately removed
 # (each added by the task that removed it)
-INTENTIONALLY_REMOVED = set()
+INTENTIONALLY_REMOVED = {"renderSummary", "_latHistory", "LAT_SPARK_SAMPLES", "renderPowerSparkline"}
 
 # Every top-level declaration that existed in static/core.js at v3.80 (snapshot).
 CORE_JS_ORIGINAL_DECLARATIONS = """
@@ -59,7 +72,6 @@ PAGES = load_pages()
 IDS = [p.name for p in PAGES]
 
 
-@pytest.mark.xfail(PENDING_TASK_7, reason="Task 7", strict=False)
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_inline_handlers_resolve(page):
     """Every function called from an inline handler (in the HTML or in HTML built by the
@@ -72,7 +84,6 @@ def test_inline_handlers_resolve(page):
     assert not missing, f"page {page.name}: handlers call undefined functions: {missing}"
 
 
-@pytest.mark.xfail(PENDING_TASK_7, reason="Task 7", strict=False)
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_literal_element_ids_exist(page):
     """Every getElementById('literal') in the page's scripts resolves to an element in the
