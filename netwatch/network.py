@@ -1,3 +1,4 @@
+import re
 import os
 import time
 import logging
@@ -620,3 +621,33 @@ def get_discovery_state():
     """Return a snapshot of current scan state for the API."""
     with _DISCOVERY_LOCK:
         return dict(_DISCOVERY_STATE)
+
+
+_NEIGH_RE = re.compile(
+    r"^(\d{1,3}(?:\.\d{1,3}){3})\s+dev\s+\S+\s+lladdr\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\b")
+
+
+def parse_neighbors(text):
+    """Parse `ip -4 neigh show` into {mac: {ip, ...}}. Entries without a usable link-layer
+    address (FAILED/INCOMPLETE) and IPv6 lines are skipped; a MAC may hold several IPs."""
+    out = {}
+    for line in (text or "").splitlines():
+        m = _NEIGH_RE.match(line.strip())
+        if not m:
+            continue
+        tokens = line.split()
+        if tokens and tokens[-1] in ("FAILED", "INCOMPLETE"):
+            continue
+        out.setdefault(m.group(2).lower(), set()).add(m.group(1))
+    return out
+
+
+def read_neighbors():
+    """The Pi's IPv4 neighbor (ARP) table as {mac: {ip, ...}}; {} if `ip` is unavailable."""
+    try:
+        res = subprocess.run(["ip", "-4", "neigh", "show"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if res.returncode != 0:
+        return {}
+    return parse_neighbors(res.stdout)

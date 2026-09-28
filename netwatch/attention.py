@@ -11,6 +11,8 @@ import threading
 import time
 from datetime import datetime
 
+from netwatch.storage import InventoryDB
+
 SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
@@ -169,3 +171,205 @@ class AlertGate:
         for cid in self.active_ids() - touched:
             if prefixes is None or cid.startswith(tuple(prefixes)):
                 self.clear(cid)
+
+
+def fmt_duration(seconds):
+    s = max(0, int(seconds))
+    if s < 60:
+        return "under a minute"
+    m = s // 60
+    if m < 60:
+        return f"{m} min"
+    h = m // 60
+    if h < 48:
+        return f"{h} h"
+    return f"{h // 24} d"
+
+
+def host_facts(hosts):
+    """Plain-dict view of HostState objects, so the builders stay pure and testable."""
+    now = datetime.now()
+    out = []
+    for h in hosts:
+        mac = (h.specs or {}).get("mac")
+        out.append({
+            "name": h.name,
+            "ip": h.ip,
+            "mac": InventoryDB.normalize_mac(mac) if mac else "",
+            "always_on": bool(h.always_on),
+            "is_up": bool(h.is_up),
+            "checked": h.last_checked is not None,
+            "in_maintenance": bool(h.maintenance_until and h.maintenance_until > now),
+            "first_down_at": float(h.first_down_at or 0.0),
+        })
+    return out
+
+
+def _link(page, subview, params=None):
+    return {"page": page, "subview": subview, "params": dict(params or {})}
+
+
+_SOURCE_LINKS = {
+    "nas":     lambda: _link("infra", "truenas"),
+    "proxmox": lambda: _link("infra", "proxmox"),
+    "pbs":     lambda: _link("infra", "proxmox"),
+    "ups":     lambda: None,
+}
+
+
+def _norm(mac):
+    return InventoryDB.normalize_mac(mac) if mac else ""
+
+
+def _host_down_items(facts, records, parents, now):
+    by_mac, by_ip = {}, {}
+    for rec in records:
+        mac = _norm(rec.get("mac"))
+        if mac:
+            by_mac[mac] = rec["id"]
+        if rec.get("ip"):
+            by_ip[rec["ip"]] = rec["id"]
+    down = [f for f in facts
+            if f["always_on"] and f["checked"] and not f["is_up"] and not f["in_maintenance"]]
+    dev_of, down_by_dev = {}, {}
+    for f in down:
+        dev = by_mac.get(f["mac"]) if f["mac"] else None
+        if dev is None:
+            dev = by_ip.get(f["ip"])
+        dev_of[f["ip"]] = dev
+        if dev is not None:
+            down_by_dev[dev] = f
+
+    def root_of(f):
+        dev = dev_of[f["ip"]]
+        if dev is None:
+            return f
+        top, seen, cur = None, {dev}, parents.get(dev)
+        while cur is not None and cur not in seen:
+            seen.add(cur)
+            if cur in down_by_dev:
+                top = down_by_dev[cur]      # keep walking: the topmost down ancestor wins
+            cur = parents.get(cur)
+        return top or f
+
+    groups = {}
+    for f in down:
+        root = root_of(f)
+        g = groups.setdefault(root["ip"], {"fact": root, "affected": []})
+        if root["ip"] != f["ip"]:
+            g["affected"].append(f["ip"])
+
+    items = []
+    for ip, g in groups.items():
+        f, affected = g["fact"], sorted(g["affected"])
+        since = f["first_down_at"] or None
+        detail = f"Down {fmt_duration(now - (since or now))}"
+        if affected:
+            detail += f" · root cause of {len(affected)} host alert{'s' if len(affected) != 1 else ''}"
+        items.append({
+            "id": f"host_down:{ip}", "kind": "host_down", "severity": "critical",
+            "title": f"{f['name']} is down", "detail": detail, "since": since,
+            "affected": affected, "root_ip": ip,
+            "link": _link("monitor", "hosts", {"host": ip}),
+        })
+    return items
+
+
+def _ledger_item(row, now):
+    make_link = _SOURCE_LINKS.get(row["source"], lambda: None)
+    return {
+        "id": f"alert:{row['condition_id']}", "kind": "poller_condition",
+        "severity": row["severity"], "title": row["title"],
+        "detail": f"{row['detail']} · {fmt_duration(now - row['since'])}",
+        "since": row["since"], "affected": [], "root_ip": None, "link": make_link(),
+    }
+
+
+def _drift_item(d, records):
+    rec_id = next((r["id"] for r in records if _norm(r.get("mac")) == d["mac"]), None)
+    return {
+        "id": f"ip_drift:{d['mac']}", "kind": "ip_drift", "severity": "info",
+        "title": f"{d['name']} moved to {d['seen_ip']}",
+        "detail": f"Monitored at {d['monitored_ip']}", "since": None,
+        "affected": [d["monitored_ip"]], "root_ip": None,
+        "link": _link("lab", "inventory", {"inv": rec_id}) if rec_id is not None else None,
+    }
+
+
+def _sort_key(item):
+    since = item["since"]
+    return (SEVERITY_ORDER.get(item["severity"], 9), since if since is not None else float("inf"))
+
+
+def _sentence(title):
+    return title if title.endswith((".", "!", "?")) else title + "."
+
+
+def _verdict(facts, items):
+    roots = [i for i in items if i["kind"] == "host_down"]
+    affected = sum(len(i["affected"]) for i in roots)
+    counts = {
+        "hosts_total": len(facts),
+        "hosts_up": sum(1 for f in facts if f["is_up"]),
+        "hosts_down": len(roots) + affected,
+        "affected": affected,
+        "maintenance": sum(1 for f in facts if f["in_maintenance"]),
+    }
+    problems = [i for i in items if i["severity"] in ("critical", "warning")]
+    if any(i["severity"] == "critical" for i in items):
+        level = "down"
+    elif problems:
+        level = "warn"
+    else:
+        level = "ok"
+    if not facts:
+        headline = "No hosts are being monitored yet."
+    elif not problems:
+        headline = "Everything looks good."
+    elif len(problems) == 1:
+        top = problems[0]
+        headline = _sentence(top["title"])
+        if top["kind"] == "host_down" and top["affected"]:
+            n = len(top["affected"])
+            headline += f" {n} host{'s' if n != 1 else ''} unreachable."
+    else:
+        headline = f"{len(problems)} problems need attention. {_sentence(problems[0]['title'])}"
+    return {"level": level, "headline": headline, "counts": counts}
+
+
+def build_attention(facts, records, parents, ledger_rows, suggestions_pending, drift, now=None):
+    now = time.time() if now is None else float(now)
+    items = _host_down_items(facts, records, parents, now)
+    items.extend(_ledger_item(r, now) for r in ledger_rows)
+    if suggestions_pending and suggestions_pending > 0:
+        n = int(suggestions_pending)
+        items.append({
+            "id": "connection_suggestions", "kind": "connection_suggestions", "severity": "info",
+            "title": f"{n} connection suggestion{'s' if n != 1 else ''}", "detail": "Review in Lab",
+            "since": None, "affected": [], "root_ip": None, "link": _link("lab", "connections"),
+        })
+    items.extend(_drift_item(d, records) for d in drift)
+    items.sort(key=_sort_key)
+    return {"generated": datetime.fromtimestamp(now).isoformat(),
+            "verdict": _verdict(facts, items), "items": items}
+
+
+def check_ip_drift(facts, records, neighbors):
+    """Hosts whose MAC is currently seen only at IPs other than the monitored one."""
+    rec_mac_by_ip = {}
+    for rec in records:
+        if rec.get("ip") and rec.get("mac"):
+            rec_mac_by_ip[rec["ip"]] = _norm(rec["mac"])
+    out = []
+    for f in facts:
+        if f["in_maintenance"]:
+            continue
+        mac = f["mac"] or rec_mac_by_ip.get(f["ip"], "")
+        if not mac:
+            continue
+        seen = neighbors.get(mac)
+        if not seen or f["ip"] in seen:
+            continue
+        out.append({"mac": mac, "name": f["name"], "monitored_ip": f["ip"],
+                    "seen_ip": sorted(seen)[0]})
+    return out

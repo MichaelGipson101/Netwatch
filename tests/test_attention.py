@@ -239,3 +239,264 @@ def test_end_pass_consumes_the_pass_so_a_second_end_pass_is_a_noop(hdb):
     led.fire("late", "nas", "warning", "t", "TrueNAS", now=1)
     g.end_pass()
     assert led.active_ids("nas") == {"late"}
+
+
+from datetime import datetime, timedelta
+
+from netwatch.attention import (build_attention, check_ip_drift, fmt_duration, host_facts)
+from netwatch.hosts import HostState
+from netwatch.network import parse_neighbors
+
+NOW = 1_000_000.0
+
+
+def F(name, ip, *, up=True, mac="", always_on=True, checked=True, maint=False, down_since=0.0):
+    return {"name": name, "ip": ip, "mac": mac, "always_on": always_on, "is_up": up,
+            "checked": checked, "in_maintenance": maint, "first_down_at": down_since}
+
+
+def R(id_, ip="", mac="", system=None):
+    return {"id": id_, "ip": ip, "mac": mac, "system": system or f"dev{id_}"}
+
+
+def build(facts, records=(), parents=None, rows=(), pending=0, drift=()):
+    return build_attention(list(facts), list(records), parents or {}, list(rows), pending, list(drift), now=NOW)
+
+
+def items_of(payload, kind):
+    return [i for i in payload["items"] if i["kind"] == kind]
+
+
+def test_fmt_duration():
+    assert fmt_duration(5) == "under a minute"
+    assert fmt_duration(12 * 60) == "12 min"
+    assert fmt_duration(3 * 3600 + 5) == "3 h"
+    assert fmt_duration(47 * 3600) == "47 h"
+    assert fmt_duration(5 * 86400) == "5 d"
+    assert fmt_duration(-10) == "under a minute"
+
+
+def test_empty_install_headline():
+    p = build([])
+    assert p["verdict"]["level"] == "ok"
+    assert p["verdict"]["headline"] == "No hosts are being monitored yet."
+    assert p["items"] == [] and p["verdict"]["counts"]["hosts_total"] == 0
+
+
+def test_all_up_is_ok():
+    p = build([F("a", "10.0.0.1"), F("b", "10.0.0.2")])
+    assert p["verdict"]["level"] == "ok" and p["verdict"]["headline"] == "Everything looks good."
+    assert p["verdict"]["counts"] == {"hosts_total": 2, "hosts_up": 2, "hosts_down": 0,
+                                      "affected": 0, "maintenance": 0}
+
+
+def test_single_down_host_without_inventory_is_its_own_root():
+    p = build([F("ZeroPi", "10.0.0.9", up=False, down_since=NOW - 720)])
+    (it,) = items_of(p, "host_down")
+    assert it["id"] == "host_down:10.0.0.9" and it["title"] == "ZeroPi is down"
+    assert it["severity"] == "critical" and it["root_ip"] == "10.0.0.9" and it["affected"] == []
+    assert it["detail"] == "Down 12 min" and it["since"] == NOW - 720
+    assert it["link"] == {"page": "monitor", "subview": "hosts", "params": {"host": "10.0.0.9"}}
+    assert p["verdict"]["level"] == "down" and p["verdict"]["headline"] == "ZeroPi is down."
+
+
+def test_chain_under_one_down_root_groups_into_one_item():
+    facts = [F("sw", "10.0.0.2", up=False, mac="aa:aa:aa:aa:aa:01", down_since=NOW - 600),
+             F("ap", "10.0.0.3", up=False, mac="aa:aa:aa:aa:aa:02"),
+             F("nas", "10.0.0.4", up=False, mac="aa:aa:aa:aa:aa:03"),
+             F("pi", "10.0.0.5", up=True, mac="aa:aa:aa:aa:aa:04")]
+    records = [R(1, mac="aa:aa:aa:aa:aa:01"), R(2, mac="aa:aa:aa:aa:aa:02"),
+               R(3, mac="aa:aa:aa:aa:aa:03"), R(4, mac="aa:aa:aa:aa:aa:04")]
+    parents = {1: None, 2: 1, 3: 2, 4: 1}          # nas -> ap -> sw; pi -> sw (pi is up)
+    p = build(facts, records, parents)
+    (it,) = items_of(p, "host_down")
+    assert it["root_ip"] == "10.0.0.2" and it["affected"] == ["10.0.0.3", "10.0.0.4"]
+    assert it["detail"] == "Down 10 min · root cause of 2 host alerts"
+    assert p["verdict"]["headline"] == "sw is down. 2 hosts unreachable."
+    assert p["verdict"]["counts"]["hosts_down"] == 3 and p["verdict"]["counts"]["affected"] == 2
+
+
+def test_single_affected_host_is_singular():
+    facts = [F("sw", "10.0.0.2", up=False, mac="aa:aa:aa:aa:aa:01"),
+             F("ap", "10.0.0.3", up=False, mac="aa:aa:aa:aa:aa:02")]
+    p = build(facts, [R(1, mac="aa:aa:aa:aa:aa:01"), R(2, mac="aa:aa:aa:aa:aa:02")], {1: None, 2: 1})
+    assert p["verdict"]["headline"] == "sw is down. 1 host unreachable."
+    assert items_of(p, "host_down")[0]["detail"].endswith("root cause of 1 host alert")
+
+
+def test_two_independent_roots_make_two_items_and_a_count_headline():
+    facts = [F("a", "10.0.0.2", up=False, mac="aa:aa:aa:aa:aa:01", down_since=NOW - 100),
+             F("b", "10.0.0.3", up=False, mac="aa:aa:aa:aa:aa:02", down_since=NOW - 900)]
+    p = build(facts, [R(1, mac="aa:aa:aa:aa:aa:01"), R(2, mac="aa:aa:aa:aa:aa:02")], {1: None, 2: None})
+    assert [i["root_ip"] for i in items_of(p, "host_down")] == ["10.0.0.3", "10.0.0.2"]  # longest first
+    assert p["verdict"]["headline"] == "2 problems need attention. b is down."
+
+
+def test_child_of_an_up_parent_is_its_own_root():
+    facts = [F("sw", "10.0.0.2", up=True, mac="aa:aa:aa:aa:aa:01"),
+             F("ap", "10.0.0.3", up=False, mac="aa:aa:aa:aa:aa:02")]
+    p = build(facts, [R(1, mac="aa:aa:aa:aa:aa:01"), R(2, mac="aa:aa:aa:aa:aa:02")], {1: None, 2: 1})
+    (it,) = items_of(p, "host_down")
+    assert it["root_ip"] == "10.0.0.3" and it["affected"] == []
+
+
+def test_inventory_link_falls_back_to_ip_when_there_is_no_mac():
+    facts = [F("sw", "10.0.0.2", up=False), F("ap", "10.0.0.3", up=False)]
+    p = build(facts, [R(1, ip="10.0.0.2"), R(2, ip="10.0.0.3")], {1: None, 2: 1})
+    assert items_of(p, "host_down")[0]["affected"] == ["10.0.0.3"]
+
+
+def test_cyclic_parent_data_terminates():
+    facts = [F("a", "10.0.0.2", up=False, mac="aa:aa:aa:aa:aa:01"),
+             F("b", "10.0.0.3", up=False, mac="aa:aa:aa:aa:aa:02")]
+    p = build(facts, [R(1, mac="aa:aa:aa:aa:aa:01"), R(2, mac="aa:aa:aa:aa:aa:02")], {1: 2, 2: 1})
+    assert len(items_of(p, "host_down")) >= 1     # no hang, no exception
+
+
+def test_dangling_parent_id_is_ignored():
+    facts = [F("a", "10.0.0.2", up=False, mac="aa:aa:aa:aa:aa:01")]
+    p = build(facts, [R(1, mac="aa:aa:aa:aa:aa:01")], {1: 999})
+    assert items_of(p, "host_down")[0]["root_ip"] == "10.0.0.2"
+
+
+def test_maintenance_idle_and_unchecked_hosts_are_not_problems():
+    facts = [F("m", "10.0.0.2", up=False, maint=True),
+             F("idle", "10.0.0.3", up=False, always_on=False),
+             F("new", "10.0.0.4", up=False, checked=False)]
+    p = build(facts)
+    assert p["items"] == [] and p["verdict"]["level"] == "ok"
+    assert p["verdict"]["counts"]["maintenance"] == 1
+
+
+def test_ledger_rows_become_poller_items_with_links():
+    rows = [{"condition_id": "pool_health_tank", "source": "nas", "severity": "critical",
+             "title": 'Pool "tank" is DEGRADED', "detail": "TrueNAS", "since": NOW - 3600, "notified_at": 1},
+            {"condition_id": "ups-on-battery", "source": "ups", "severity": "warning",
+             "title": "UPS is running on battery power", "detail": "UPS", "since": NOW - 60, "notified_at": 1}]
+    p = build([F("a", "10.0.0.1")], rows=rows)
+    nas, ups = items_of(p, "poller_condition")
+    assert nas["id"] == "alert:pool_health_tank" and nas["detail"] == "TrueNAS · 1 h"
+    assert nas["link"] == {"page": "infra", "subview": "truenas", "params": {}}
+    assert ups["link"] is None
+    assert p["verdict"]["level"] == "down"       # a critical item
+    assert p["verdict"]["headline"] == '2 problems need attention. Pool "tank" is DEGRADED.'
+
+
+def test_warning_only_is_warn_and_single_problem_headline_is_its_title():
+    rows = [{"condition_id": "ups-on-battery", "source": "ups", "severity": "warning",
+             "title": "UPS is running on battery power", "detail": "UPS", "since": NOW - 5, "notified_at": None}]
+    p = build([F("a", "10.0.0.1")], rows=rows)
+    assert p["verdict"]["level"] == "warn"
+    assert p["verdict"]["headline"] == "UPS is running on battery power."
+
+
+def test_info_items_do_not_change_the_verdict():
+    p = build([F("a", "10.0.0.1")], pending=3,
+              drift=[{"mac": "aa:aa:aa:aa:aa:01", "name": "vf2", "monitored_ip": "10.0.0.7", "seen_ip": "10.0.0.8"}],
+              records=[R(5, mac="aa:aa:aa:aa:aa:01")])
+    assert p["verdict"]["level"] == "ok" and p["verdict"]["headline"] == "Everything looks good."
+    (sug,) = items_of(p, "connection_suggestions")
+    assert sug["title"] == "3 connection suggestions" and sug["severity"] == "info"
+    assert sug["link"] == {"page": "lab", "subview": "connections", "params": {}}
+    (dr,) = items_of(p, "ip_drift")
+    assert dr["id"] == "ip_drift:aa:aa:aa:aa:aa:01" and dr["title"] == "vf2 moved to 10.0.0.8"
+    assert dr["detail"] == "Monitored at 10.0.0.7"
+    assert dr["link"] == {"page": "lab", "subview": "inventory", "params": {"inv": 5}}
+
+
+def test_singular_suggestion_and_drift_without_inventory_record_has_no_link():
+    p = build([F("a", "10.0.0.1")], pending=1,
+              drift=[{"mac": "aa:aa:aa:aa:aa:09", "name": "x", "monitored_ip": "1.1.1.1", "seen_ip": "1.1.1.2"}])
+    assert items_of(p, "connection_suggestions")[0]["title"] == "1 connection suggestion"
+    assert items_of(p, "ip_drift")[0]["link"] is None
+
+
+def test_items_sort_by_severity_then_longest_running_first():
+    rows = [{"condition_id": "w", "source": "nas", "severity": "warning", "title": "w", "detail": "TrueNAS",
+             "since": NOW - 10, "notified_at": None}]
+    facts = [F("d", "10.0.0.2", up=False, down_since=NOW - 50)]
+    p = build(facts, rows=rows, pending=2)
+    assert [i["kind"] for i in p["items"]] == ["host_down", "poller_condition", "connection_suggestions"]
+
+
+def test_host_down_with_unknown_since_has_null_since_and_still_a_detail():
+    p = build([F("a", "10.0.0.2", up=False, down_since=0.0)])
+    (it,) = items_of(p, "host_down")
+    assert it["since"] is None and it["detail"] == "Down under a minute"
+
+
+# ── host_facts ───────────────────────────────────────────────────────────────
+
+def test_host_facts_maps_hoststate_fields():
+    h = HostState(name="a", ip="10.0.0.1", group="g", interval=30,
+                  specs={"mac": "AA-BB-CC-DD-EE-FF"})
+    h.history.append(False)
+    h.last_checked = datetime.now()
+    h.first_down_at = 123.0
+    h.maintenance_until = datetime.now() + timedelta(hours=1)
+    (f,) = host_facts([h])
+    assert f == {"name": "a", "ip": "10.0.0.1", "mac": "aa:bb:cc:dd:ee:ff", "always_on": True,
+                 "is_up": False, "checked": True, "in_maintenance": True, "first_down_at": 123.0}
+
+
+def test_host_facts_without_specs_or_checks():
+    (f,) = host_facts([HostState(name="a", ip="10.0.0.1", group="g", interval=30)])
+    assert f["mac"] == "" and f["checked"] is False and f["is_up"] is False
+    assert f["in_maintenance"] is False and f["first_down_at"] == 0.0
+
+
+# ── IP drift ─────────────────────────────────────────────────────────────────
+
+MAC1 = "aa:bb:cc:dd:ee:01"
+
+
+def test_drift_detected_when_mac_seen_only_at_another_ip():
+    d = check_ip_drift([F("vf2", "10.0.0.7", mac=MAC1)], [], {MAC1: {"10.0.0.8"}})
+    assert d == [{"mac": MAC1, "name": "vf2", "monitored_ip": "10.0.0.7", "seen_ip": "10.0.0.8"}]
+
+
+def test_no_drift_when_monitored_ip_is_among_the_seen_ips():
+    assert check_ip_drift([F("pve", "10.0.0.7", mac=MAC1)], [], {MAC1: {"10.0.0.7", "10.0.0.8"}}) == []
+
+
+def test_no_drift_when_mac_absent_from_neighbor_table_or_host_has_no_mac():
+    assert check_ip_drift([F("a", "10.0.0.7", mac=MAC1)], [], {}) == []
+    assert check_ip_drift([F("a", "10.0.0.7")], [], {MAC1: {"10.0.0.8"}}) == []
+
+
+def test_drift_uses_the_inventory_mac_when_the_host_has_none():
+    d = check_ip_drift([F("a", "10.0.0.7")], [R(1, ip="10.0.0.7", mac=MAC1.upper())], {MAC1: {"10.0.0.8"}})
+    assert d and d[0]["seen_ip"] == "10.0.0.8"
+
+
+def test_drift_skips_hosts_in_maintenance():
+    assert check_ip_drift([F("a", "10.0.0.7", mac=MAC1, maint=True)], [], {MAC1: {"10.0.0.8"}}) == []
+
+
+# ── ip neigh parsing ─────────────────────────────────────────────────────────
+
+def test_parse_neighbors_handles_states_extra_tokens_and_garbage():
+    text = "\n".join([
+        "192.168.4.1 dev eth0 lladdr aa:bb:cc:dd:ee:01 REACHABLE",
+        "192.168.4.2 dev eth0 lladdr AA:BB:CC:DD:EE:02 router STALE",
+        "192.168.4.3 dev eth0  FAILED",
+        "192.168.4.4 dev eth0 lladdr aa:bb:cc:dd:ee:04 INCOMPLETE",
+        "192.168.4.5 dev eth0 lladdr aa:bb:cc:dd:ee:01 DELAY",
+        "fe80::1 dev eth0 lladdr aa:bb:cc:dd:ee:09 REACHABLE",
+        "garbage line",
+        "",
+    ])
+    assert parse_neighbors(text) == {
+        "aa:bb:cc:dd:ee:01": {"192.168.4.1", "192.168.4.5"},
+        "aa:bb:cc:dd:ee:02": {"192.168.4.2"},
+    }
+
+
+def test_read_neighbors_returns_empty_when_ip_is_unavailable(monkeypatch):
+    import subprocess
+    from netwatch import network
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ip")
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert network.read_neighbors() == {}
