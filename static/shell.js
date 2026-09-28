@@ -84,7 +84,8 @@ function nwShowSubview(name, opts){
     }
   }
   (_subviewHooks[name] || []).forEach(fn => { try { fn(); } catch(e){ console.error(e); } });
-  window.dispatchEvent(new CustomEvent('nw:subview', {detail: {name: name}}));
+  // Only a real change notifies listeners; re-showing the active sub-view is not a switch.
+  if(!same) window.dispatchEvent(new CustomEvent('nw:subview', {detail: {name: name}}));
   return true;
 }
 

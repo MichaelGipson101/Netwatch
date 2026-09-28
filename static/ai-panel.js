@@ -3,6 +3,7 @@
   let _aiReady = false;
   let _aiStreaming = false;
   let _aiHistory = [];
+  let _convGen = 0;   // bumped whenever the conversation is cleared; in-flight sends compare against it
 
   const _btn    = document.getElementById('ai-bubble-btn');
   const _panel  = document.getElementById('ai-panel');
@@ -193,15 +194,19 @@
     _aiHistory.push({role:'user', content:text});
     if(_aiHistory.length > 20) _aiHistory.splice(0, _aiHistory.length - 20);
 
-    await _hydrateContext(nwPageKey());
-    const ctx = _buildContext();
-    const systemPrompt = _buildSystemPrompt(ctx);
-
-    const messages = [{role:'system', content:systemPrompt}, ..._aiHistory];
+    // Lock the input and show the typing bubble BEFORE the hydrate await, so a second Enter
+    // can't start a concurrent send while context is being fetched.
     const assistantDiv = _appendMsg('assistant', '');
     _setStreaming(true);
+    const gen = _convGen;   // a conversation clear during any await below invalidates this send
 
     try{
+      await _hydrateContext(nwPageKey());
+      if(gen !== _convGen) return;   // cleared while hydrating: post nothing (finally unlocks)
+      const ctx = _buildContext();
+      const systemPrompt = _buildSystemPrompt(ctx);
+      const messages = [{role:'system', content:systemPrompt}, ..._aiHistory];
+
       const resp = await apiFetch('/api/ai/chat',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -216,8 +221,7 @@
         }catch(e){}
         assistantDiv.className = 'ai-msg error';
         assistantDiv.textContent = errMsg;
-        _aiHistory.pop();
-        _setStreaming(false);
+        if(gen === _convGen) _aiHistory.pop();
         return;
       }
 
@@ -271,7 +275,9 @@
       }
 
       if(_streamUsage && _streamModel) _accumulateUsage(_streamModel, _streamUsage);
-      if(assistantText){
+      if(gen !== _convGen){
+        // conversation was cleared mid-stream; the bubble is already gone with the cleared log
+      }else if(assistantText){
         _aiHistory.push({role:'assistant', content:assistantText});
       }else{
         assistantDiv.remove();
@@ -279,10 +285,10 @@
     }catch(e){
       assistantDiv.className = 'ai-msg error';
       assistantDiv.textContent = 'Network error: ' + e.message;
-      _aiHistory.pop();
+      if(gen === _convGen) _aiHistory.pop();
+    }finally{
+      _setStreaming(false);
     }
-
-    _setStreaming(false);
   }
 
   function _truncateModelName(id){
@@ -466,6 +472,7 @@
   }
 
   function _clearConversation(newPage){
+    _convGen++;
     _aiHistory = [];
     _msgs.innerHTML = '';
     const note = document.createElement('div');

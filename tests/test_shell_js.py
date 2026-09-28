@@ -123,7 +123,7 @@ def test_show_subview_pushes_history_once_and_runs_hooks():
       nwShowSubview('nope', {push:true});                    // unknown name: ignored
       console.log([pushed.join(','), ran.join(','), fired.join(','), nwCurrentSubview()].join('|'));
     """)
-    assert out == "/lab/connections|c,c|connections,connections|connections"
+    assert out == "/lab/connections|c,c|connections|connections"
 
 
 @needs_node
@@ -400,3 +400,34 @@ def test_compute_summary_tolerates_missing_latency_and_uptime_fields():
       console.log(JSON.stringify([s.avgLat, s.avgUpt]));
     """)
     assert out == "[4,100]"
+
+
+@needs_node
+def test_subview_event_fires_only_on_a_real_change_but_hooks_always_run():
+    out = run("""
+      document.querySelectorAll = () => [];
+      document.body.dataset = {page:'lab', subviews:'topology,connections'};
+      global.location = {pathname:'/lab/topology', search:''};
+      global.history = {pushState(){}, replaceState(){}};
+      global.CustomEvent = function(n, o){ this.detail = o.detail; };
+      const fired = []; global.dispatchEvent = e => fired.push(e.detail.name);
+      const ran = []; nwOnSubview('topology', () => ran.push('t'));
+      nwShowSubview('topology', {push:false});      // boot: '' -> topology is a change
+      nwShowSubview('topology', {push:false});      // re-click the active one: no event
+      nwShowSubview('connections', {push:false});   // real change: exactly one event
+      console.log(fired.join(',') + '|' + ran.join(','));
+    """)
+    assert out == "topology,connections|t,t"
+
+
+def test_mira_send_locks_input_before_hydrating_and_always_unlocks():
+    """Source-order check only (ai-panel.js has no node harness): the streaming lock must be
+    taken before the hydrate await, the send must bail if the conversation was cleared during
+    it, and _setStreaming(false) must live in a finally."""
+    src = open(os.path.join(STATIC, "ai-panel.js"), encoding="utf-8").read()
+    body = src[src.index("async function _sendMessage"):src.index("function _truncateModelName")]
+    assert body.index("_setStreaming(true)") < body.index("await _hydrateContext")
+    assert body.index("const gen = _convGen") < body.index("await _hydrateContext")
+    assert "if(gen !== _convGen) return;" in body
+    assert body.count("_setStreaming(false)") == 1
+    assert body.index("}finally{") < body.index("_setStreaming(false)")
