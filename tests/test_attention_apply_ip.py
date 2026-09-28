@@ -196,7 +196,7 @@ class _Drift:
         self.refreshed += 1
         if self.boom:
             raise RuntimeError("neighbors")
-        return []
+        return list(self.entries)
 
 
 @pytest.fixture
@@ -242,7 +242,7 @@ def test_handler_happy_path_end_to_end(env):
     assert len(env.hm.calls) == 1
     assert env.hm.calls[0] == (on_disk["hosts"], 45)
     assert _inv_ip(env) == NEW
-    assert env.drift.refreshed == 1
+    assert env.drift.refreshed == 2                        # before the match, and after applying
 
 
 @pytest.mark.parametrize("data", [
@@ -276,7 +276,7 @@ def test_handler_409_drift_changed_when_request_does_not_match_a_current_drift(e
     before = open(env.path).read()
     assert _call(env, _body(**over)) == (409, {"error": "drift_changed"})
     assert open(env.path).read() == before
-    assert _count(env.hdb, "pings", OLD) == 2 and env.hm.calls == [] and env.drift.refreshed == 0
+    assert _count(env.hdb, "pings", OLD) == 2 and env.hm.calls == [] and env.drift.refreshed == 1
 
 
 def test_handler_normalizes_the_request_mac(env):
@@ -315,7 +315,7 @@ def test_handler_rolls_back_history_when_change_host_ip_fails_after_migration(en
     assert seen["moved"] == 2
     for t in TABLES:
         assert _count(env.hdb, t, OLD) == 2 and _count(env.hdb, t, NEW) == 0
-    assert env.hm.calls == [] and env.drift.refreshed == 0
+    assert env.hm.calls == [] and env.drift.refreshed == 1
 
 
 def test_handler_rolls_back_history_and_yaml_when_reload_raises(env):
@@ -326,7 +326,7 @@ def test_handler_rolls_back_history_and_yaml_when_reload_raises(env):
     for t in TABLES:
         assert _count(env.hdb, t, OLD) == 2 and _count(env.hdb, t, NEW) == 0
     assert _inv_ip(env) == OLD                              # inventory not touched
-    assert env.drift.refreshed == 0
+    assert env.drift.refreshed == 1
 
 
 def test_handler_history_skipped_when_target_has_history_still_succeeds(env):
@@ -389,6 +389,100 @@ def test_handler_unexpected_exception_is_500_apply_failed(env):
     assert _call(env, history_db=Boom()) == (500, {"error": "apply failed"})
 
 
+def test_handler_refreshes_the_drift_before_matching_so_a_returned_device_is_refused(env):
+    class Returned(_Drift):                    # the device came back: refresh() finds no drift,
+        def refresh(self):                     # but the cached get() is still the stale entry
+            self.refreshed += 1
+            return []
+    env.drift = Returned()
+    before = open(env.path).read()
+    assert _call(env) == (409, {"error": "drift_changed"})
+    assert env.drift.refreshed == 1
+    assert open(env.path).read() == before and _count(env.hdb, "pings", OLD) == 2 and env.hm.calls == []
+
+
+def test_handler_falls_back_to_the_cached_drift_when_the_pre_match_refresh_fails(env):
+    env.drift.boom = True
+    assert _call(env)[0] == 200
+
+
+def test_handler_warns_when_the_yaml_restore_fails_after_a_reload_failure(env, monkeypatch, caplog):
+    real = H.change_host_ip
+    calls = []
+
+    def flaky(path, old, new):
+        calls.append((old, new))
+        return real(path, old, new) if len(calls) == 1 else (False, "disk full", None)
+    monkeypatch.setattr(H, "change_host_ip", flaky)
+    env.hm.boom = True
+    with caplog.at_level("WARNING"):
+        assert _call(env) == (500, {"error": "reload failed"})
+    assert calls == [(OLD, NEW), (NEW, OLD)]
+    assert any("disk full" in r.getMessage() for r in caplog.records)
+
+
+class _YamlDrift:
+    """Drift derived from hosts.yaml like the real monitor: present while a host still has OLD."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def _cur(self):
+        hosts = yaml.safe_load(open(self.path))["hosts"]
+        return ([{"mac": MAC, "name": "vf2", "monitored_ip": OLD, "seen_ip": NEW}]
+                if any(h["ip"] == OLD for h in hosts) else [])
+
+    def get(self):
+        return self._cur()
+
+    def refresh(self):
+        return self._cur()
+
+
+def test_concurrent_applies_for_the_same_drift_are_serialised(env, monkeypatch):
+    """Forced interleaving A.migrate, B.migrate, B.change, A.change. Unserialised, B's migrate is
+    skipped (target already has rows), B changes the yaml, A's change fails host_not_found and
+    A's rollback moves the history back to OLD while hosts.yaml points at NEW."""
+    a_migrated, b_changed = threading.Event(), threading.Event()
+    real_change = H.change_host_ip
+    real_mig = env.hdb.migrate_host_ip
+
+    def change(path, o, n):
+        if threading.current_thread().name == "A":
+            b_changed.wait(1.0)
+        r = real_change(path, o, n)
+        if threading.current_thread().name == "B":
+            b_changed.set()
+        return r
+
+    def mig(o, n, force=False):
+        if threading.current_thread().name == "B" and not force:
+            a_migrated.wait(1.0)
+        r = real_mig(o, n, force=force)
+        if threading.current_thread().name == "A" and not force:
+            a_migrated.set()
+        return r
+    monkeypatch.setattr(H, "change_host_ip", change)
+    monkeypatch.setattr(env.hdb, "migrate_host_ip", mig)
+    drift = _YamlDrift(env.path)
+    res = {}
+
+    def run(name):
+        res[name] = _call(env, drift_monitor=drift)
+    threads = [threading.Thread(target=run, args=(n,), name=n) for n in ("A", "B")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    statuses = sorted(r[0] for r in res.values())
+    assert statuses == [200, 409], res
+    loser = next(r for r in res.values() if r[0] != 200)
+    assert loser == (409, {"error": "drift_changed"})
+    assert yaml.safe_load(open(env.path))["hosts"][1]["ip"] == NEW
+    for t in TABLES:
+        assert _count(env.hdb, t, NEW) == 2 and _count(env.hdb, t, OLD) == 0, t
+
+
 # ── item data ───────────────────────────────────────────────────────────────
 
 def test_drift_item_carries_data_and_other_kinds_do_not():
@@ -438,20 +532,22 @@ def _run(tmp_path, env, user, csrf=True, session=True):
 def test_route_401_without_a_session(tmp_path, env):
     with pytest.raises(urllib.error.HTTPError) as e:
         _run(tmp_path, env, "root", session=False)
-    assert e.value.code in (401, 403)
+    assert e.value.code == 401
     assert env.hm.calls == []
 
 
 def test_route_403_for_a_non_admin(tmp_path, env):
     with pytest.raises(urllib.error.HTTPError) as e:
         _run(tmp_path, env, "bob")
-    assert e.value.code == 403 and env.hm.calls == []
+    assert e.value.code == 403 and json.loads(e.value.read()) == {"error": "admin_required"}
+    assert env.hm.calls == []
 
 
 def test_route_403_for_an_admin_without_csrf(tmp_path, env):
     with pytest.raises(urllib.error.HTTPError) as e:
         _run(tmp_path, env, "root", csrf=False)
-    assert e.value.code == 403 and env.hm.calls == []
+    assert e.value.code == 403 and json.loads(e.value.read()) == {"error": "csrf_required"}
+    assert env.hm.calls == []
     assert _count(env.hdb, "pings", OLD) == 2
 
 
@@ -460,4 +556,4 @@ def test_route_200_for_an_admin_with_csrf(tmp_path, env):
         assert r.status == 200
         body = json.loads(r.read())
     assert body["ok"] is True and body["to"] == NEW and body["inventory_updated"] is True
-    assert len(env.hm.calls) == 1 and env.drift.refreshed == 1
+    assert len(env.hm.calls) == 1 and env.drift.refreshed == 2

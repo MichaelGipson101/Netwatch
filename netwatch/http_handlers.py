@@ -10,6 +10,7 @@ import json
 import time
 import logging
 import ipaddress
+import threading
 import yaml
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
@@ -437,6 +438,9 @@ def _h_post_attention_dismiss(data, ledger) -> tuple:
         return 500, {"error": "dismiss failed"}
 
 
+_APPLY_IP_LOCK = threading.Lock()
+
+
 def _valid_ipv4(s):
     try:
         ipaddress.IPv4Address(s)
@@ -470,8 +474,26 @@ def _h_post_attention_apply_ip(data, config_path, host_manager, history_db, inve
     if drift_monitor is None:
         return 503, {"error": "drift monitor not available"}
     norm_mac = InventoryDB.normalize_mac(mac)
+    # One apply at a time: two requests for the same drift could otherwise interleave (A moves
+    # the history, B's migrate is skipped and B rewrites hosts.yaml, A's change fails and its
+    # rollback moves the history back to the old IP while hosts.yaml points at the new one).
+    with _APPLY_IP_LOCK:
+        return _apply_ip_locked(norm_mac, from_ip, to_ip, config_path, host_manager, history_db,
+                                inventory_db, drift_monitor, settings)
+
+
+def _apply_ip_locked(norm_mac, from_ip, to_ip, config_path, host_manager, history_db,
+                     inventory_db, drift_monitor, settings) -> tuple:
     try:
-        current = drift_monitor.get()
+        # Re-check against a fresh neighbour read, not just the cache, so a device that came
+        # back (or moved again) since the last pass is refused. Falls back to the cache.
+        try:
+            current = drift_monitor.refresh()
+            if not isinstance(current, list):
+                current = drift_monitor.get()
+        except Exception as e:
+            logging.warning(f"apply-ip: drift refresh failed, using cached result: {e}")
+            current = drift_monitor.get()
     except Exception:
         logging.exception("apply-ip: drift read failed")
         return 500, {"error": "apply failed"}
@@ -497,8 +519,12 @@ def _h_post_attention_apply_ip(data, config_path, host_manager, history_db, inve
             except Exception:
                 logging.exception("apply-ip: reload failed, rolling back")
                 _undo_history_move(history_db, history, from_ip, to_ip)
+                # The half-built new-IP HostState is not reachable from here (HostManager only
+                # publishes its list once the whole reload succeeds), so it cannot be stopped.
                 try:
-                    change_host_ip(config_path, to_ip, from_ip)
+                    r_ok, r_err, _ = change_host_ip(config_path, to_ip, from_ip)
+                    if not r_ok:
+                        logging.warning(f"apply-ip: could not restore hosts.yaml: {r_err}")
                 except Exception as e:
                     logging.warning(f"apply-ip: could not restore hosts.yaml: {e}")
                 return 500, {"error": "reload failed"}

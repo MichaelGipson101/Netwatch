@@ -309,6 +309,10 @@ def test_home_with_real_content_does_not_overflow(width, theme, tmp_path):
     assert r.inner_width == width
 
 
+def dom_count(dom, needle):
+    return dom.count(needle)
+
+
 def _home_drift_fixtures(tmp_path, admin=True, name="vf2"):
     """home_fixtures plus one ip_drift item (own copy: other tests count home_fixtures' rows)."""
     fx = home_fixtures(tmp_path)
@@ -357,10 +361,6 @@ def test_home_drift_row_does_not_overflow(width, theme, tmp_path):
     assert r.errors == []
     assert r.overflow <= 0, f"home drift row overflows at {width}px in {theme}: {r.overflow}"
     assert r.inner_width == width
-
-
-def dom_count(dom, needle):
-    return dom.count(needle)
 
 
 @needs_chromium

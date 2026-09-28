@@ -111,7 +111,8 @@ Major subsystems, by module:
   an admin can apply it with the Update IP action (`change_host_ip` rewrites `hosts.yaml`, and the host's ping
   history, incidents and maintenance windows move to the new IP via `HistoryDB.migrate_host_ip`, which
   skips rather than mix history if the new IP already has some; the matching inventory record's IP is
-  updated too), and the request must match a current drift result or it is a 409. `host_facts` seeds
+  updated too, but only when it was empty or equal to the old IP; applies are serialised and re-checked
+  against a fresh neighbor read), and the request must match a current drift result or it is a 409. `host_facts` seeds
   `first_down_at` from ongoing incidents so "down for X" survives restarts.
 - `netwatch/http_handlers.py` — `build_topology_payload` / `build_api_payload` (assemble the
   JSON the frontend polls; topology payload merges live host status onto inventory records +

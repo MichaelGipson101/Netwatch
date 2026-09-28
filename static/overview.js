@@ -141,7 +141,8 @@ function hmApplyIpMessage(status, data){
   if(status === 409 && data.error === 'ip_in_use') text = 'That IP is already monitored by another host.';
   else if(status === 409 && data.error === 'drift_changed') text = 'That change is no longer pending. Refreshing.';
   else if(status === 404) text = 'That host is no longer in the monitored list.';
-  else if(status === 403) text = 'Only admins can change host addresses.';
+  else if(status === 403) text = data.error === 'admin_required' ? 'Only admins can change host addresses.'
+    : 'Session expired. Reload the page and try again.';
   return {ok: false, text: text};
 }
 
@@ -297,14 +298,19 @@ function hmSafeUrl(url){
   }
   function _applyIp(btn) {
     if (_actionBusy) return;
+    function disarm() {
+      if (btn.getAttribute('data-armed') === '1') {
+        btn.removeAttribute('data-armed');
+        if (btn._label) btn.textContent = btn._label;
+      }
+    }
     if (btn.getAttribute('data-armed') !== '1') {          // first click arms, second confirms
-      var label = btn.textContent;
+      btn._label = btn.textContent; btn._armedAt = Date.now();
       btn.setAttribute('data-armed', '1'); btn.textContent = 'Confirm';
-      setTimeout(function () {
-        if (btn.getAttribute('data-armed') === '1') { btn.removeAttribute('data-armed'); btn.textContent = label; }
-      }, 4000);
+      setTimeout(disarm, 4000);
       return;
     }
+    if (Date.now() - (btn._armedAt || 0) < 600) return;     // a double click is not a confirmation
     _actionBusy = true; btn.setAttribute('aria-disabled', 'true');
     var status = 0;
     _post('/api/attention/apply-ip', { mac: btn.getAttribute('data-apply-mac'),
@@ -316,7 +322,10 @@ function hmSafeUrl(url){
         if (m.ok && typeof nwStatus !== 'undefined') nwStatus.refreshNow();
       })
       .catch(function () { _msg(hmApplyIpMessage(0, null).text); })
-      .then(function () { _actionBusy = false; btn.removeAttribute('aria-disabled'); _refreshAttentionSoon(); });
+      .then(function () {
+        _actionBusy = false; btn.removeAttribute('aria-disabled'); disarm();
+        _refreshAttentionSoon();
+      });
   }
   function _dismiss(id) { _runAction({ id: id }, "Couldn't dismiss that item."); }
   function _restore() { _runAction({ restore_all: true }, "Couldn't restore dismissed items."); }

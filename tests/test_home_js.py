@@ -234,7 +234,8 @@ def test_apply_ip_message_variants():
       hmApplyIpMessage(409,{error:'ip_in_use'}), hmApplyIpMessage(409,{error:'drift_changed'}),
       hmApplyIpMessage(409,{}), hmApplyIpMessage(409,null), hmApplyIpMessage(409,undefined),
       hmApplyIpMessage(404,{error:'host_not_found'}), hmApplyIpMessage(404,null),
-      hmApplyIpMessage(403,{}), hmApplyIpMessage(403,undefined),
+      hmApplyIpMessage(403,{error:'admin_required'}), hmApplyIpMessage(403,{error:'csrf_required'}),
+      hmApplyIpMessage(403,{}), hmApplyIpMessage(403,undefined), hmApplyIpMessage(403,null),
       hmApplyIpMessage(400,{error:'invalid ip'}), hmApplyIpMessage(500,null), hmApplyIpMessage(0,undefined)]""")
     generic = {"ok": False, "text": "Couldn't update the address."}
     assert out[0] == {"ok": True, "text": "Updated to 192.168.4.44"}
@@ -243,8 +244,9 @@ def test_apply_ip_message_variants():
     assert out[6] == {"ok": False, "text": "That change is no longer pending. Refreshing."}
     assert out[7:10] == [generic] * 3
     assert out[10:12] == [{"ok": False, "text": "That host is no longer in the monitored list."}] * 2
-    assert out[12:14] == [{"ok": False, "text": "Only admins can change host addresses."}] * 2
-    assert out[14:] == [generic] * 3
+    assert out[12] == {"ok": False, "text": "Only admins can change host addresses."}
+    assert out[13:17] == [{"ok": False, "text": "Session expired. Reload the page and try again."}] * 4
+    assert out[17:] == [generic] * 3
 
 
 @needs_node
