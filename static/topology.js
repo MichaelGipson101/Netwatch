@@ -184,6 +184,50 @@ function topoPillLabel(meta){
   return meta.guestPill ? '+' + meta.kids + (meta.kids === 1 ? ' guest' : ' guests') : '+' + meta.hidden;
 }
 
+// Force layout: VMs tuck behind their host. A guest is the child of a primary
+// virtual edge whose host isn't itself a guest; a guest with anything under
+// it stays a normal node. Returns {hostOf: {guest: host}, guestsOf: {host: [guests]}}.
+function topoGuestSplit(nodes, edges){
+  const idOf = v => (v !== null && typeof v === 'object') ? v.id : v;
+  const ids = new Set((nodes || []).map(n => n.id));
+  const parents = new Set();
+  (edges || []).forEach(e => parents.add(idOf(e.target)));
+  const cand = {};
+  (edges || []).forEach(e => {
+    if(e.connection_type !== 'virtual' || e.is_primary === false) return;
+    const g = idOf(e.source), h = idOf(e.target);
+    if(ids.has(g) && ids.has(h) && g !== h && !parents.has(g) && cand[g] === undefined) cand[g] = h;
+  });
+  const hostOf = {}, guestsOf = {};
+  Object.keys(cand).forEach(k => {
+    const h = cand[k];
+    if(cand[h] !== undefined) return;            // nested: the host is a guest too
+    const g = isNaN(Number(k)) ? k : Number(k);
+    hostOf[g] = h;
+    (guestsOf[h] = guestsOf[h] || []).push(g);
+  });
+  return {hostOf: hostOf, guestsOf: guestsOf};
+}
+
+// n points on a ring around (cx, cy), starting at 12 o'clock; the radius
+// grows so neighbours stay ~minGap apart.
+function topoFanPositions(cx, cy, n, minR, minGap){
+  const r = Math.max(minR || 85, ((minGap || 58) * n) / (2 * Math.PI));
+  const out = [];
+  for(let i = 0; i < n; i++){
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(n, 1);
+    out.push({x: cx + r * Math.cos(a), y: cy + r * Math.sin(a)});
+  }
+  return out;
+}
+
+// "+N" badge: red when a tucked-away guest is DOWN (only always-on hosts go
+// DOWN; quiet ones show IDLE), so collapsing never hides an outage.
+function topoGuestBadge(guestIds, nodeById){
+  const down = (guestIds || []).some(id => ((nodeById[id] || {}).status || '').toUpperCase() === 'DOWN');
+  return {label: '+' + (guestIds || []).length, down: down};
+}
+
 function topoTreePositions(trees, orient){
   const spacing = TOPO_TREE_RULES.spacing[orient] || TOPO_TREE_RULES.spacing.down;
   const sib = spacing[0], lvl = spacing[1];
@@ -355,8 +399,16 @@ function renderTopologyWeb(){
     nodes = nodes.filter(n => vis.has(n.id));   // collapsed subtrees aren't drawn
     ghosts = topoAnchorGhosts(ghosts, forest);
   }
+  let split = null;
+  if(!forest){
+    split = topoGuestSplit(nodes, scene.edges);
+    ghosts = topoAnchorGhosts(ghosts, {
+      visible: nodes.filter(n => split.hostOf[n.id] === undefined).map(n => n.id),
+      anchor: split.hostOf});
+  }
   const ctx = _topoBuildScene(container, nodes, scene.edges, ghosts);
   ctx.forest = forest;
+  ctx.split = split;
   if(forest) _layoutTree(ctx); else _layoutForce(ctx);
   _topoLastStatus = {};
   ctx.renderNodes.forEach(n => { _topoLastStatus[n.id] = n.status; });
@@ -640,17 +692,18 @@ function _topoObserveResize(ctx, onResize){
 }
 
 function _layoutForce(ctx){
-  const sim = d3.forceSimulation(ctx.renderNodes)
-    .force('link', d3.forceLink(ctx.renderEdges).id(d => d.id)
+  const guests = _topoSetupGuests(ctx);
+  const sim = d3.forceSimulation(guests.simNodes)
+    .force('link', d3.forceLink(guests.simEdges).id(d => d.id)
       .distance(d => d.connection_type === 'virtual' ? 50 : 110)
       .strength(d => d.connection_type === 'virtual' ? 0.9 : 0.5))
     .force('charge', d3.forceManyBody().strength(-450))
     .force('center', d3.forceCenter(ctx.width / 2, ctx.height / 2))
     .force('collide', d3.forceCollide().radius(d => nodeRadiusFor(d) + 10));
   _topoSimulation = sim;
-  sim.on('end', () => saveTopoLastLayout(ctx.renderNodes));
+  sim.on('end', () => saveTopoLastLayout(guests.snapshot()));
   ctx.edgePath = _topoArcPath;
-  sim.on('tick', () => _topoPositionAll(ctx));
+  sim.on('tick', () => { guests.place(); _topoPositionAll(ctx); });
 
   _topoObserveResize(ctx, (newW, newH) => {
     // Re-centre the simulation and warm it gently so nodes ease over.
@@ -663,7 +716,7 @@ function _layoutForce(ctx){
     }
   });
 
-  ctx.nodeSel.call(d3.drag()
+  ctx.nodeSel.filter(d => !guests.isGuest(d)).call(d3.drag()
     .on('start', (ev, d) => {
       if(!ev.active) sim.alphaTarget(0.3).restart();
       d.fx = d.x; d.fy = d.y;
@@ -685,8 +738,135 @@ function _layoutForce(ctx){
     sim.alphaTarget(0);
     if(_topoView === 'web' && !_topoUserAdjusted) fitTopologyToView();
   }, 4000);
-  setTimeout(() => spreadOverlappingLabels(ctx.nodeSel), 4500);
-  setTimeout(() => spreadOverlappingLabels(ctx.nodeSel), 6500);
+  setTimeout(() => spreadOverlappingLabels(guests.hostSel), 4500);
+  setTimeout(() => spreadOverlappingLabels(guests.hostSel), 6500);
+}
+
+// Guests (VMs) are drawn but tucked onto their host: hover the host to fan
+// them out, tap its "+N" badge to pin them open. They never join the
+// simulation or the saved Force positions.
+let _topoFanOpen = new Set(), _topoFanPinned = new Set(), _topoFanTimers = {};
+
+function _topoSetupGuests(ctx){
+  const split = ctx.split || {hostOf: {}, guestsOf: {}};
+  const isGuest = d => split.hostOf[d.id] !== undefined;
+  const nodeById = {};
+  ctx.renderNodes.forEach(n => { nodeById[n.id] = n; });
+  const openNow = new Set([..._topoFanPinned].filter(h => split.guestsOf[h]));
+  _topoFanOpen = openNow;
+  _topoFanPinned = new Set(openNow);
+  const progress = {};                       // host -> 0 (tucked) .. 1 (fanned)
+  Object.keys(split.guestsOf).forEach(h => { progress[h] = openNow.has(Number(h)) ? 1 : 0; });
+
+  function place(){
+    Object.keys(split.guestsOf).forEach(h => {
+      const host = ctx.nodeMap[h];
+      if(!host) return;
+      const list = split.guestsOf[h];
+      const t = progress[h] || 0;
+      const pts = topoFanPositions(host.x, host.y, list.length);
+      list.forEach((gid, i) => {
+        const g = ctx.nodeMap[gid];
+        if(!g) return;
+        g.x = host.x + (pts[i].x - host.x) * t;
+        g.y = host.y + (pts[i].y - host.y) * t;
+      });
+    });
+  }
+
+  function sync(hostId){
+    const open = _topoFanOpen.has(hostId);
+    ctx.nodeSel.filter(d => split.hostOf[d.id] === hostId).classed('topo-guest-shown', open);
+    ctx.edgeSel.filter(e => split.hostOf[e.source.id] === hostId || split.hostOf[e.target.id] === hostId)
+      .classed('topo-guest-shown', open);
+    ctx.nodeSel.filter(d => d.id === hostId).classed('topo-fan-open', open);
+  }
+
+  function animate(hostId){
+    const key = String(hostId);
+    const from = progress[key] || 0, to = _topoFanOpen.has(hostId) ? 1 : 0;
+    if(from === to) return;
+    const dur = _reducedMotion.matches ? 0 : 220, start = performance.now();
+    function step(now){
+      const k = dur ? Math.min(1, (now - start) / dur) : 1;
+      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      progress[key] = from + (to - from) * e;
+      place();
+      _topoPositionAll(ctx);
+      if(k < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function setOpen(hostId, open){
+    if(!split.guestsOf[hostId]) return;
+    if(open === _topoFanOpen.has(hostId)) return;
+    if(open) _topoFanOpen.add(hostId); else _topoFanOpen.delete(hostId);
+    sync(hostId);
+    animate(hostId);
+  }
+  function cancelClose(hostId){
+    clearTimeout(_topoFanTimers[hostId]);
+    delete _topoFanTimers[hostId];
+  }
+  function scheduleClose(hostId){
+    cancelClose(hostId);
+    if(_topoFanPinned.has(hostId)) return;
+    // Grace period: long enough to move the pointer onto a VM.
+    _topoFanTimers[hostId] = setTimeout(() => setOpen(hostId, false), 350);
+  }
+
+  ctx.nodeSel.classed('topo-guest', isGuest);
+  ctx.edgeSel.classed('topo-guest-edge', e => isGuest(e.source) || isGuest(e.target));
+  const hostSel = ctx.nodeSel.filter(d => !isGuest(d));
+  hostSel.filter(d => !!split.guestsOf[d.id])
+    .on('mouseenter.fan', (ev, d) => { cancelClose(d.id); setOpen(d.id, true); })
+    .on('mouseleave.fan', (ev, d) => scheduleClose(d.id))
+    .each(function(d){
+      const b = topoGuestBadge(split.guestsOf[d.id], nodeById);
+      const icon = this.querySelector('.topo-node-icon');
+      const half = icon ? (parseFloat(icon.getAttribute('width')) || 44) / 2 : 22;
+      const badge = d3.select(this).append('g')
+        .attr('class', 'topo-guest-badge' + (b.down ? ' down' : ''))
+        .attr('transform', 'translate(' + (half - 4) + ',' + (-half + 4) + ')')
+        .attr('role', 'button')
+        .attr('aria-label', (split.guestsOf[d.id].length) + ' VMs' + (b.down ? ', one or more down' : '') + ': show or hide')
+        .on('click', ev => {
+          ev.stopPropagation();          // the host itself still opens the drawer
+          if(_topoFanPinned.has(d.id)){ _topoFanPinned.delete(d.id); setOpen(d.id, false); }
+          else { _topoFanPinned.add(d.id); cancelClose(d.id); setOpen(d.id, true); }
+        });
+      badge.append('circle').attr('class', 'topo-guest-badge-hit').attr('r', 15);
+      badge.append('circle').attr('class', 'topo-guest-badge-bg').attr('r', 10);
+      badge.append('text').attr('dy', '0.35em').text(b.label);
+    });
+  ctx.nodeSel.filter(isGuest)
+    .on('mouseenter.fan', (ev, d) => cancelClose(split.hostOf[d.id]))
+    .on('mouseleave.fan', (ev, d) => scheduleClose(split.hostOf[d.id]));
+  // Tapping empty canvas closes every fan (a phone never fires mouse-out).
+  ctx.svg.on('click.fan', ev => {
+    if(ev.target && ev.target.closest && ev.target.closest('.topo-node, .topo-ghost, .topo-edge')) return;
+    _topoFanPinned.clear();
+    [..._topoFanOpen].forEach(h => setOpen(h, false));
+  });
+  Object.keys(split.guestsOf).forEach(h => sync(Number(h)));
+
+  return {
+    isGuest: isGuest, hostSel: hostSel, place: place,
+    simNodes: ctx.renderNodes.filter(d => !isGuest(d)),
+    simEdges: ctx.renderEdges.filter(e => !isGuest(e.source) && !isGuest(e.target)),
+    // Saved for the Overview preview: VMs in a tight ring around their host.
+    snapshot: () => {
+      const out = ctx.renderNodes.filter(d => !isGuest(d)).map(d => ({id: d.id, x: d.x, y: d.y}));
+      Object.keys(split.guestsOf).forEach(h => {
+        const host = ctx.nodeMap[h];
+        if(!host) return;
+        const pts = topoFanPositions(host.x, host.y, split.guestsOf[h].length, 30, 14);
+        split.guestsOf[h].forEach((gid, i) => out.push({id: gid, x: pts[i].x, y: pts[i].y}));
+      });
+      return out;
+    },
+  };
 }
 
 function _topoArcPath(d){

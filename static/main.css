@@ -320,6 +320,18 @@ body.nw-topo-web .topo-web{height:min(82vh,1100px)}
 /* Nodes */
 .topo-node{cursor:pointer;transition:opacity .25s}
 .topo-node.dim{opacity:.25}
+/* Force layout: VMs tucked behind their host until it's hovered / pinned */
+.topo-node.topo-guest,.topo-edge.topo-guest-edge{transition:opacity .18s ease}
+.topo-node.topo-guest:not(.topo-guest-shown),.topo-edge.topo-guest-edge:not(.topo-guest-shown){opacity:0 !important;pointer-events:none}
+.topo-guest-badge{cursor:pointer}
+.topo-guest-badge-hit{fill:transparent}
+.topo-guest-badge-bg{fill:var(--surface);stroke:var(--blue);stroke-width:1.5}
+.topo-guest-badge text{font:600 9.5px 'DM Mono',monospace;fill:var(--blue);text-anchor:middle;pointer-events:none}
+.topo-guest-badge.down .topo-guest-badge-bg{stroke:var(--red);fill:var(--red-bg)}
+.topo-guest-badge.down text{fill:var(--red)}
+.topo-fan-open .topo-guest-badge-bg{fill:var(--blue)}
+.topo-fan-open .topo-guest-badge:not(.down) text{fill:#fff}
+@media (prefers-reduced-motion:reduce){.topo-node.topo-guest,.topo-edge.topo-guest-edge{transition:none}}
 /* ─── Dimensional icon nodes ────────────────────────────────────
    The topology renders each node as a self-contained dimensional
    icon (sprite #topo-icon-{type}) sitting on top of an invisible
@@ -1888,6 +1900,13 @@ body.nw-overview-menu-open .ov-menu-toggle{color:var(--text)}
 .cx-panel-hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
 .cx-panel-hdr h2{margin:0;font-size:13.5px;font-weight:600}
 .cx-hdr-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--hint)}
+.cx-panel-hdr-toggle{margin-bottom:0}
+.cx-panel-hdr-toggle:has(+ :not([hidden])){margin-bottom:12px}
+.cx-collapse-btn{display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 0;margin:-4px 0;border:0;background:none;color:inherit;font:inherit;cursor:pointer;min-height:32px}
+.cx-collapse-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:6px}
+.cx-chev{width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s ease;opacity:.6}
+.cx-collapse-btn[aria-expanded="true"] .cx-chev{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.cx-chev{transition:none}}
 .cx-muted{color:var(--muted);font-size:13px}
 .cx-warn-text{color:var(--amber-text);font-size:13px}
 .cx-status-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}

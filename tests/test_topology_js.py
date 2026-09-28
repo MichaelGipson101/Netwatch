@@ -198,7 +198,7 @@ def test_topology_toolbar_fits_small_screens_and_version_bumped():
     assert ".topo-layout-toggle" in css
     assert "@media (max-width:380px)" in css and ".topo-web-controls" in css
     from netwatch import VERSION
-    assert VERSION == "3.79"
+    assert VERSION == "3.80"
 
 
 # ── Final-review deferred minors: pill count, ghosts into collapsed
@@ -287,3 +287,59 @@ def test_opening_a_ghost_leaves_the_tab_switch_to_the_highlight():
                "function setTab(t){ calls.push('setTab:' + t); }\n"
                "function cxHighlightSuggestion(id){ calls.push('highlight:' + id); }")
     assert js("(topologyOpenSuggestion(5), calls)", parts, prelude) == ["exit", "highlight:5"]
+
+
+# ── v3.80 polish: VMs tucked behind their host in the Force layout ──────────
+
+GUEST_HELPERS = [(TOPO_JS, "function topoGuestSplit"), (TOPO_JS, "function topoFanPositions"),
+                 (TOPO_JS, "function topoGuestBadge")]
+
+
+@needs_node
+def test_guest_split_tucks_primary_virtual_children_only():
+    import json as _json
+    nodes = [{"id": i} for i in (1, 2, 10, 11, 12, 20, 21, 30)]
+    edges = [
+        {"source": 2, "target": 1, "connection_type": "ethernet", "is_primary": True},    # node -> switch
+        {"source": 10, "target": 2, "connection_type": "virtual", "is_primary": True},    # VM
+        {"source": 11, "target": 2, "connection_type": "virtual", "is_primary": True},    # VM
+        {"source": 12, "target": 2, "connection_type": "virtual", "is_primary": False},   # not primary
+        {"source": 20, "target": 2, "connection_type": "virtual", "is_primary": True},    # has a child:
+        {"source": 21, "target": 20, "connection_type": "virtual", "is_primary": True},   #   stays visible
+        {"source": 30, "target": 99, "connection_type": "virtual", "is_primary": True},   # host not drawn
+    ]
+    out = js(f"topoGuestSplit({_json.dumps(nodes)}, {_json.dumps(edges)})", GUEST_HELPERS)
+    assert out["hostOf"] == {"10": 2, "11": 2, "21": 20}
+    assert sorted(out["guestsOf"]["2"]) == [10, 11]
+    # nested: 21's host (20) is only tucked if 20 isn't a guest - it has a child, so it isn't
+    assert out["guestsOf"]["20"] == [21]
+
+
+@needs_node
+def test_fan_positions_ring_the_host_and_grow_with_count():
+    out = js("[topoFanPositions(0, 0, 4), topoFanPositions(100, 50, 20)]", GUEST_HELPERS)
+    four, twenty = out
+    assert round(four[0]["x"]) == 0 and round(four[0]["y"]) == -85          # 12 o'clock, min radius
+    r20 = ((twenty[0]["x"] - 100) ** 2 + (twenty[0]["y"] - 50) ** 2) ** 0.5
+    assert r20 > 85                                                          # grew for 20 VMs
+    xs = [(p["x"], p["y"]) for p in twenty]
+    gaps = [((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 for a, b in zip(xs, xs[1:])]
+    assert min(gaps) >= 55                                                   # no overlapping icons
+
+
+@needs_node
+def test_guest_badge_turns_red_for_a_down_guest():
+    out = js("[topoGuestBadge([1, 2], {1: {status: 'UP'}, 2: {status: 'IDLE'}}),"
+             " topoGuestBadge([1, 2, 3], {1: {status: 'UP'}, 3: {status: 'down'}})]", GUEST_HELPERS)
+    assert out == [{"label": "+2", "down": False}, {"label": "+3", "down": True}]
+
+
+def test_force_layout_keeps_guests_out_of_the_simulation_and_saved_positions():
+    src = _src()
+    force = src[src.index("function _layoutForce("):src.index("function _topoSetupGuests(")]
+    assert "d3.forceSimulation(guests.simNodes)" in force
+    assert "d3.forceLink(guests.simEdges)" in force
+    assert "saveTopoLastLayout(guests.snapshot())" in force
+    assert "ctx.nodeSel.filter(d => !guests.isGuest(d)).call(d3.drag()" in force   # VMs aren't draggable
+    render = src[src.index("function renderTopologyWeb("):src.index("function _topoBuildScene(")]
+    assert "topoGuestSplit(" in render and "topoAnchorGhosts(" in render

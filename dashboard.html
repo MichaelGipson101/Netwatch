@@ -426,8 +426,9 @@
         <div id="cx-ports"></div>
       </section>
       <section class="cx-panel cx-area-table" aria-labelledby="cx-table-title">
-        <div class="cx-panel-hdr"><h2 id="cx-table-title">All connections</h2></div>
-        <div id="cx-table"></div>
+        <div class="cx-panel-hdr cx-panel-hdr-toggle"><h2 id="cx-table-title"><button type="button" class="cx-collapse-btn"
+          id="cx-table-toggle" aria-expanded="false" aria-controls="cx-table" onclick="cxToggleTable()"><span class="cx-chev" aria-hidden="true"></span>All connections</button></h2><span class="cx-hdr-count" id="cx-table-count"></span></div>
+        <div id="cx-table" hidden></div>
       </section>
     </div>
   </div>

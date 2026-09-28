@@ -7,7 +7,7 @@
     ups: 'var(--amber)', disk: '#059669', peripheral: '#6b7280',
     tablet: '#0d9488', phone: '#a21caf', printer: '#92400e' };
 
-  var _mounted = { proxmox: null, nas: null, inventory: null, briefs: null };
+  var _mounted = { proxmox: null, nas: null, inventory: null, briefs: null, ports: null };
 
   // Overview hides the tab bar; the hamburger next to the greeting toggles it.
   window.toggleOverviewMenu = function () {
@@ -32,6 +32,10 @@
       .then(function (d) { _mounted.nas = d; _renderServers(); }).catch(function () {});
     fetch('/api/inventory').then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) { if (d) { _mounted.inventory = d; _renderInventory(); } }).catch(function () {});
+    _renderPorts();
+    if (typeof cxLoadPortMaps === 'function') {
+      cxLoadPortMaps().then(function (maps) { _mounted.ports = maps; _renderPorts(); }).catch(function () {});
+    }
     fetch('/api/brief').then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) { if (d) { _mounted.briefs = d; _renderBrief(); } }).catch(function () {});
     if (typeof mountQuickLinksCard === 'function') mountQuickLinksCard();
@@ -79,6 +83,7 @@
       + _card('topology', 'Topology', 'topology', '',
         '<div class="ov-topo-box"><svg id="ov-topo-svg" width="100%" height="100%" viewBox="0 0 200 110"></svg>'
         + '<div class="ov-empty ov-topo-placeholder" id="ov-topo-placeholder" style="display:none">Open Topology to build the map</div></div>')
+      + _card('ports', 'Switch ports', 'connections', 'ov-span2', '<div id="ov-ports-body"></div>')
       + _card('servers', 'Servers', 'servers', '', '<div id="ov-servers-list" class="ov-rows"></div>')
       + _card('events', 'Events', 'events', '', '<div id="ov-events-list" class="ov-rows"></div>')
       + _card('inventory', 'Inventory', 'inventory', '',
@@ -93,6 +98,16 @@
     return '<div class="ov-card ' + extraCls + '" id="ov-card-' + id + '">'
       + '<div class="ov-card-hdr"><span class="ov-card-title">' + title + '</span>' + link + '</div>'
       + body + '</div>';
+  }
+
+  // Copy of the Connections tab's port map; hidden until a switch is found.
+  function _renderPorts () {
+    var card = document.getElementById('ov-card-ports');
+    if (!card) return;
+    var maps = _mounted.ports || [];
+    var has = typeof cxLivePortMaps === 'function' && cxLivePortMaps(maps).length > 0;
+    card.style.display = has ? '' : 'none';
+    if (has) document.getElementById('ov-ports-body').innerHTML = cxPortFacesHtml(maps);
   }
 
   function _renderPower () {

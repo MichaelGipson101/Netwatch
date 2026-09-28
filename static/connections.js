@@ -26,7 +26,43 @@ let _cxState = {
   filter: 'all', query: '', highlightConn: null, highlightSugg: null, highlightAfterSeq: 0, suggSeq: 0,
   editingConn: null, editDraft: null, editPorts: undefined, editOrig: null, pendingEdit: null, editFocus: null,
   swappedIds: {}, drafts: {}, busy: {}, unmonitored: null, monitorBusy: false,
+  tableOpen: null,   // null = not read from localStorage yet
 };
+
+// ── "All connections" is collapsed until opened; the choice is remembered.
+// Actions that need a row (Fix…, highlights, an uplink tile) open it for
+// this session without changing the remembered choice.
+const CX_TABLE_OPEN_KEY = 'nw-cx-table-open';
+
+function cxTableIsOpen(){
+  if(_cxState.tableOpen === null){
+    let v = null;
+    try { v = localStorage.getItem(CX_TABLE_OPEN_KEY); } catch(e){}
+    _cxState.tableOpen = v === '1';
+  }
+  return _cxState.tableOpen;
+}
+
+function cxApplyTableOpen(){
+  const open = cxTableIsOpen();
+  const el = document.getElementById('cx-table');
+  const btn = document.getElementById('cx-table-toggle');
+  if(el) el.hidden = !open;
+  if(btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function cxSetTableOpen(open, remember){
+  _cxState.tableOpen = !!open;
+  if(remember){
+    try { localStorage.setItem(CX_TABLE_OPEN_KEY, open ? '1' : '0'); } catch(e){}
+  }
+  cxApplyTableOpen();
+  if(open) renderCxTable();
+}
+
+function cxToggleTable(){
+  cxSetTableOpen(!cxTableIsOpen(), true);
+}
 
 // The quick add control mounted in this workspace (not the drawer/port-map
 // ones) - locked while migration-pending so its Add button can't be used on
@@ -430,6 +466,10 @@ function cxEditRowHtml(c, issues){
 function renderCxTable(){
   const el = document.getElementById('cx-table');
   if(!el) return;
+  cxApplyTableOpen();
+  const countEl = document.getElementById('cx-table-count');
+  const all = (_cxState.connections && _cxState.connections.items) || [];
+  if(countEl) countEl.textContent = _cxState.connections ? String(all.length) : '';
   if(!el.querySelector('.cx-table-tools')){
     el.innerHTML = '<div class="cx-table-tools">'
       + '<div class="cx-filter-chips" role="group" aria-label="Filter connections"></div>'
@@ -630,6 +670,7 @@ function cxHighlightConnection(id, opts){
   _cxState.query = '';
   _cxState.highlightConn = id;
   _cxState.editFocus = (opts && opts.focus) || null;
+  cxSetTableOpen(true, false);
   if(opts && opts.edit) cxStartEdit(id);
   else cxRenderTableRows({force: true});
 }
@@ -1087,13 +1128,15 @@ function cxTileHtml(deviceId, p){
   return '<div class="cx-tile cx-tile-down" title="' + escapeHtml(t.title) + '">' + inner + '</div>';
 }
 
-function renderCxPortMaps(){
-  const panel = document.getElementById('cx-ports-panel');
-  const el = document.getElementById('cx-ports');
-  if(!panel || !el) return;
-  const maps = (_cxState.portMaps || []).filter(m => m.data && m.data.live && m.data.ports);
-  panel.hidden = maps.length === 0;
-  el.innerHTML = maps.map(m =>
+// Switches that have a live port list: [{device_id, name, data}] -> drawable.
+function cxLivePortMaps(maps){
+  return (maps || []).filter(m => m && m.data && m.data.live && m.data.ports);
+}
+
+// One renderer for the Connections panel and its Overview copy: tile clicks
+// switch to Connections themselves, so the copy needs nothing extra.
+function cxPortFacesHtml(maps){
+  return cxLivePortMaps(maps).map(m =>
     '<div class="cx-face">'
     + '<div class="cx-face-hdr">' + deviceIcon('network', 20) + '<span class="cx-face-name">' + escapeHtml(m.name) + '</span>'
     + '<span class="cx-face-legend"><span><i class="cx-led up"></i>link up</span><span><i class="cx-led down"></i>down</span>'
@@ -1102,8 +1145,26 @@ function renderCxPortMaps(){
     + '</div>').join('');
 }
 
+function renderCxPortMaps(){
+  const panel = document.getElementById('cx-ports-panel');
+  const el = document.getElementById('cx-ports');
+  if(!panel || !el) return;
+  panel.hidden = cxLivePortMaps(_cxState.portMaps).length === 0;
+  el.innerHTML = cxPortFacesHtml(_cxState.portMaps);
+}
+
+// Port maps for callers outside the Connections tab (the Overview card).
+async function cxLoadPortMaps(){
+  const status = await cxGetJson('/api/discovery/status');
+  const maps = (status && status.port_maps) || [];
+  const ports = await Promise.all(maps.map(m => cxGetJson('/api/ports/' + m.device_id)));
+  return maps.map((m, i) => ({device_id: m.device_id, name: m.name, data: ports[i]}));
+}
+
 // Up-but-unrecorded tile: open quick add with the switch and port filled in.
 function cxQuickAddAt(deviceId, port){
+  const view = document.getElementById('view-connections');
+  if(view && !view.classList.contains('active')) setTab('connections');   // from the Overview copy
   const box = document.getElementById('cx-quick');
   if(!box) return;
   const qa = renderQuickAdd(box, {b_id: deviceId, parent_port: port, onAdded: () => connectionsChanged()});

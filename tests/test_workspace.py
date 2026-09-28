@@ -894,7 +894,7 @@ def test_workspace_breakpoints_are_present():
 
 def test_version_bumped_for_new_static_assets():
     from netwatch import VERSION
-    assert VERSION == "3.79"
+    assert VERSION == "3.80"
 
 
 # ── Whole-branch review fix wave (Minor findings 1, 3, 4, 6) ────────────────
@@ -1299,3 +1299,42 @@ def test_guest_banner_shows_for_admins_until_snoozed_for_this_set():
     assert "1 without autostart will be added without alerts" in banner
     assert "2 more have no IP yet" in banner and "cxMonitorAllGuests()" in banner
     assert key == "3,5,7,8,9" and snoozed == "" and newer is True and non_admin == ""
+
+
+# ── v3.80 polish: collapsible "All connections", Overview port-map copy ─────
+
+@needs_node
+def test_all_connections_starts_collapsed_and_remembers_only_explicit_toggles():
+    parts = [(CX_JS, "const CX_TABLE_OPEN_KEY"), (CX_JS, "function cxTableIsOpen"),
+             (CX_JS, "function cxApplyTableOpen"), (CX_JS, "function cxSetTableOpen"),
+             (CX_JS, "function cxToggleTable")]
+    prelude = ("let _cxState = {tableOpen: null}; let _store = {}; let renders = 0;"
+               "const localStorage = {getItem: k => (k in _store ? _store[k] : null), setItem: (k, v) => { _store[k] = v; }};"
+               "const table = {hidden: false}, btn = {attrs: {}, setAttribute(k, v){ this.attrs[k] = v; }};"
+               "global.document = {getElementById: id => id === 'cx-table' ? table : id === 'cx-table-toggle' ? btn : null};"
+               "function renderCxTable(){ renders++; }")
+    out = run_js(parts, "(() => { const r = [];"
+                        " cxApplyTableOpen(); r.push([table.hidden, btn.attrs['aria-expanded']]);"          # default: collapsed
+                        " cxSetTableOpen(true, false); r.push([table.hidden, _store['nw-cx-table-open'] || null, renders]);"  # Fix…: opens, not remembered
+                        " _cxState.tableOpen = null; r.push(cxTableIsOpen());"                              # next load: collapsed again
+                        " cxToggleTable(); r.push([table.hidden, _store['nw-cx-table-open']]);"              # user opens: remembered
+                        " _cxState.tableOpen = null; r.push(cxTableIsOpen());"
+                        " return r; })()", prelude)
+    assert out == [[True, "false"], [False, None, 1], False, [False, "1"], True]
+
+
+@needs_node
+def test_port_faces_renderer_is_shared_and_skips_switches_without_live_ports():
+    parts = [(UTILS_JS, "function escapeHtml"), (CX_JS, "function cxShortPortName"),
+             (CX_JS, "function cxFmtSpeed"), (CX_JS, "function cxPortTile"), (CX_JS, "function cxTileHtml"),
+             (CX_JS, "function cxLivePortMaps"), (CX_JS, "function cxPortFacesHtml")]
+    maps = ("[{device_id: 1, name: 'USW', data: {live: true, ports: [{name: 'Port 1', up: true, occupants: []}]}},"
+            " {device_id: 2, name: 'Old switch', data: {live: false, ports: []}}, null]")
+    out = run_js(parts, f"[cxLivePortMaps({maps}).length, cxPortFacesHtml({maps}), cxPortFacesHtml(null)]",
+                 "function deviceIcon(){ return '<svg></svg>'; }")
+    n, html, empty = out
+    assert n == 1 and "USW" in html and "Old switch" not in html and "cxQuickAddAt(1," in html
+    assert empty == ""
+    with open(os.path.join(STATIC, "overview.js"), encoding="utf-8") as f:
+        ov = f.read()
+    assert "cxPortFacesHtml(maps)" in ov and "_card('ports', 'Switch ports', 'connections'" in ov
