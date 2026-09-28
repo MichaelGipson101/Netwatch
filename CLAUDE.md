@@ -104,7 +104,11 @@ Major subsystems, by module:
   pending connection suggestions and `IPDriftMonitor` results (hosts that are checked and
   currently down whose MAC is seen only at other IPs in the Pi's neighbor table), and writes a
   deterministic headline: never LLM-generated. `Explainer` backs `POST /api/attention/explain`, a
-  cached, rate-limited one-shot OpenRouter call that sees only the attention items.
+  cached, rate-limited one-shot OpenRouter call that sees only the attention items. Poller
+  conditions can be dismissed from Home (`AlertLedger.dismiss/restore_all/dismissed_count`, stamped
+  in `alert_state.dismissed_at`); dismissed rows stay visible to `AlertGate` so the poller can still
+  clear them, and a recurrence after a clear is a fresh alert that shows again. `host_facts` seeds
+  `first_down_at` from ongoing incidents so "down for X" survives restarts.
 - `netwatch/http_handlers.py` — `build_topology_payload` / `build_api_payload` (assemble the
   JSON the frontend polls; topology payload merges live host status onto inventory records +
   connection edges) plus every `_h_get_*`/`_h_post_*` handler function, each taking whatever
@@ -113,7 +117,8 @@ Major subsystems, by module:
   function here and wire it up as a branch in `netwatch/server.py`'s `do_GET`/`do_POST`,
   following the existing naming convention. Home's attention endpoints live here:
   `GET /api/attention` (verdict + items, never errors), `GET /api/heartbeat` (per-host 48
-  half-hour buckets over 24h, cached 60s), and `POST /api/attention/explain`.
+  half-hour buckets over 24h, cached 60s), `POST /api/attention/explain`, and
+  `POST /api/attention/dismiss` (admin only; `{"id":"alert:<cond>"}` or `{"restore_all":true}`).
 - `netwatch/server.py` — **HTTP layer**: `make_handler()` builds a `BaseHTTPRequestHandler`
   subclass with `do_GET`/`do_POST` implemented as long if/elif chains over `self.path` (no
   routing library/decorator table), dispatching to the `_h_*` handlers in `http_handlers.py`.
@@ -157,7 +162,11 @@ area: `hosts.js`, `events.js`, `briefs.js`, `drawer.js`, `hosts-editor.js`, `pow
 `topology.js`, `topology-cards.js`, `inventory.js`, `connections.js`, `quickadd.js`,
 `quicklinks.js`, `overview.js`, `proxmox.js`, `nas.js`. A script loaded on one page must not
 assume another page's elements or functions exist (guard the lookup, or move the code into a
-script that page loads — `drawer.js` is on Monitor and Lab, `inventory.js` is Lab-only). No
+script that page loads — `drawer.js` is on Monitor and Lab, `inventory.js` is Lab-only). Home
+(`overview.js` + `templates/home.html`) is the glance page: the verdict text comes from
+`/api/attention`, the pure `hm*` helpers at the top of `overview.js` are node-tested in
+`tests/test_home_js.py`, and Home polls attention every 15s and its slower sources every 60s,
+throttled off the `nwStatus` poll (and not at all while the tab is hidden). No
 bundler, no framework, no CDN dependencies (D3 and fonts are vendored under `static/` so the
 dashboard works on an isolated LAN).
 

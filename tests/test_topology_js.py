@@ -202,7 +202,7 @@ def test_topology_toolbar_fits_small_screens_and_version_bumped():
     assert ".topo-layout-toggle" in css
     assert "@media (max-width:380px)" in css and ".topo-web-controls" in css
     from netwatch import VERSION
-    assert VERSION == "3.83"
+    assert VERSION == "3.84"
 
 
 # ── Final-review deferred minors: pill count, ghosts into collapsed
