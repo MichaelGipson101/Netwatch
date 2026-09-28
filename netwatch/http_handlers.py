@@ -16,9 +16,12 @@ from urllib.parse import urlparse, parse_qs
 from netwatch.storage import InventoryDB
 from netwatch.network import (
     _detect_mac_for_ip, send_wol_packet, read_pi_health,
-    start_discovery_scan, get_discovery_state,
+    start_discovery_scan, get_discovery_state, HOSTS_WRITE_LOCK,
 )
-from netwatch.hosts import load_yaml, _validate_url, validate_hosts_config, save_hosts_config
+from netwatch.hosts import (
+    load_yaml, _validate_url, validate_hosts_config, save_hosts_config,
+    add_monitored_hosts, guest_host_entry, monitored_keys,
+)
 from netwatch.pollers import PROXMOX_NODE_RE
 from netwatch.auth import verify_maintenance_token
 
@@ -504,30 +507,33 @@ def _h_post_settings(data: dict, config_path: str, settings: dict, auth_manager=
                     auth_manager.data[k] = v
             auth_manager._save()
 
-    try:
-        existing = load_yaml(config_path) or {}
-    except Exception:
-        existing = {}
-    existing_settings = dict(existing.get("settings", {}))
+    # Same lock as every other hosts.yaml writer, so a guest added by
+    # discovery between our read and write isn't dropped.
+    with HOSTS_WRITE_LOCK:
+        try:
+            existing = load_yaml(config_path) or {}
+        except Exception:
+            existing = {}
+        existing_settings = dict(existing.get("settings", {}))
 
-    for k, v in yaml_updates.items():
-        if v is None:
-            existing_settings.pop(k, None)
-            settings.pop(k, None)
-        else:
-            existing_settings[k] = v
-            settings[k] = v
+        for k, v in yaml_updates.items():
+            if v is None:
+                existing_settings.pop(k, None)
+                settings.pop(k, None)
+            else:
+                existing_settings[k] = v
+                settings[k] = v
 
-    new_config = {"settings": existing_settings, "hosts": existing.get("hosts", [])}
-    tmp_path = config_path + ".tmp"
-    try:
-        with open(tmp_path, "w") as f:
-            yaml.safe_dump(new_config, f, sort_keys=False, default_flow_style=False)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, config_path)
-    except Exception as e:
-        logging.exception("settings save error")
-        return 500, {"error": f"Failed to save settings: {e}"}
+        new_config = {"settings": existing_settings, "hosts": existing.get("hosts", [])}
+        tmp_path = config_path + ".tmp"
+        try:
+            with open(tmp_path, "w") as f:
+                yaml.safe_dump(new_config, f, sort_keys=False, default_flow_style=False)
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, config_path)
+        except Exception as e:
+            logging.exception("settings save error")
+            return 500, {"error": f"Failed to save settings: {e}"}
 
     result = {k: settings[k] for k in SETTINGS_EDITABLE_KEYS if k in settings}
     if auth_manager:

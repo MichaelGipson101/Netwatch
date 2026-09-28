@@ -14,6 +14,7 @@ import yaml
 from netwatch.network import (
     _detect_mac_for_ip, _normalise_mac, _save_detected_mac, _get_dashboard_url,
     _send_alert_async, _is_local_ip, _ARP_SAVED_THIS_SESSION, NTFY_DOWN_THRESHOLD,
+    HOSTS_WRITE_LOCK,
 )
 from netwatch.auth import make_maintenance_token
 
@@ -690,6 +691,11 @@ def validate_hosts_config(config):
 
 
 def save_hosts_config(path, new_hosts):
+    with HOSTS_WRITE_LOCK:
+        _save_hosts_config_locked(path, new_hosts)
+
+
+def _save_hosts_config_locked(path, new_hosts):
     try:
         existing = load_yaml(path) or {}
     except Exception:
@@ -725,3 +731,54 @@ def save_hosts_config(path, new_hosts):
         yaml.safe_dump(new_config, f, sort_keys=False, default_flow_style=False)
     os.chmod(tmp_path, 0o600)  # hosts.yaml carries the OpenRouter key + ntfy topic
     os.replace(tmp_path, path)
+
+
+GUEST_HOST_GROUP = "Virtual Machines"
+GUEST_HOST_INTERVAL = 15
+
+
+def guest_host_entry(record):
+    """hosts.yaml entry for a Proxmox guest inventory record, or None without
+    an IP. Alerting follows Proxmox autostart: a guest that isn't meant to
+    stay up shows IDLE when off and never pages (unknown autostart = on)."""
+    ip = str(record.get("ip") or "").strip()
+    name = str(record.get("system") or "").strip()
+    if not ip or not name:
+        return None
+    autostart = (record.get("properties") or {}).get("autostart", True) is not False
+    return {"name": name, "ip": ip, "group": GUEST_HOST_GROUP,
+            "interval": GUEST_HOST_INTERVAL, "always_on": autostart, "alert": autostart}
+
+
+def monitored_keys(hosts):
+    """(ips, lowercased names) already in a hosts list."""
+    hosts = [h for h in hosts or [] if isinstance(h, dict)]
+    return ({str(h.get("ip") or "").strip() for h in hosts} - {""},
+            {str(h.get("name") or "").strip().lower() for h in hosts} - {""})
+
+
+def add_monitored_hosts(path, entries):
+    """Append entries to hosts.yaml, skipping any whose IP or name (any case)
+    is already monitored. Re-reads the file under HOSTS_WRITE_LOCK so a
+    concurrent write isn't lost. Returns (added, all_hosts); the caller
+    reloads HostManager with all_hosts when anything was added."""
+    with HOSTS_WRITE_LOCK:
+        hosts = list((load_yaml(path) or {}).get("hosts") or [])
+        ips, names = monitored_keys(hosts)
+        added = []
+        for e in entries or []:
+            if not e:
+                continue
+            ip, name = e["ip"], e["name"]
+            if ip in ips or name.lower() in names:
+                continue
+            hosts.append(dict(e))
+            added.append(dict(e))
+            ips.add(ip)
+            names.add(name.lower())
+        if added:
+            ok, err = validate_hosts_config({"hosts": hosts})
+            if not ok:
+                raise ValueError(err)
+            _save_hosts_config_locked(path, hosts)
+        return added, hosts

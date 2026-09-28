@@ -12,7 +12,11 @@ import subprocess
 # Lock for serializing writes to hosts.yaml from the ping thread.
 # Uses the same lock the host_manager uses for config reloads, but we need
 # our own here since this module-level helper can't reach into HostManager.
-_ARP_WRITE_LOCK = threading.Lock()
+# Every read-modify-write of hosts.yaml (Settings -> Hosts, settings save,
+# ARP MAC write-back, guest monitoring) holds this, so no writer drops
+# another's change. Reentrant: add_monitored_hosts calls save_hosts_config.
+HOSTS_WRITE_LOCK = threading.RLock()
+_ARP_WRITE_LOCK = HOSTS_WRITE_LOCK
 
 # Track which IPs we've already auto-saved a MAC for in this session.
 # Prevents rewriting hosts.yaml on every successful ping.

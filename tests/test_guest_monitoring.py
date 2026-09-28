@@ -92,3 +92,70 @@ def test_fetch_proxmox_reads_running_guests_ips():
     assert not any("/103/" in x and "config" not in x for x in p.paths)   # stopped: not asked
     obs = {o["name"]: o for o in proxmox_observations(snap) if o["type"] == "guest"}
     assert obs["pihole"]["ip"] == "192.168.6.14" and obs["netbsd"]["ip"] is None
+
+
+# ── hosts.yaml: guest entries + add_monitored_hosts ──────────────────────────
+
+from netwatch.hosts import add_monitored_hosts, guest_host_entry
+from netwatch.network import HOSTS_WRITE_LOCK
+
+BASE_CONFIG = {"settings": {"default_interval": 30, "ntfy_topic": "Netwatch"},
+               "hosts": [{"name": "PrintServer", "ip": "192.168.6.170", "group": "Virtual Machines"},
+                         {"name": "HomeAssistant", "ip": "192.168.5.110"}]}
+
+
+def _write_config(d, cfg=BASE_CONFIG):
+    path = os.path.join(d, "hosts.yaml")
+    with open(path, "w") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+    return path
+
+
+def test_guest_entry_follows_autostart():
+    on = guest_host_entry({"system": "pihole", "ip": "192.168.6.14",
+                           "properties": {"autostart": True}})
+    assert on == {"name": "pihole", "ip": "192.168.6.14", "group": "Virtual Machines",
+                  "interval": 15, "always_on": True, "alert": True}
+    off = guest_host_entry({"system": "Solaris10", "ip": "192.168.6.129",
+                            "properties": {"autostart": False}})
+    assert (off["always_on"], off["alert"]) == (False, False)
+    unknown = guest_host_entry({"system": "Jellyfin", "ip": "192.168.6.224", "properties": {}})
+    assert (unknown["always_on"], unknown["alert"]) == (True, True)
+    assert guest_host_entry({"system": "wow", "ip": None, "properties": {}}) is None
+    assert guest_host_entry({"system": "", "ip": "1.2.3.4"}) is None
+
+
+def test_add_monitored_hosts_dedupes_and_keeps_settings():
+    with tempfile.TemporaryDirectory() as d:
+        path = _write_config(d)
+        entries = [guest_host_entry({"system": "pihole", "ip": "192.168.6.14"}),
+                   guest_host_entry({"system": "printserver", "ip": "192.168.6.99"}),   # name, any case
+                   guest_host_entry({"system": "haos13.2", "ip": "192.168.5.110"}),     # same IP
+                   guest_host_entry({"system": "pihole", "ip": "192.168.6.15"}),        # dup in batch
+                   None]
+        added, hosts = add_monitored_hosts(path, entries)
+        assert [a["name"] for a in added] == ["pihole"]
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["settings"] == BASE_CONFIG["settings"]
+        assert [h["name"] for h in cfg["hosts"]] == ["PrintServer", "HomeAssistant", "pihole"]
+        assert hosts == cfg["hosts"]
+        assert os.listdir(os.path.join(d, "backups"))            # save_hosts_config backed up
+        assert add_monitored_hosts(path, entries)[0] == []       # idempotent: nothing to add
+
+
+def test_add_monitored_hosts_waits_for_the_shared_write_lock():
+    with tempfile.TemporaryDirectory() as d:
+        path = _write_config(d)
+        done = threading.Event()
+
+        def worker():
+            add_monitored_hosts(path, [guest_host_entry({"system": "pihole", "ip": "192.168.6.14"})])
+            done.set()
+
+        with HOSTS_WRITE_LOCK:
+            t = threading.Thread(target=worker)
+            t.start()
+            assert not done.wait(0.3)                            # blocked behind the holder
+        t.join(5)
+        assert done.is_set()
