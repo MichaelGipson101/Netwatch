@@ -18,6 +18,7 @@ from netwatch.hosts import HostManager, IncidentLog, load_yaml
 from netwatch.pollers import NASPoller, ProxmoxPoller, PBSPoller, HAPoller, UPSPoller
 from netwatch.discovery import DiscoveryRunner
 from netwatch.server import start_web_server
+from netwatch.pages import render_all
 from netwatch.tui import draw_tui
 
 # monitor.py, hosts.yaml, auth.json, netwatch.db, monitor.log, and
@@ -70,6 +71,7 @@ def main():
     config_path = os.path.join(_REPO_ROOT, args.config)
     base_dir = _REPO_ROOT
     dashboard_html = _load_dashboard_html(base_dir)
+    pages_html = render_all(base_dir, VERSION)
     config   = load_yaml(config_path)
     settings = config.get("settings", {})
     default_interval = settings.get("default_interval", 30)
@@ -180,8 +182,8 @@ def main():
     if not args.no_web:
         wt = threading.Thread(
             target=start_web_server,
-            args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, dashboard_html, history_db),
-            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db, "discovery_runner": discovery_runner},
+            args=(host_manager, settings, config_path, args.port, stop_event, incident_log, auth_manager, inventory_db, pages_html["home"], history_db),
+            kwargs={"nas_poller": nas_poller, "proxmox_poller": proxmox_poller, "ha_poller": ha_poller, "pbs_poller": pbs_poller, "ups_poller": ups_poller, "static_dir": os.path.join(base_dir, "static"), "quicklinks_db": quicklinks_db, "discovery_runner": discovery_runner, "pages": pages_html},
             daemon=True
         )
         wt.start()

@@ -1,0 +1,243 @@
+  <div class="view" id="view-topology">
+    <div class="problem-banner" id="problem-banner">
+      <div class="problem-banner-hdr">
+        <span class="problem-banner-icon">⚠</span>
+        <div class="problem-banner-title" id="problem-banner-title">Hosts offline</div>
+      </div>
+      <div class="problem-banner-list" id="problem-banner-list"></div>
+    </div>
+    <div class="topo-view-toolbar">
+      <div class="topo-view-toggle">
+        <button class="topo-view-btn" id="topo-view-cards" onclick="setTopoView('cards')">Cards</button>
+        <button class="topo-view-btn" id="topo-view-web" onclick="setTopoView('web')">Web</button>
+      </div>
+      <button class="topo-view-btn topo-view-btn-ghost topo-fullscreen-btn"
+              id="topo-fullscreen-btn"
+              title="Enter fullscreen kiosk view (Esc to exit)"
+              onclick="enterTopologyFullscreen()">
+        <span class="topo-fs-icon">⛶</span>
+        <span class="topo-fs-label">Fullscreen</span>
+      </button>
+      <div class="topo-web-controls" id="topo-web-controls">
+        <div class="topo-layout-toggle" role="group" aria-label="Layout">
+          <button type="button" class="topo-view-btn" id="topo-layout-force" onclick="setTopoLayout('force')">Force</button>
+          <button type="button" class="topo-view-btn" id="topo-layout-tree" onclick="setTopoLayout('tree')">Tree</button>
+        </div>
+        <label class="topo-web-toggle">
+          <input type="checkbox" onchange="topologyToggleUnconnected(this.checked)">
+          Include unconnected <span id="topo-uncon-count" class="topo-uncon-count"></span>
+        </label>
+        <label class="topo-web-toggle">
+          <input type="checkbox" id="topo-ghost-toggle" checked onchange="topologyToggleGhosts(this.checked)">
+          Show suggestions
+        </label>
+        <button class="topo-view-btn topo-view-btn-ghost" onclick="fitTopologyToView()" title="Frame the graph to fit the viewport">Fit to view</button>
+        <button id="topo-reset-btn" class="topo-view-btn topo-view-btn-ghost" onclick="topologyResetPositions()">Reset positions</button>
+      </div>
+    </div>
+    <div class="topo-grid" id="topo-grid"></div>
+    <div class="topo-web" id="topo-web" style="display:none">
+      <!-- Status legend - hidden by default, opens via the ? button -->
+      <button class="topo-legend-btn" id="topo-legend-btn"
+              title="What do the colors mean?"
+              onclick="toggleTopologyLegend()">?</button>
+      <div class="topo-legend" id="topo-legend">
+        <div class="topo-legend-hdr">
+          <span>Legend</span>
+          <button class="topo-legend-close" onclick="toggleTopologyLegend()">&times;</button>
+        </div>
+        <div class="topo-legend-section">
+          <div class="topo-legend-title">Node types</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-host"/></svg>Host</div>
+          <div class="topo-legend-row"><svg width="18" height="18" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-vm"/></svg>VM</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-network"/></svg>Network device</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-ups"/></svg>UPS</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-disk"/></svg>Disk</div>
+          <div class="topo-legend-row"><svg width="22" height="22" viewBox="0 0 32 32" class="topo-legend-icon topo-status-up" aria-hidden="true"><use href="#topo-icon-peripheral"/></svg>Peripheral</div>
+        </div>
+        <div class="topo-legend-section">
+          <div class="topo-legend-title">Status border</div>
+          <div class="topo-legend-row"><span class="topo-legend-dot topo-leg-up"></span>Up</div>
+          <div class="topo-legend-row"><span class="topo-legend-dot topo-leg-degraded"></span>Degraded</div>
+          <div class="topo-legend-row"><span class="topo-legend-dot topo-leg-down"></span>Down</div>
+          <div class="topo-legend-row"><span class="topo-legend-dot topo-leg-idle"></span>Idle / unmonitored</div>
+        </div>
+        <div class="topo-legend-section">
+          <div class="topo-legend-title">Connections</div>
+          <div class="topo-legend-row"><svg class="topo-legend-svg-line" width="28" height="6" viewBox="0 0 28 6"><line class="leg-eth" x1="2" y1="3" x2="26" y2="3" stroke-width="2" stroke-linecap="round"/></svg>Ethernet</div>
+          <div class="topo-legend-row"><svg class="topo-legend-svg-line" width="28" height="6" viewBox="0 0 28 6"><line class="leg-wifi" x1="2" y1="3" x2="26" y2="3" stroke-width="2" stroke-dasharray="1,3" opacity="0.85" stroke-linecap="round"/></svg>WiFi</div>
+          <div class="topo-legend-row"><svg class="topo-legend-svg-line" width="28" height="6" viewBox="0 0 28 6"><line class="leg-fiber" x1="2" y1="3" x2="26" y2="3" stroke-width="2" stroke-dasharray="4,2" stroke-linecap="round"/></svg>Fiber</div>
+          <div class="topo-legend-row"><svg class="topo-legend-svg-line" width="28" height="6" viewBox="0 0 28 6"><line class="leg-power" x1="2" y1="3" x2="26" y2="3" stroke-width="2" stroke-dasharray="8,3" stroke-linecap="round"/></svg>Power</div>
+          <div class="topo-legend-row"><svg class="topo-legend-svg-line" width="28" height="6" viewBox="0 0 28 6"><line class="leg-virtual" x1="2" y1="3" x2="26" y2="3" stroke-width="1.5" stroke-dasharray="3,2" stroke-linecap="round"/></svg>Virtual (VM &#8594; host)</div>
+          <div class="topo-legend-row"><svg class="topo-legend-svg-line" width="28" height="6" viewBox="0 0 28 6"><line class="leg-dead" x1="2" y1="3" x2="26" y2="3" stroke-width="2" stroke-dasharray="3,3" opacity="0.6" stroke-linecap="round"/></svg>Offline / idle endpoint</div>
+        </div>
+      </div>
+      <!-- Fullscreen overlay elements - only visible when topo-fullscreen-active
+           class is on the body. The wordmark + close button float over the SVG. -->
+      <div class="topo-fs-wordmark" aria-hidden="true">netwatch</div>
+      <button class="topo-fs-fit"
+              title="Fit graph to view"
+              onclick="fitTopologyToView()">⧇</button>
+      <button class="topo-fs-close"
+              title="Exit fullscreen (Esc)"
+              onclick="exitTopologyFullscreen()">×</button>
+      <div class="topo-web-svg-host" id="topo-web-svg-host"></div>
+      <!-- Overlay metric blocks: shown when in web mode, positioned
+           absolutely over the canvas in the corners. They mirror the
+           data from the main metrics row above but in a compact form. -->
+      <div class="topo-web-overlay topo-web-overlay-tl" id="topo-overlay-status">
+        <div class="topo-overlay-row">
+          <div class="topo-overlay-stat">
+            <div class="topo-overlay-num" id="ov-up">-</div>
+            <div class="topo-overlay-lbl">Hosts up</div>
+          </div>
+          <div class="topo-overlay-divider"></div>
+          <div class="topo-overlay-stat">
+            <div class="topo-overlay-num" id="ov-tot">-</div>
+            <div class="topo-overlay-lbl">Total</div>
+          </div>
+        </div>
+      </div>
+      <div class="topo-web-overlay topo-web-overlay-tr" id="topo-overlay-perf">
+        <div class="topo-overlay-row">
+          <div class="topo-overlay-stat">
+            <div class="topo-overlay-num" id="ov-lat">-<span class="topo-overlay-unit">ms</span></div>
+            <div class="topo-overlay-lbl">Latency</div>
+          </div>
+          <div class="topo-overlay-divider"></div>
+          <div class="topo-overlay-stat">
+            <div class="topo-overlay-num" id="ov-upt">-<span class="topo-overlay-unit">%</span></div>
+            <div class="topo-overlay-lbl">Uptime</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="view" id="view-connections">
+    <div class="cx-grid">
+      <section class="cx-panel cx-area-status" id="cx-status" aria-label="Discovery sources"></section>
+      <section class="cx-panel cx-area-quick" aria-labelledby="cx-quick-title">
+        <div class="cx-panel-hdr"><h2 id="cx-quick-title">Add a connection</h2></div>
+        <div id="cx-quick"></div>
+      </section>
+      <section class="cx-panel cx-area-sugg" aria-labelledby="cx-sugg-title">
+        <div class="cx-panel-hdr"><h2 id="cx-sugg-title">Suggestions</h2><span class="cx-hdr-count" id="cx-sugg-count"></span></div>
+        <div id="cx-suggestions"></div>
+      </section>
+      <section class="cx-panel cx-area-ports" id="cx-ports-panel" aria-labelledby="cx-ports-title" hidden>
+        <div class="cx-panel-hdr"><h2 id="cx-ports-title">Switch ports</h2></div>
+        <div id="cx-ports"></div>
+      </section>
+      <section class="cx-panel cx-area-table" aria-labelledby="cx-table-title">
+        <div class="cx-panel-hdr cx-panel-hdr-toggle"><h2 id="cx-table-title"><button type="button" class="cx-collapse-btn"
+          id="cx-table-toggle" aria-expanded="false" aria-controls="cx-table" onclick="cxToggleTable()"><span class="cx-chev" aria-hidden="true"></span>All connections</button></h2><span class="cx-hdr-count" id="cx-table-count"></span></div>
+        <div id="cx-table" hidden></div>
+      </section>
+    </div>
+  </div>
+  <div class="view" id="view-inventory">
+    <div class="inv-toolbar">
+      <input type="text" id="inv-search" placeholder="Search systems, roles, OS, CPU..." class="inv-search">
+      <div class="inv-toolbar-actions">
+        <button class="btn" onclick="openInventoryEditor()">+ Add</button>
+        <button class="btn" onclick="openImportModal()">Import XLSX</button>
+        <div class="inv-export-split">
+          <button class="btn inv-export-main" onclick="downloadInventoryExport(this,'hosts')">Export XLSX</button>
+          <button class="btn inv-export-chevron" onclick="toggleExportMenu(event)" aria-label="More export options">˅</button>
+          <div class="inv-export-menu" id="inv-export-menu">
+            <button onclick="downloadInventoryExport(null,'hosts');closeExportMenu()">Export Hosts</button>
+            <button onclick="downloadInventoryExport(null,'all');closeExportMenu()">Export All Types</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="inv-metrics" id="inv-metrics"></div>
+    <div class="inv-chips" id="inv-chips"></div>
+    <div id="inv-tables"></div>
+    <div id="inv-empty" class="inv-empty" style="display:none"></div>
+  </div>
+<!--@modals-->
+{{> drawer}}
+<div class="modal-overlay" id="inv-edit-overlay">
+  <form class="modal" style="max-width:640px" onsubmit="submitInventory(event)">
+    <div class="modal-hdr">
+      <div class="modal-title" id="inv-edit-title">New inventory record</div>
+      <button type="button" class="modal-close-btn" onclick="closeInventoryEditor()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="inv-edit-form">
+        <label class="full">Type
+          <select class="inv-f-device_type" onchange="onInvTypeChange(this.value)">
+            <option value="host">Host (computer/server)</option>
+            <option value="vm">VM (virtual machine)</option>
+            <option value="network">Network device (switch/router/AP)</option>
+            <option value="ups">UPS (power)</option>
+            <option value="disk">Disk / drive</option>
+            <option value="peripheral">Peripheral / other</option>
+            <option value="tablet">Tablet</option>
+            <option value="phone">Phone / mobile</option>
+            <option value="printer">Printer</option>
+          </select>
+        </label>
+        <label class="full">System name <span style="color:var(--red);text-transform:none;letter-spacing:0">*</span><input type="text" class="inv-f-system" required></label>
+        <label>Category<input type="text" class="inv-f-category" placeholder="e.g. Homelab Server & Edge Infrastructure"></label>
+        <label>Architecture<input type="text" class="inv-f-architecture" placeholder="x86_64, ARM64, ..."></label>
+        <label class="full" style="grid-column:1/-1">Role / Status<input type="text" class="inv-f-role" placeholder="What this device does"></label>
+        <div class="inv-host-fields" style="display:contents">
+        <label>CPU<input type="text" class="inv-f-cpu" placeholder="e.g. Ryzen 5 5600X"></label>
+        <label>GPU<input type="text" class="inv-f-gpu" placeholder="e.g. RTX 3070 Ti"></label>
+        <label>RAM (GB)<input type="number" step="0.001" min="0" class="inv-f-ram_gb" placeholder="16"></label>
+        <label>OS<input type="text" class="inv-f-os" placeholder="e.g. Proxmox VE"></label>
+        <label>CPU score<input type="number" min="0" class="inv-f-cpu_score" placeholder="PassMark or similar"></label>
+        <label>Max TDP (W)<input type="number" min="0" class="inv-f-tdp_watts" placeholder="65"></label>
+        <label>TPM version<input type="text" class="inv-f-tpm" placeholder="2 / None / etc."></label>
+        </div>
+        <div class="inv-type-fields" id="inv-type-fields" style="display:contents"></div>
+        <label class="full" id="inv-link-picker-wrap">Link to monitored host
+          <select class="inv-f-link" onchange="handleInvLinkChange(this)">
+            <option value="">(none — not linked to a monitored host)</option>
+          </select>
+          <span style="font-size:10px;color:var(--hint);margin-top:2px;text-transform:none;letter-spacing:0;font-family:'DM Sans',sans-serif" id="inv-link-hint">Pick a host to auto-fill the MAC below.</span>
+        </label>
+        <label>MAC address<input type="text" class="inv-f-mac" placeholder="aa:bb:cc:dd:ee:ff (used for cross-linking)"></label>
+        <label>IP address<input type="text" class="inv-f-ip" placeholder="optional"></label>
+        <label>Service tag / serial<input type="text" class="inv-f-serial"></label>
+        <label class="full">Notes<textarea class="inv-f-notes" placeholder="Anything else worth remembering"></textarea></label>
+      </div>
+      <div id="inv-edit-error" style="font-size:12px;color:var(--red-text);min-height:16px;margin-top:8px"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" id="inv-delete-btn" onclick="deleteInventory()" style="display:none;color:var(--red-text);border-color:var(--red-bg)">Delete</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button type="button" class="btn" onclick="closeInventoryEditor()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </form>
+</div>
+<div class="modal-overlay" id="import-overlay">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-hdr">
+      <div class="modal-title">Import inventory from XLSX</div>
+      <button type="button" class="modal-close-btn" onclick="closeImportModal()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body import-modal-body">
+      <p>Upload an Excel file. Columns are auto-detected by header name. Expected columns:</p>
+      <p style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);background:var(--subtle);padding:8px;border-radius:6px;margin-bottom:14px">Category, System, Role / Status, CPU, RAM_GB, GPU, Architecture, OS, Estimated_CPU_Score, Max_TDP_Watts, TPM_Version, MAC_Primary, IP_Address, Service_Tag_Serial</p>
+      <div class="import-mode-toggle">
+        <label><input type="radio" name="import-mode" value="add" checked><div><div class="mode-label">Add new</div><div class="mode-desc">Insert records that don't already exist (matched by MAC or system name).</div></div></label>
+        <label><input type="radio" name="import-mode" value="replace"><div><div class="mode-label">Replace all</div><div class="mode-desc">Delete the entire current inventory and reimport everything from scratch.</div></div></label>
+      </div>
+      <label class="file-input-wrap">
+        <input type="file" id="import-file" accept=".xlsx,.xlsm" onchange="document.getElementById('import-file-name').textContent = this.files.length ? this.files[0].name : 'No file selected'">
+        <span class="file-input-btn">Choose file</span>
+        <span class="file-input-name" id="import-file-name">No file selected</span>
+      </label>
+      <div id="import-result" style="display:none"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" onclick="closeImportModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="submitImport()" id="import-submit-btn">Upload</button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,15 @@
+  <div class="view" id="view-servers">
+    <div class="servers-pills" role="tablist">
+      <button class="servers-pill active" data-panel="proxmox"
+              onclick="switchServersPanel('proxmox')" role="tab">Proxmox</button>
+      <button class="servers-pill" data-panel="truenas"
+              onclick="switchServersPanel('truenas')" role="tab">TrueNAS</button>
+    </div>
+    <div data-servers-panel="proxmox">
+      <div id="proxmox-content"></div>
+    </div>
+    <div data-servers-panel="truenas" style="display:none">
+      <div id="nas-content"></div>
+    </div>
+  </div>
+<!--@modals-->

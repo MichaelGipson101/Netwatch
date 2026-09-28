@@ -12,6 +12,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from netwatch.auth import parse_cookies
+from netwatch.pages import resolve as _resolve_page
 from netwatch.storage import export_inventory_to_xlsx, import_inventory_from_xlsx, create_backup_tarball
 from netwatch.http_handlers import (
     _h_get_status, _h_get_backup_status,
@@ -79,7 +80,7 @@ _STATIC_FILES = {
 }
 
 
-def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None):
+def make_handler(host_manager, settings, config_path, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None, pages=None):
     static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
     class Handler(BaseHTTPRequestHandler):
@@ -182,8 +183,9 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
             self.wfile.write(body)
 
         def do_GET(self):
-            if self.path in ("/", "/index.html"):
-                body = dashboard_html.encode()
+            route = _resolve_page(self.path) if pages else None
+            if route is not None or self.path in ("/", "/index.html"):
+                body = (pages[route[0]] if route is not None else dashboard_html).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", len(body))
@@ -744,8 +746,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
     return Handler
 
 
-def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db, discovery_runner=discovery_runner))
+def start_web_server(host_manager, settings, config_path, port, stop_event, incident_log=None, auth_manager=None, inventory_db=None, dashboard_html="", history_db=None, nas_poller=None, proxmox_poller=None, ha_poller=None, pbs_poller=None, ups_poller=None, static_dir=None, quicklinks_db=None, discovery_runner=None, pages=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(host_manager, settings, config_path, incident_log, auth_manager, inventory_db, dashboard_html, history_db, nas_poller=nas_poller, proxmox_poller=proxmox_poller, ha_poller=ha_poller, pbs_poller=pbs_poller, ups_poller=ups_poller, static_dir=static_dir, quicklinks_db=quicklinks_db, discovery_runner=discovery_runner, pages=pages))
     server.timeout = 1
     logging.info(f"Web dashboard: http://0.0.0.0:{port}")
     while not stop_event.is_set():

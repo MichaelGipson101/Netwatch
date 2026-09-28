@@ -2025,3 +2025,8 @@ button.cx-tile:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 [data-theme="dark"] .cx-tile{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.09);box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
 [data-theme="dark"] .cx-tile-up{background:var(--amber-bg);border-color:var(--amber-border)}
 [data-theme="dark"] .cx-led.up{box-shadow:0 0 6px var(--green-glow)}
+
+/* Page nav + sub-nav are links now (were buttons) */
+a.tab{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+a.servers-pill{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.subnav{margin-bottom:16px}
