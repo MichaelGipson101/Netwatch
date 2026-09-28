@@ -59,18 +59,27 @@ def test_logged_out_visit_shows_landing_without_errors(name, tmp_path):
     fx["__status401"] = True
     r = render(_page(name).html, fx, pathname=PAGE_TABLE[name].path)
     assert r.errors == [], f"{name}: {r.errors}"
-    assert '<div id="landing-page">' in r.dom, f"{name}: landing page is hidden for a logged-out visitor"
+    assert re.search(r'<div id="landing-page"(?![^>]*\bhidden\b)', r.dom), f"{name}: landing page is hidden for a logged-out visitor"
     assert re.search(r'id="landing-login-form"(?![^>]*display:\s*none)', r.dom), f"{name}: login form not shown"
 
 
 @needs_chromium
 @pytest.mark.parametrize("name", list(PAGE_TABLE))
-def test_logged_in_visit_hides_the_landing(name, tmp_path):
-    """Control for the logged-out test: the landing is visible in the static HTML, so it is
-    only `hidden` if auth.js actually ran against the logged-in fixture."""
+def test_logged_in_visit_keeps_the_landing_hidden(name, tmp_path):
+    """Control for the logged-out test: the landing starts hidden in the static HTML (no login
+    flash on page navigation) and stays hidden for a logged-in user. The username in the nav
+    proves auth.js actually ran against the logged-in fixture."""
     r = render(_page(name).html, default_fixtures(tmp_path), pathname=PAGE_TABLE[name].path)
     assert r.errors == [], f"{name}: {r.errors}"
-    assert '<div id="landing-page" class="hidden">' in r.dom, name
+    assert re.search(r'<div id="landing-page"[^>]*\bhidden\b', r.dom), name
+    assert "admin" in r.dom[r.dom.index('id="nav-auth"'):], f"{name}: auth.js did not render the user"
+
+
+@pytest.mark.parametrize("name", list(PAGE_TABLE))
+def test_landing_is_hidden_in_the_served_html(name):
+    """Every page load is a fresh document, so the landing must not be visible before
+    auth.js has answered; otherwise a logged-in user sees a login flash on every navigation."""
+    assert re.search(r'<div id="landing-page"[^>]*\bclass="hidden"', _page(name).html), name
 
 
 @needs_chromium
