@@ -63,4 +63,48 @@ def default_fixtures(tmpdir=None, logged_in=True):
         "/api/connections": {"connections": []},
         "/api/discovery/status": {"configured": False, "port_maps": []},
         "/api/ai-config": {"enabled": False},
+        "/api/attention": {"generated": "", "items": [],
+                           "verdict": {"level": "ok", "headline": "Everything looks good.",
+                                       "counts": {"hosts_total": 4, "hosts_up": 2, "hosts_down": 0,
+                                                  "affected": 0, "maintenance": 0, "dismissed": 0}}},
+        "/api/heartbeat": {"generated": "", "bucket_seconds": 1800, "start": 0, "hosts": {}},
     }
+
+
+def home_fixtures(tmpdir=None, logged_in=True):
+    """default_fixtures plus rich data for every Home section."""
+    fx = default_fixtures(tmpdir, logged_in)
+    now = int(datetime.now().timestamp())
+    fx.update({
+        "/api/attention": {
+            "generated": "", "verdict": {
+                "level": "down", "headline": "2 problems need attention. jellyfin is down.",
+                "counts": {"hosts_total": 4, "hosts_up": 2, "hosts_down": 1, "affected": 0,
+                           "maintenance": 0, "dismissed": 1}},
+            "items": [
+                {"id": "host_down:10.0.0.4", "kind": "host_down", "severity": "critical",
+                 "title": "jellyfin is down", "detail": "Down 12 min", "since": now - 720,
+                 "affected": ["10.0.0.7", "10.0.0.8"], "root_ip": "10.0.0.4",
+                 "link": {"page": "monitor", "subview": "hosts", "params": {"host": "10.0.0.4"}}},
+                {"id": "alert:pool_health_tank", "kind": "poller_condition", "severity": "warning",
+                 "title": "TrueNAS pool tank is DEGRADED", "detail": "TrueNAS · 1 h", "since": now - 3600,
+                 "affected": [], "root_ip": None, "link": {"page": "infra", "subview": "truenas", "params": {}}},
+                {"id": "connection_suggestions", "kind": "connection_suggestions", "severity": "info",
+                 "title": "2 connection suggestions", "detail": "Review in Lab", "since": None,
+                 "affected": [], "root_ip": None, "link": {"page": "lab", "subview": "connections", "params": {}}},
+            ]},
+        "/api/heartbeat": {"generated": "", "bucket_seconds": 1800, "start": 0, "hosts": {
+            "10.0.0.2": [1] * 48, "10.0.0.3": [1] * 47 + [2],
+            "10.0.0.4": [1] * 40 + [0] * 8, "10.0.0.5": [None] * 30 + [1] * 18}},
+        "/api/power": {"configured": True, "live": {"watts": 178.4},
+                       "history": [{"watts": 170}, {"watts": 180}, {"watts": 184}, {"watts": None}]},
+        "/api/proxmox": {"configured": True, "reachable": True,
+                         "nodes": [{"name": "pve", "cpu_percent": 12.0, "status": "online", "guests": []}]},
+        "/api/nas": {"configured": True, "reachable": True, "pools": [
+            {"name": "tank", "status": "ONLINE", "capacity_used_bytes": 61, "capacity_total_bytes": 100}]},
+        "/api/ups": {"configured": True, "live": {"status": "OL CHRG", "charge_percent": 100}},
+        "/api/brief": {"briefs": [{"created_ts": now - 7200, "subject": "Quiet night, one slow backup",
+                                   "narrative": "All hosts held above 99.9% overnight."}]},
+        "/api/inventory": {"items": [{"device_type": "host"}, {"device_type": "vm"}, {"device_type": "vm"}]},
+    })
+    return fx

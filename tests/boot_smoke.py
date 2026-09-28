@@ -95,7 +95,10 @@ def render(html, fixtures, width=1280, height=900, theme="dark", url_path="", pa
     simulates the page's URL path for sub-view selection (see shell.js _subviewFromPath)."""
     html = html.replace("{{VERSION}}", "test")
     html = html.replace('"/static/', '"file://' + STATIC + '/')
-    stub = _STUB % {"theme": json.dumps(theme), "fixtures": json.dumps(fixtures),
+    # "<" is escaped so fixture strings holding markup (hostile-data tests) can neither end the
+    # stub <script> early ("</script>") nor show up as raw markup in the dumped DOM.
+    stub = _STUB % {"theme": json.dumps(theme),
+                    "fixtures": json.dumps(fixtures).replace("<", "\\u003c"),
                     "pathname": json.dumps(pathname),
                     "static": json.dumps("file://" + STATIC + "/")}
     html = html.replace("<head>", "<head>" + stub, 1)

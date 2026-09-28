@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from boot_fixtures import default_fixtures
+from boot_fixtures import default_fixtures, home_fixtures
 from boot_smoke import needs_chromium, render
 from test_pages import PAGES
 from netwatch.pages import PAGES as PAGE_TABLE
@@ -157,11 +157,102 @@ def test_monitor_events_renders_the_ongoing_incident(tmp_path):
     assert 'class="badge badge-dn">ONGOING</span>' in dom
 
 
+def _home(tmp_path, fixtures=None, **kw):
+    return render(_page("home").html, fixtures or home_fixtures(tmp_path), pathname="/", **kw)
+
+
 @needs_chromium
-def test_home_renders_the_hosts_up_count_and_the_down_host(tmp_path):
-    dom = _boot("home", "", tmp_path)
-    assert 'id="ov-hosts-num">2<span class="ov-num-dim">/4</span>' in dom
-    assert '<span class="ov-row-name">jellyfin</span>' in dom
+def test_home_renders_every_section_with_real_content(tmp_path):
+    r = _home(tmp_path)
+    assert r.errors == []
+    dom = r.dom
+    # verdict: the server's headline, LED reflects the level, stats line built from the poll
+    assert "2 problems need attention. jellyfin is down." in dom
+    assert "hm-led-down" in dom and "2/4 up" in dom and "178 W" in dom
+    # needs attention: three rows, badge, deep link, dismiss only on the poller item (admin fixture)
+    assert "<b>jellyfin is down</b>" in dom and "2 affected" in dom
+    assert 'href="/monitor/hosts?host=10.0.0.4"' in dom and 'href="/infra/truenas"' in dom
+    assert 'data-dismiss="alert:pool_health_tank"' in dom and dom.count("data-dismiss=") == 1
+    assert "1 dismissed" in dom and 'id="hm-restore"' in dom
+    assert not re.search(r'id="hm-explain"[^>]*hidden', dom)            # problems exist -> Explain shown
+    # hosts: group labels, status-classed tiles, heartbeat strips, problem hosts listed by name
+    assert "<span>Homelab</span><em>2/2</em>" in dom and "<span>Virtual Machines</span>" in dom
+    assert 'class="hm-h3 topo-status-down"' in dom and "linear-gradient(90deg" in dom
+    assert 'hm-nu-name">jellyfin' in dom and 'hm-nu-name">laptop' not in dom   # idle is not listed
+    # columns and lower sections
+    assert "pve CPU" in dom and "tank pool" in dom and "61% used" in dom and "on line · 100%" in dom
+    assert "7-day avg 178 W" in dom and 'id="hm-power"' in dom and not re.search(r'id="hm-power"[^>]*hidden', dom)
+    assert "jellyfin down" in dom                                            # Recent
+    assert "Quiet night, one slow backup" in dom and "3<small> devices</small>" in dom
+    assert "Proxmox VE" in dom and "Grafana" in dom and "+" not in re.search(r'id="hm-links-body".*?</div>', dom, re.S).group(0)
+
+
+@needs_chromium
+def test_home_survives_empty_and_garbage_endpoints(tmp_path):
+    fx = home_fixtures(tmp_path)
+    fx["/api/attention"] = {}                  # what the stub returns for unknown paths
+    fx["/api/heartbeat"] = {}
+    fx["/api/proxmox"] = fx["/api/nas"] = fx["/api/ups"] = fx["/api/brief"] = {}
+    fx["/api/inventory"] = fx["/api/quicklinks"] = {}
+    r = _home(tmp_path, fx)
+    assert r.errors == []
+    assert "hm-led-stale" in r.dom                                           # stale, not blank or broken
+    assert "Checking…" in r.dom                                              # headline keeps its placeholder
+    assert "<span>Homelab</span>" in r.dom                                   # hosts still render from /api/status
+    assert re.search(r'id="hm-servers"[^>]*hidden', r.dom)                  # unconfigured sections hide
+
+
+@needs_chromium
+def test_home_fresh_install_shows_calm_messages_and_hides_the_rest(tmp_path):
+    fx = home_fixtures(tmp_path)
+    fx["/api/status"] = {"hosts": [], "events": [], "summary": {"total": 0, "up": 0, "down": 0, "idle": 0, "pending": 0},
+                         "settings": {}, "suggestions_pending": 0, "generated": ""}
+    fx["/api/attention"] = {"generated": "", "items": [], "verdict": {
+        "level": "ok", "headline": "No hosts are being monitored yet.",
+        "counts": {"hosts_total": 0, "hosts_up": 0, "hosts_down": 0, "affected": 0, "maintenance": 0, "dismissed": 0}}}
+    fx["/api/power"] = {"configured": False}
+    fx["/api/proxmox"] = {"configured": False, "reachable": False, "nodes": []}
+    fx["/api/nas"] = {"configured": False, "reachable": False, "pools": []}
+    fx["/api/ups"] = {"configured": False}
+    fx["/api/brief"] = {"briefs": []}
+    fx["/api/inventory"] = {"items": []}
+    fx["/api/quicklinks"] = {"links": []}
+    r = _home(tmp_path, fx)
+    assert r.errors == []
+    assert "No hosts are being monitored yet." in r.dom
+    assert "Add hosts in Monitor → Edit hosts." in r.dom and "Nothing needs attention." in r.dom
+    for sec in ("hm-servers", "hm-power", "hm-brief", "hm-inventory", "hm-links"):
+        assert re.search(rf'id="{sec}"[^>]*hidden', r.dom), sec
+    assert re.search(r'id="hm-explain"[^>]*hidden', r.dom)                  # nothing to explain
+
+
+@needs_chromium
+def test_home_renders_hostile_data_as_text(tmp_path):
+    fx = home_fixtures(tmp_path)
+    evil = "<img src=x onerror=alert(1)>"
+    fx["/api/attention"]["items"][0]["title"] = evil
+    fx["/api/attention"]["items"][1]["detail"] = "<script>alert(2)</script>"
+    fx["/api/status"]["hosts"][0]["name"] = evil
+    fx["/api/status"]["events"][0]["host_name"] = evil
+    fx["/api/quicklinks"] = {"links": [{"id": 1, "label": evil, "url": "javascript:alert(3)", "icon": "<i>", "sort_order": 0}]}
+    fx["/api/brief"]["briefs"][0]["subject"] = evil
+    r = _home(tmp_path, fx)
+    assert r.errors == []                       # an injected onerror/alert would land here (alert stub records)
+    assert not re.search(r"<img[^>]*\bonerror", r.dom) and "<script>alert" not in r.dom
+    assert 'href="javascript:' not in r.dom and 'href="#"' in r.dom
+
+
+@needs_chromium
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [320, 390])
+def test_home_with_real_content_does_not_overflow(width, theme, tmp_path):
+    fx = home_fixtures(tmp_path)
+    fx["/api/attention"]["items"][0]["title"] = "A very long alert title " + "x" * 60     # unbreakable run
+    fx["/api/status"]["hosts"][2]["name"] = "jellyfin-" + "y" * 60
+    r = _home(tmp_path, fx, width=width, theme=theme)
+    assert r.errors == []
+    assert r.overflow <= 0, f"home overflows at {width}px in {theme}: {r.overflow}"
+    assert r.inner_width == width
 
 
 @needs_chromium
