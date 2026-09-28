@@ -23,10 +23,10 @@ def test_host_class_maps_every_status():
 
 
 @needs_node
-def test_is_not_up_lists_problems_only():
+def test_is_not_up_lists_problems_and_idle_hosts():
     out = run_js(hm("hmIsNotUp"),
                  "['DOWN','down','DEGRADED','MAINTENANCE','UP','IDLE','WAIT',null].map(s => hmIsNotUp({status:s}))")
-    assert out == [True, True, True, True, False, False, False, False]
+    assert out == [True, True, True, True, False, True, False, False]   # idle is listed; up/WAIT/null are not
 
 
 @needs_node
@@ -130,8 +130,13 @@ def test_host_tile_html():
     names = ("hmHostTileHtml", "hmHostClass", "hmHeartbeatBackground", "hmHeartbeatLabel")
     out = run_js(hm(*names), """[
       hmHostTileHtml({name:'jellyfin',ip:'10.0.0.4',status:'DOWN',device_type:'vm'}, [1,0]),
-      hmHostTileHtml({name:'<b>x</b>',ip:'10.0.0.4&x=1',status:'UP',device_type:'<x>'}, undefined)]""")
-    tile, evil = out
+      hmHostTileHtml({name:'<b>x</b>',ip:'10.0.0.4&x=1',status:'UP',device_type:'<x>'}, undefined),
+      hmHostTileHtml({name:'m',ip:'10.0.0.9',status:'UP',device_type:'foo'}, undefined),
+      ['host','vm','network','ups','disk','peripheral','tablet','phone','printer'].map(
+        t => hmHostTileHtml({name:'m',ip:'10.0.0.9',status:'UP',device_type:t}, undefined).includes('#topo-icon-' + t + '"'))]""")
+    tile, evil, unknown, known = out
+    assert '#topo-icon-host"' in unknown and 'topo-icon-foo' not in unknown     # unknown type -> host icon
+    assert known == [True] * 9
     assert 'class="hm-h3 topo-status-down"' in tile and 'href="/monitor/hosts?host=10.0.0.4"' in tile
     assert '<use href="#topo-icon-vm"/>' in tile and 'aria-label="jellyfin · down"' in tile
     assert '24h: 1 of 2 periods fully up' in tile and 'linear-gradient(90deg' in tile
@@ -141,17 +146,20 @@ def test_host_tile_html():
 
 
 @needs_node
-def test_group_html_lists_only_problem_hosts_by_name():
+def test_group_html_lists_problem_and_idle_hosts_by_name():
     names = ("hmGroupHtml", "hmHostTileHtml", "hmHostClass", "hmHeartbeatBackground",
              "hmHeartbeatLabel", "hmIsNotUp", "hmNotUpLineHtml", "hmAgo")
     out = run_js(hm(*names), """hmGroupHtml({name:'Homelab', up:1, total:3, hosts:[
         {name:'pve',ip:'10.0.0.2',status:'UP',device_type:'host'},
         {name:'jellyfin',ip:'10.0.0.4',status:'DOWN',device_type:'vm',last_seen_up_seconds:720},
-        {name:'laptop',ip:'10.0.0.5',status:'IDLE',device_type:'host'}]}, {'10.0.0.2':[1,1]})""")
+        {name:'laptop',ip:'10.0.0.5',status:'IDLE',device_type:'host'},
+        {name:'pending',ip:'10.0.0.6',status:'WAIT',device_type:'host'}]}, {'10.0.0.2':[1,1]})""")
     assert '<span>Homelab</span><em>1/3</em>' in out
     assert 'hm-nu-name">jellyfin</span><span class="hm-nu-meta">down 12m' in out
-    assert 'hm-nu-name">laptop' not in out and 'hm-nu-name">pve' not in out    # idle/up are not listed
-    assert out.count('class="hm-h3 ') == 3                                       # every host has a tile
+    assert 'hm-nu-name">laptop</span><span class="hm-nu-meta">idle' in out       # idle hosts are listed too
+    assert 'hm-nu-name">pve' not in out                                          # up hosts are not
+    assert 'hm-nu-name">pending' not in out                                      # WAIT is not listed
+    assert out.count('class="hm-h3 ') == 4                                       # every host has a tile
 
 
 @needs_node
@@ -195,3 +203,26 @@ def test_safe_url_only_allows_http_and_https():
     out = run_js(hm("hmSafeUrl"), """['https://pve.lan:8006','HTTP://x','javascript:alert(1)',
         null,'//evil','  https://ok.lan ','data:text/html,x'].map(hmSafeUrl)""")
     assert out == ["https://pve.lan:8006", "HTTP://x", "#", "#", "#", "https://ok.lan", "#"]
+
+
+@needs_node
+def test_should_poll_gates_on_visibility_and_interval():
+    out = run_js(hm("hmShouldPoll"), """[
+        hmShouldPoll(20000, 0, 15000, false), hmShouldPoll(20000, 0, 15000, true),
+        hmShouldPoll(15000, 0, 15000, false), hmShouldPoll(14999, 0, 15000, false),
+        hmShouldPoll(15000, 0, 15000, true), hmShouldPoll(100000, 90000, 15000, false),
+        hmShouldPoll(105000, 90000, 15000, false), hmShouldPoll(0, 0, 15000, false),
+        hmShouldPoll(5, 0, 0, false)]""")
+    assert out == [True, False, True, False, False, False, True, False, True]
+
+
+@needs_node
+def test_valid_attention_requires_headline_string_and_items_array():
+    out = run_js(hm("hmValidAttention"), """[
+        hmValidAttention({verdict:{level:'ok',headline:'All good.'},items:[]}),
+        hmValidAttention({verdict:{level:'ok',headline:'x'},items:[null,{id:'a'}]}),
+        hmValidAttention({verdict:{},items:[null]}), hmValidAttention({verdict:{headline:''},items:[]}),
+        hmValidAttention({verdict:{headline:5},items:[]}), hmValidAttention({verdict:{headline:'x'}}),
+        hmValidAttention({verdict:{headline:'x'},items:{}}), hmValidAttention({verdict:'x',items:[]}),
+        hmValidAttention({}), hmValidAttention(null), hmValidAttention(undefined), hmValidAttention('x')]""")
+    assert out == [True, True, False, False, False, False, False, False, False, False, False, False]

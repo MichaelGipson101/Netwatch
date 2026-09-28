@@ -166,25 +166,45 @@ def test_home_renders_every_section_with_real_content(tmp_path):
     r = _home(tmp_path)
     assert r.errors == []
     dom = r.dom
+    # Every assertion targets markup that only the JS produces (attribute/tag context): the stub
+    # <script> embeds each fixture as JSON, so bare text from a fixture would match a blank section.
     # verdict: the server's headline, LED reflects the level, stats line built from the poll
-    assert "2 problems need attention. jellyfin is down." in dom
-    assert "hm-led-down" in dom and "2/4 up" in dom and "178 W" in dom
+    assert re.search(r'id="hm-headline"[^>]*>2 problems need attention\. jellyfin is down\.', dom)
+    assert 'class="hm-led hm-led-down"' in dom
+    assert re.search(r'id="hm-stats">2/4 up[^<]*178 W', dom)
     # needs attention: three rows, badge, deep link, dismiss only on the poller item (admin fixture)
-    assert "<b>jellyfin is down</b>" in dom and "2 affected" in dom
-    assert 'href="/monitor/hosts?host=10.0.0.4"' in dom and 'href="/infra/truenas"' in dom
-    assert 'data-dismiss="alert:pool_health_tank"' in dom and dom.count("data-dismiss=") == 1
-    assert "1 dismissed" in dom and 'id="hm-restore"' in dom
+    assert dom.count('<div class="hm-arow">') == 3
+    assert "<b>jellyfin is down</b>" in dom and 'class="hm-badge hm-badge-dn">2 affected</span>' in dom
+    assert 'class="hm-go" href="/monitor/hosts?host=10.0.0.4">Open' in dom
+    assert 'class="hm-go" href="/infra/truenas">Open' in dom
+    assert 'class="hm-dismiss" data-dismiss="alert:pool_health_tank"' in dom and dom.count("data-dismiss=") == 1
+    assert re.search(r'id="hm-dismissed"[^>]*>1 dismissed', dom) and 'id="hm-restore"' in dom
     assert not re.search(r'id="hm-explain"[^>]*hidden', dom)            # problems exist -> Explain shown
-    # hosts: group labels, status-classed tiles, heartbeat strips, problem hosts listed by name
-    assert "<span>Homelab</span><em>2/2</em>" in dom and "<span>Virtual Machines</span>" in dom
-    assert 'class="hm-h3 topo-status-down"' in dom and "linear-gradient(90deg" in dom
-    assert 'hm-nu-name">jellyfin' in dom and 'hm-nu-name">laptop' not in dom   # idle is not listed
-    # columns and lower sections
-    assert "pve CPU" in dom and "tank pool" in dom and "61% used" in dom and "on line · 100%" in dom
-    assert "7-day avg 178 W" in dom and 'id="hm-power"' in dom and not re.search(r'id="hm-power"[^>]*hidden', dom)
-    assert "jellyfin down" in dom                                            # Recent
-    assert "Quiet night, one slow backup" in dom and "3<small> devices</small>" in dom
-    assert "Proxmox VE" in dom and "Grafana" in dom and "+" not in re.search(r'id="hm-links-body".*?</div>', dom, re.S).group(0)
+    # hosts: group labels, status-classed tiles, heartbeat strips, problem and idle hosts listed by name
+    assert re.search(r'id="hm-hosts-sum">2 of 4 up', dom)
+    assert "<span>Homelab</span><em>2/2</em>" in dom and "<span>Virtual Machines</span><em>0/1</em>" in dom
+    assert 'class="hm-h3 topo-status-down"' in dom and 'class="hm-hb"' in dom and "linear-gradient(90deg" in dom
+    assert 'hm-nu-name">jellyfin</span><span class="hm-nu-meta">down' in dom
+    assert 'hm-nu-name">laptop</span><span class="hm-nu-meta">idle' in dom
+    assert 'hm-nu-name">pve' not in dom
+    # columns
+    assert 'class="hm-row-name">pve CPU</span><span class="hm-row-meta">12%</span>' in dom
+    assert 'class="hm-row-name">tank pool</span><span class="hm-row-meta">61% used</span>' in dom
+    assert 'class="hm-row-name">UPS</span><span class="hm-row-meta">on line · 100%</span>' in dom
+    assert not re.search(r'id="hm-servers"[^>]*hidden', dom)
+    assert 'id="hm-power-avg">7-day avg 178 W' in dom and 'id="hm-power-big">178<small>W</small>' in dom
+    assert re.search(r'id="hm-power-spark" points="[0-9][^"]*"', dom)     # sparkline has real points
+    assert not re.search(r'id="hm-power"[^>]*hidden', dom)
+    assert not re.search(r'id="hm-network"[^>]*hidden', dom)
+    assert 'id="hm-network-sum">1 free' in dom
+    assert re.search(r'id="hm-network-body"[^>]*><div class="cx-face">', dom)
+    # lower sections
+    assert 'class="hm-row-name">jellyfin down</span>' in dom                                # Recent
+    assert 'class="hm-brief-title">Quiet night, one slow backup' in dom
+    assert 'id="hm-inv-count">3<small> devices</small>' in dom
+    assert re.search(r'class="hm-chip"[^>]*>2 vm</span>', dom) and re.search(r'class="hm-chip"[^>]*>1 host</span>', dom)
+    assert 'class="hm-ql" href="https://pve.lan:8006"' in dom and 'class="hm-ql" href="http://grafana.lan:3000"' in dom
+    assert 'class="hm-ql hm-go"' not in dom                                                  # two links: no "+N"
 
 
 @needs_chromium
@@ -196,10 +216,22 @@ def test_home_survives_empty_and_garbage_endpoints(tmp_path):
     fx["/api/inventory"] = fx["/api/quicklinks"] = {}
     r = _home(tmp_path, fx)
     assert r.errors == []
-    assert "hm-led-stale" in r.dom                                           # stale, not blank or broken
-    assert "Checking…" in r.dom                                              # headline keeps its placeholder
-    assert "<span>Homelab</span>" in r.dom                                   # hosts still render from /api/status
+    assert 'class="hm-led hm-led-stale"' in r.dom                            # stale, not blank or broken
+    assert re.search(r'id="hm-headline"[^>]*>Checking…', r.dom)              # headline keeps its placeholder
+    assert "<span>Homelab</span><em>" in r.dom                               # hosts still render from /api/status
     assert re.search(r'id="hm-servers"[^>]*hidden', r.dom)                  # unconfigured sections hide
+
+
+@needs_chromium
+def test_home_rejects_a_wrong_shaped_attention_response(tmp_path):
+    fx = home_fixtures(tmp_path)
+    fx["/api/attention"] = {"verdict": {}, "items": [None]}
+    r = _home(tmp_path, fx)
+    assert r.errors == []
+    assert 'class="hm-led hm-led-stale"' in r.dom
+    assert re.search(r'id="hm-headline"[^>]*>Checking…', r.dom)
+    assert '<div class="hm-arow">' not in r.dom and "Nothing needs attention." not in r.dom
+    assert "<span>Homelab</span><em>" in r.dom
 
 
 @needs_chromium
@@ -217,11 +249,13 @@ def test_home_fresh_install_shows_calm_messages_and_hides_the_rest(tmp_path):
     fx["/api/brief"] = {"briefs": []}
     fx["/api/inventory"] = {"items": []}
     fx["/api/quicklinks"] = {"links": []}
+    fx["/api/discovery/status"] = {"configured": False, "port_maps": []}
     r = _home(tmp_path, fx)
     assert r.errors == []
-    assert "No hosts are being monitored yet." in r.dom
-    assert "Add hosts in Monitor → Edit hosts." in r.dom and "Nothing needs attention." in r.dom
-    for sec in ("hm-servers", "hm-power", "hm-brief", "hm-inventory", "hm-links"):
+    assert re.search(r'id="hm-headline"[^>]*>No hosts are being monitored yet\.', r.dom)
+    assert 'class="hm-mut">Add hosts in Monitor → Edit hosts.' in r.dom
+    assert 'class="hm-mut">Nothing needs attention.' in r.dom
+    for sec in ("hm-servers", "hm-power", "hm-network", "hm-brief", "hm-inventory", "hm-links"):
         assert re.search(rf'id="{sec}"[^>]*hidden', r.dom), sec
     assert re.search(r'id="hm-explain"[^>]*hidden', r.dom)                  # nothing to explain
 
@@ -239,17 +273,38 @@ def test_home_renders_hostile_data_as_text(tmp_path):
     r = _home(tmp_path, fx)
     assert r.errors == []                       # an injected onerror/alert would land here (alert stub records)
     assert not re.search(r"<img[^>]*\bonerror", r.dom) and "<script>alert" not in r.dom
-    assert 'href="javascript:' not in r.dom and 'href="#"' in r.dom
+    assert "<b>&lt;img src=x onerror=alert(1)&gt;</b>" in r.dom             # rendered, as text
+    assert 'class="hm-brief-title">&lt;img' in r.dom
+    assert 'class="hm-ql" href="#"' in r.dom and 'href="javascript:' not in r.dom
+
+
+def _home_long_strings_fixtures(tmp_path):
+    fx = home_fixtures(tmp_path)
+    fx["/api/attention"]["items"][0]["title"] = "A very long alert title " + "x" * 60     # unbreakable runs
+    fx["/api/status"]["hosts"][2]["name"] = "jellyfin-" + "y" * 60
+    fx["/api/status"]["hosts"][0]["group"] = "G" * 70
+    fx["/api/quicklinks"]["links"][0]["label"] = "Q" * 70
+    fx["/api/brief"]["briefs"][0]["subject"] = "S" * 70
+    return fx
+
+
+@needs_chromium
+def test_home_long_strings_fixture_really_renders(tmp_path):
+    # the 320/390 boots dump only the iframe wrapper, so prove at full width that the strings the
+    # overflow test relies on reach the DOM
+    r = _home(tmp_path, _home_long_strings_fixtures(tmp_path))
+    assert r.errors == []
+    assert "<span>" + "G" * 70 + "</span>" in r.dom
+    assert "Q" * 70 + "</a>" in r.dom and 'class="hm-brief-title">' + "S" * 70 in r.dom
+    assert "<b>A very long alert title " + "x" * 60 + "</b>" in r.dom
+    assert 'hm-nu-name">jellyfin-' + "y" * 60 in r.dom
 
 
 @needs_chromium
 @pytest.mark.parametrize("theme", ["light", "dark"])
 @pytest.mark.parametrize("width", [320, 390])
 def test_home_with_real_content_does_not_overflow(width, theme, tmp_path):
-    fx = home_fixtures(tmp_path)
-    fx["/api/attention"]["items"][0]["title"] = "A very long alert title " + "x" * 60     # unbreakable run
-    fx["/api/status"]["hosts"][2]["name"] = "jellyfin-" + "y" * 60
-    r = _home(tmp_path, fx, width=width, theme=theme)
+    r = _home(tmp_path, _home_long_strings_fixtures(tmp_path), width=width, theme=theme)
     assert r.errors == []
     assert r.overflow <= 0, f"home overflows at {width}px in {theme}: {r.overflow}"
     assert r.inner_width == width

@@ -106,5 +106,9 @@ def home_fixtures(tmpdir=None, logged_in=True):
         "/api/brief": {"briefs": [{"created_ts": now - 7200, "subject": "Quiet night, one slow backup",
                                    "narrative": "All hosts held above 99.9% overnight."}]},
         "/api/inventory": {"items": [{"device_type": "host"}, {"device_type": "vm"}, {"device_type": "vm"}]},
+        "/api/discovery/status": {"configured": True, "port_maps": [{"device_id": 1, "name": "USW"}]},
+        # the stub resolves any /api/ports/<id> through this prefix key
+        "/api/ports/": {"live": True, "ports": [{"name": "Port 1", "up": True, "occupants": []},
+                                                {"name": "Port 2", "up": False, "occupants": []}]},
     })
     return fx

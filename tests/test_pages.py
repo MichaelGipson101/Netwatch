@@ -13,7 +13,6 @@ from netwatch.server import _STATIC_FILES
 
 # ids looked up by literal that are created by JS at runtime, not present in the HTML
 DYNAMIC_IDS = {"nw-toasts"}
-DYNAMIC_ID_PREFIXES = ("ov-card-",)
 # ids intentionally looked up, per script, on pages that may not have them; every use site is
 # null-guarded (add an entry here only together with the guard, and only for the script that
 # actually contains the guarded lookup, so a stray unguarded lookup elsewhere still fails)
@@ -102,8 +101,7 @@ def test_literal_element_ids_exist(page):
     missing = {}
     for script, src in page.js.items():
         for i in lit_ids(src):
-            if (i in present or i in DYNAMIC_IDS or i in GUARDED_IDS.get(script, ())
-                    or i.startswith(DYNAMIC_ID_PREFIXES)):
+            if i in present or i in DYNAMIC_IDS or i in GUARDED_IDS.get(script, ()):
                 continue
             missing.setdefault(script, []).append(i)
     assert not missing, f"page {page.name}: scripts look up ids not on the page: {missing}"

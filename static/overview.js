@@ -9,7 +9,7 @@ function hmHostClass(status){
 }
 
 function hmIsNotUp(h){
-  return ['DOWN', 'DEGRADED', 'MAINTENANCE'].indexOf(String((h && h.status) || '').toUpperCase()) >= 0;
+  return ['DOWN', 'DEGRADED', 'MAINTENANCE', 'IDLE'].indexOf(String((h && h.status) || '').toUpperCase()) >= 0;
 }
 
 function hmGroupHosts(hosts){
@@ -108,7 +108,8 @@ function hmAttentionRowHtml(item, isAdmin){
 }
 
 function hmHostTileHtml(h, states){
-  var type = /^[a-z]+$/.test(h.device_type || '') ? h.device_type : 'host';
+  var icons = ['host', 'vm', 'network', 'ups', 'disk', 'peripheral', 'tablet', 'phone', 'printer'];
+  var type = icons.indexOf(h.device_type) >= 0 ? h.device_type : 'host';
   var label = (h.name || h.ip) + ' · ' + String(h.status || '').toLowerCase();
   return '<a class="hm-h3 ' + hmHostClass(h.status) + '" href="/monitor/hosts?host=' + encodeURIComponent(h.ip)
     + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">'
@@ -172,6 +173,15 @@ function hmFreePorts(maps){
   return {free: free, total: total};
 }
 
+function hmShouldPoll(now, last, everyMs, hidden){
+  return !hidden && now - last >= everyMs;
+}
+
+function hmValidAttention(d){
+  return !!(d && typeof d === 'object' && d.verdict && typeof d.verdict === 'object'
+    && typeof d.verdict.headline === 'string' && d.verdict.headline !== '' && Array.isArray(d.items));
+}
+
 function hmSafeUrl(url){
   var u = String(url == null ? '' : url).trim();
   return /^https?:\/\//i.test(u) ? u : '#';
@@ -194,7 +204,7 @@ function hmSafeUrl(url){
   var _hb = {};                       // ip -> heartbeat buckets
   var _lastStatus = null, _statusAt = 0;
   var _lastAttn = 0, _lastSlow = 0, _attnBusy = false, _slowBusy = false;
-  var _attnStale = false, _level = null, _explainBusy = false;
+  var _attnStale = false, _level = null, _explainBusy = false, _actionBusy = false, _attnDirty = false;
   var _srv = { proxmox: null, nas: null, ups: null };
   var _inv = null, _brief = null, _links = null, _ports = null;
 
@@ -232,7 +242,7 @@ function hmSafeUrl(url){
     _level = d.verdict.level;
     var hl = $('hm-headline');
     if (hl.textContent !== d.verdict.headline) hl.textContent = d.verdict.headline;
-    var items = d.items;
+    var items = d.items.filter(function (i) { return i && typeof i === 'object'; });
     var admin = _isAdmin();
     $('hm-attention-list').innerHTML = items.length
       ? items.map(function (i) { return hmAttentionRowHtml(i, admin); }).join('')
@@ -246,38 +256,45 @@ function hmSafeUrl(url){
     } else { dEl.hidden = true; dEl.textContent = ''; }
     var problems = items.some(function (i) { return i.severity === 'critical' || i.severity === 'warning'; });
     $('hm-explain').hidden = !problems;
-    if (!problems) { $('hm-explain-body').hidden = true; $('hm-explain-btn').setAttribute('aria-expanded', 'false'); }
+    if (!problems) {
+      $('hm-explain-body').hidden = true;
+      $('hm-explain-btn').setAttribute('aria-expanded', 'false');
+      $('hm-explain-btn').textContent = 'Explain';
+    }
     _renderLed();
   }
   function _loadAttention() {
-    _attnBusy = true;
+    _attnBusy = true; _attnDirty = false;
     _getJson('/api/attention').then(function (d) {
       _attnBusy = false;
-      if (!d || !d.verdict || !Array.isArray(d.items)) { _attnStale = true; _renderLed(); return; }
+      if (_attnDirty) { _attnDirty = false; _lastAttn = 0; _tick(); return; }   // pre-action response: refetch
+      if (!hmValidAttention(d)) { _attnStale = true; _renderLed(); return; }
       _attnStale = false;
       _renderAttention(d);
     });
   }
   function _msg(t) { var el = $('hm-attention-msg'); if (el) el.textContent = t; }
-  function _refreshAttentionSoon() { _lastAttn = 0; _tick(); }
-  function _dismiss(id) {
-    _post('/api/attention/dismiss', { id: id }).then(function (r) {
-      if (!r.ok) throw new Error('dismiss');
+  function _refreshAttentionSoon() { _attnDirty = true; _lastAttn = 0; _tick(); }
+  function _runAction(body, failMsg) {
+    if (_actionBusy) return;
+    _actionBusy = true;
+    _post('/api/attention/dismiss', body).then(function (r) {
+      if (!r.ok) throw new Error('action');
       _msg(''); _refreshAttentionSoon();
-    }).catch(function () { _msg("Couldn't dismiss that item."); });
+    }).catch(function () { _msg(failMsg); })
+      .then(function () { _actionBusy = false; });
   }
-  function _restore() {
-    _post('/api/attention/dismiss', { restore_all: true }).then(function (r) {
-      if (!r.ok) throw new Error('restore');
-      _msg(''); _refreshAttentionSoon();
-    }).catch(function () { _msg("Couldn't restore dismissed items."); });
-  }
+  function _dismiss(id) { _runAction({ id: id }, "Couldn't dismiss that item."); }
+  function _restore() { _runAction({ restore_all: true }, "Couldn't restore dismissed items."); }
   function _onExplain() {
     var btn = $('hm-explain-btn'), body = $('hm-explain-body');
     if (_explainBusy) return;
-    if (!body.hidden) { body.hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
+    if (!body.hidden) {
+      body.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.textContent = 'Explain';
+      return;
+    }
     _explainBusy = true;
-    btn.disabled = true; btn.setAttribute('aria-expanded', 'true');
+    btn.setAttribute('aria-disabled', 'true'); btn.setAttribute('aria-expanded', 'true'); btn.textContent = 'Hide';
     body.hidden = false; body.textContent = 'Thinking…';
     var status = 0;
     _post('/api/attention/explain', {})
@@ -287,7 +304,7 @@ function hmSafeUrl(url){
         body.textContent = m.text + (m.note ? ' (' + m.note + ')' : '');
       })
       .catch(function () { body.textContent = hmExplainMessage(0, null).text; })
-      .then(function () { _explainBusy = false; btn.disabled = false; });
+      .then(function () { _explainBusy = false; btn.removeAttribute('aria-disabled'); });
   }
 
   // ── hosts ──────────────────────────────────────────────────────────────────
@@ -400,9 +417,9 @@ function hmSafeUrl(url){
       _getJson('/api/heartbeat?hours=24&buckets=48').then(function (d) {
         if (d && d.hosts && typeof d.hosts === 'object') { _hb = d.hosts; if (_lastStatus) _renderHosts(_lastStatus); }
       }),
-      _getJson('/api/proxmox').then(function (d) { _srv.proxmox = d; }),
-      _getJson('/api/nas').then(function (d) { _srv.nas = d; }),
-      _getJson('/api/ups').then(function (d) { _srv.ups = d; }),
+      _getJson('/api/proxmox').then(function (d) { if (d) _srv.proxmox = d; }),
+      _getJson('/api/nas').then(function (d) { if (d) _srv.nas = d; }),
+      _getJson('/api/ups').then(function (d) { if (d) _srv.ups = d; }),
       _getJson('/api/inventory').then(function (d) { if (d) _inv = d; }),
       _getJson('/api/brief').then(function (d) { if (d) _brief = d; }),
       _getJson('/api/quicklinks').then(function (d) { if (d) _links = d; }),
@@ -411,14 +428,14 @@ function hmSafeUrl(url){
         : Promise.resolve())
     ];
     Promise.all(jobs).then(function () {
-      _slowBusy = false;
       _renderServers(); _renderBrief(); _renderInventory(); _renderLinks(); _renderNetwork();
-    });
+    }).catch(function () {}).then(function () { _slowBusy = false; });
   }
   function _tick() {
-    var now = Date.now();
-    if (now - _lastAttn >= ATTN_EVERY_MS && !_attnBusy) { _lastAttn = now; _loadAttention(); }
-    if (now - _lastSlow >= SLOW_EVERY_MS && !_slowBusy) { _lastSlow = now; _loadSlow(); }
+    if (document.hidden) return;
+    var now = Date.now(), hidden = document.hidden;
+    if (hmShouldPoll(now, _lastAttn, ATTN_EVERY_MS, hidden) && !_attnBusy) { _lastAttn = now; _loadAttention(); }
+    if (hmShouldPoll(now, _lastSlow, SLOW_EVERY_MS, hidden) && !_slowBusy) { _lastSlow = now; _loadSlow(); }
   }
   function _onStatus(data) {
     if (!$('hm-headline')) return;
