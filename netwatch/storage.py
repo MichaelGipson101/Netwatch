@@ -186,6 +186,37 @@ class HistoryDB:
         with self.lock:
             self._flush_pings_locked()
 
+    # Tables keyed by host_ip that travel with a host when its address changes.
+    _HOST_IP_TABLES = ("pings", "ping_daily", "incidents", "maintenance_windows")
+
+    def migrate_host_ip(self, old_ip, new_ip, force=False):
+        """Move all history recorded under old_ip to new_ip in one transaction. Returns the
+        per-table rowcounts, or None when skipped because new_ip already has history in any
+        table (never mix two devices' history). force=True skips that check (used to undo a
+        migration); a primary-key conflict then raises and the transaction is rolled back."""
+        with self.lock:
+            self._flush_pings_locked()
+            if not force:
+                for table in self._HOST_IP_TABLES:
+                    if self.conn.execute(f"SELECT 1 FROM {table} WHERE host_ip = ? LIMIT 1",
+                                         (new_ip,)).fetchone():
+                        return None
+            counts = {}
+            self.conn.execute("BEGIN")
+            try:
+                for table in self._HOST_IP_TABLES:
+                    cur = self.conn.execute(f"UPDATE {table} SET host_ip = ? WHERE host_ip = ?",
+                                            (new_ip, old_ip))
+                    counts[table] = cur.rowcount
+                self.conn.execute("COMMIT")
+            except Exception:
+                try:
+                    self.conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            return counts
+
     def recent_pings(self, host_ip, limit=100):
         """Return up to `limit` most-recent pings for a host, oldest first.
         Used to repopulate the in-memory history deque on startup."""

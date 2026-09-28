@@ -325,6 +325,9 @@ def _drift_item(d, records):
         "detail": f"Monitored at {d['monitored_ip']}", "since": None,
         "affected": [d["monitored_ip"]], "root_ip": None,
         "link": _link("lab", "inventory", {"inv": rec_id}) if rec_id is not None else None,
+        # What the admin-only "Update IP" action posts back; the server re-checks it against
+        # the current drift result before changing anything.
+        "data": {"mac": d["mac"], "from_ip": d["monitored_ip"], "to_ip": d["seen_ip"]},
     }
 
 

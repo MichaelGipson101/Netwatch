@@ -401,6 +401,7 @@ def test_info_items_do_not_change_the_verdict():
     (dr,) = items_of(p, "ip_drift")
     assert dr["id"] == "ip_drift:aa:aa:aa:aa:aa:01" and dr["title"] == "vf2 moved to 10.0.0.8"
     assert dr["detail"] == "Monitored at 10.0.0.7"
+    assert dr["data"] == {"mac": "aa:aa:aa:aa:aa:01", "from_ip": "10.0.0.7", "to_ip": "10.0.0.8"}
     assert dr["link"] == {"page": "lab", "subview": "inventory", "params": {"inv": 5}}
 
 

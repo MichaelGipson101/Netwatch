@@ -782,3 +782,25 @@ def add_monitored_hosts(path, entries):
                 raise ValueError(err)
             _save_hosts_config_locked(path, hosts)
         return added, hosts
+
+
+def change_host_ip(path, old_ip, new_ip):
+    """Change the IP of the one hosts.yaml entry whose ip is old_ip, keeping every other
+    field and the entry order. Re-reads the file under HOSTS_WRITE_LOCK so a concurrent write
+    isn't lost and saves through _save_hosts_config_locked (backup + 0600). Returns
+    (ok, err, all_hosts): err is "host_not_found", "ip_in_use" or a validation message."""
+    with HOSTS_WRITE_LOCK:
+        hosts = list((load_yaml(path) or {}).get("hosts") or [])
+        target = next((h for h in hosts if isinstance(h, dict)
+                       and str(h.get("ip") or "").strip() == old_ip), None)
+        if target is None:
+            return False, "host_not_found", None
+        if any(h is not target and isinstance(h, dict) and str(h.get("ip") or "").strip() == new_ip
+               for h in hosts):
+            return False, "ip_in_use", None
+        hosts = [dict(h, ip=new_ip) if h is target else h for h in hosts]
+        ok, err = validate_hosts_config({"hosts": hosts})
+        if not ok:
+            return False, err, None
+        _save_hosts_config_locked(path, hosts)
+        return True, None, hosts

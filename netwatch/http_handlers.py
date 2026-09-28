@@ -9,6 +9,7 @@ import sys
 import json
 import time
 import logging
+import ipaddress
 import yaml
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
@@ -21,7 +22,7 @@ from netwatch.network import (
 )
 from netwatch.hosts import (
     load_yaml, _validate_url, validate_hosts_config, save_hosts_config,
-    add_monitored_hosts, guest_host_entry, monitored_keys,
+    add_monitored_hosts, guest_host_entry, monitored_keys, change_host_ip,
 )
 from netwatch.pollers import PROXMOX_NODE_RE
 from netwatch.auth import verify_maintenance_token
@@ -434,6 +435,94 @@ def _h_post_attention_dismiss(data, ledger) -> tuple:
     except Exception as e:
         logging.warning(f"attention dismiss failed: {e}")
         return 500, {"error": "dismiss failed"}
+
+
+def _valid_ipv4(s):
+    try:
+        ipaddress.IPv4Address(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _undo_history_move(history_db, history, from_ip, to_ip):
+    """Best effort: put history that _h_post_attention_apply_ip moved back on from_ip."""
+    if history is None or history_db is None:
+        return
+    try:
+        history_db.migrate_host_ip(to_ip, from_ip, force=True)
+    except Exception as e:
+        logging.warning(f"apply-ip: could not move history back {to_ip} -> {from_ip}: {e}")
+
+
+def _h_post_attention_apply_ip(data, config_path, host_manager, history_db, inventory_db,
+                               drift_monitor, settings) -> tuple:
+    """Apply an ip_drift item: point the monitored host at its new address. Admin only at the
+    route. The request must match a CURRENT drift result, so a stale or forged request cannot
+    rewrite arbitrary IPs. Order matters: history moves first (an ongoing incident follows the
+    host), then hosts.yaml, then the live host list, then the inventory record."""
+    data = data if isinstance(data, dict) else {}
+    mac, from_ip, to_ip = data.get("mac"), data.get("from_ip"), data.get("to_ip")
+    if not all(isinstance(v, str) for v in (mac, from_ip, to_ip)):
+        return 400, {"error": "mac, from_ip and to_ip are required"}
+    if not _valid_ipv4(from_ip) or not _valid_ipv4(to_ip) or from_ip == to_ip:
+        return 400, {"error": "invalid ip"}
+    if drift_monitor is None:
+        return 503, {"error": "drift monitor not available"}
+    norm_mac = InventoryDB.normalize_mac(mac)
+    try:
+        current = drift_monitor.get()
+    except Exception:
+        logging.exception("apply-ip: drift read failed")
+        return 500, {"error": "apply failed"}
+    if not any(d.get("mac") == norm_mac and d.get("monitored_ip") == from_ip
+               and d.get("seen_ip") == to_ip for d in current):
+        return 409, {"error": "drift_changed"}
+
+    history = None
+    try:
+        if history_db is not None:
+            history = history_db.migrate_host_ip(from_ip, to_ip)
+        ok, err, all_hosts = change_host_ip(config_path, from_ip, to_ip)
+        if not ok:
+            _undo_history_move(history_db, history, from_ip, to_ip)
+            if err == "host_not_found":
+                return 404, {"error": "host_not_found"}
+            if err == "ip_in_use":
+                return 409, {"error": "ip_in_use"}
+            return 400, {"error": err}
+        if host_manager is not None:
+            try:
+                host_manager.reload_from_config(all_hosts, (settings or {}).get("default_interval", 30))
+            except Exception:
+                logging.exception("apply-ip: reload failed, rolling back")
+                _undo_history_move(history_db, history, from_ip, to_ip)
+                try:
+                    change_host_ip(config_path, to_ip, from_ip)
+                except Exception as e:
+                    logging.warning(f"apply-ip: could not restore hosts.yaml: {e}")
+                return 500, {"error": "reload failed"}
+        inventory_updated = False
+        if inventory_db is not None:
+            try:
+                rec = inventory_db.find_by_mac(norm_mac)
+                if rec and (rec.get("ip") or "") in ("", from_ip):
+                    inv_ok, inv_err = inventory_db.update(rec["id"], {"ip": to_ip})
+                    inventory_updated = bool(inv_ok)
+                    if not inv_ok:
+                        logging.warning(f"apply-ip: inventory update failed: {inv_err}")
+            except Exception as e:
+                logging.warning(f"apply-ip: inventory update failed: {e}")
+        try:
+            drift_monitor.refresh()
+        except Exception as e:
+            logging.warning(f"apply-ip: drift refresh failed: {e}")
+        return 200, {"ok": True, "from": from_ip, "to": to_ip, "history": history,
+                     "inventory_updated": inventory_updated}
+    except Exception:
+        logging.exception("apply-ip failed")
+        _undo_history_move(history_db, history, from_ip, to_ip)
+        return 500, {"error": "apply failed"}
 
 
 NAS_BACKUP_STATUS_PATH = "/mnt/nas-shared/netwatch/backup/_status.json"
