@@ -316,7 +316,8 @@ def make_handler(host_manager, settings, config_path, incident_log=None, auth_ma
                 return
             if self.path == "/api/attention" or self.path.startswith("/api/attention?"):
                 if not self._require_auth(): return
-                self._send_json(*_h_get_attention(host_manager, inventory_db, ledger, drift_monitor))
+                self._send_json(*_h_get_attention(
+                    host_manager, inventory_db, ledger, drift_monitor, incident_log=incident_log))
                 return
             if self.path == "/api/heartbeat" or self.path.startswith("/api/heartbeat?"):
                 if not self._require_auth(): return

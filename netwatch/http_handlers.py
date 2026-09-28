@@ -343,11 +343,25 @@ def _h_get_heartbeat(history_db, host_manager, query="", now=None) -> tuple:
     return 200, payload
 
 
-def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None, now=None) -> tuple:
+def _ongoing_since_by_ip(incident_log) -> dict:
+    """{host_ip: started_ts} for ongoing incidents; {} when unavailable."""
+    if incident_log is None:
+        return {}
+    try:
+        return {e["host_ip"]: float(e["started_ts"]) for e in incident_log.list_incidents()
+                if e.get("ongoing") and e.get("host_ip") and e.get("started_ts")}
+    except Exception as e:
+        logging.warning(f"attention: incident seed failed: {e}")
+        return {}
+
+
+def _h_get_attention(host_manager, inventory_db, ledger=None, drift_monitor=None, now=None,
+                     incident_log=None) -> tuple:
     """The verdict + needs-attention list for Home. Every input is optional and every
     failure degrades to fewer items, never an error."""
     try:
-        facts = host_facts(host_manager.list_hosts()) if host_manager else []
+        facts = (host_facts(host_manager.list_hosts(), since_by_ip=_ongoing_since_by_ip(incident_log))
+                 if host_manager else [])
     except Exception as e:
         logging.warning(f"attention: build failed: {e}")
         return 200, build_attention([], [], {}, [], 0, [], now=now)

@@ -345,3 +345,33 @@ def test_explain_post_route_works_for_a_logged_in_user_with_csrf(tmp_path):
     finally:
         server.server_close()
         t.join()
+
+
+class _IncLog:
+    def __init__(self, events=None, boom=False):
+        self._e, self._boom = events or [], boom
+
+    def list_incidents(self):
+        if self._boom:
+            raise RuntimeError("db")
+        return self._e
+
+
+def test_attention_handler_seeds_down_since_from_the_ongoing_incident():
+    hm = _HMgr([_host("jellyfin", "10.0.0.4", False)])          # first_down_at is 0 (never set)
+    log = _IncLog([
+        {"host_ip": "10.0.0.4", "host_name": "jellyfin", "ongoing": True, "started_ts": 1_000_000 - 3 * 86400},
+        {"host_ip": "10.0.0.5", "host_name": "other", "ongoing": False, "started_ts": 5},
+    ])
+    _, p = H._h_get_attention(hm, None, None, None, now=1_000_000, incident_log=log)
+    (it,) = p["items"]
+    assert it["since"] == 1_000_000 - 3 * 86400 and it["detail"] == "Down 3 d"
+
+
+def test_attention_handler_ignores_resolved_incidents_and_survives_a_failing_log():
+    hm = _HMgr([_host("jellyfin", "10.0.0.4", False)])
+    resolved = _IncLog([{"host_ip": "10.0.0.4", "ongoing": False, "started_ts": 10}])
+    _, p = H._h_get_attention(hm, None, None, None, now=1_000_000, incident_log=resolved)
+    assert p["items"][0]["since"] is None and p["items"][0]["detail"] == "Down"
+    _, p = H._h_get_attention(hm, None, None, None, now=1_000_000, incident_log=_IncLog(boom=True))
+    assert p["items"][0]["kind"] == "host_down"                  # degraded, not an error

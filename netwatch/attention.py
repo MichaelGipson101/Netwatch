@@ -211,12 +211,19 @@ def fmt_duration(seconds):
     return f"{h // 24} d"
 
 
-def host_facts(hosts):
-    """Plain-dict view of HostState objects, so the builders stay pure and testable."""
+def host_facts(hosts, since_by_ip=None):
+    """Plain-dict view of HostState objects, so the builders stay pure and testable.
+    `since_by_ip` ({ip: epoch}) seeds `first_down_at` from stored incidents, so "down for X"
+    survives a restart (the earlier non-zero value wins)."""
     now = datetime.now()
+    seeds = since_by_ip or {}
     out = []
     for h in hosts:
         mac = (h.specs or {}).get("mac")
+        first = float(h.first_down_at or 0.0)
+        seeded = float(seeds.get(h.ip) or 0.0)
+        if seeded and (not first or seeded < first):
+            first = seeded
         out.append({
             "name": h.name,
             "ip": h.ip,
@@ -225,7 +232,7 @@ def host_facts(hosts):
             "is_up": bool(h.is_up),
             "checked": h.last_checked is not None,
             "in_maintenance": bool(h.maintenance_until and h.maintenance_until > now),
-            "first_down_at": float(h.first_down_at or 0.0),
+            "first_down_at": first,
         })
     return out
 

@@ -687,3 +687,20 @@ def test_openrouter_complete_posts_a_non_streaming_request(monkeypatch):
     assert body["model"] == "openrouter/free" and "stream" not in body and body["max_tokens"] == 300
     assert req.get_header("Authorization") == "Bearer sk-x"
     assert req.full_url == "https://openrouter.ai/api/v1/chat/completions" and seen["timeout"] == 45
+
+
+def test_host_facts_seeds_first_down_at_from_the_open_incident():
+    h = HostState(name="a", ip="10.0.0.1", group="g", interval=30)
+    h.first_down_at = 5000.0                            # set after a restart (later than the incident)
+    (f,) = host_facts([h], since_by_ip={"10.0.0.1": 1000.0})
+    assert f["first_down_at"] == 1000.0                 # the earlier stored start wins
+    h.first_down_at = 0.0
+    (f,) = host_facts([h], since_by_ip={"10.0.0.1": 1000.0})
+    assert f["first_down_at"] == 1000.0                 # seeds when the host has none
+    h.first_down_at = 800.0
+    (f,) = host_facts([h], since_by_ip={"10.0.0.1": 1000.0})
+    assert f["first_down_at"] == 800.0                  # an earlier in-memory value is kept
+    (f,) = host_facts([h], since_by_ip={"10.9.9.9": 1.0})
+    assert f["first_down_at"] == 800.0                  # other hosts' incidents are ignored
+    (f,) = host_facts([h])
+    assert f["first_down_at"] == 800.0                  # no seed at all: unchanged
