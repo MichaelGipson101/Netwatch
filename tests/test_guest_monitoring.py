@@ -7,7 +7,9 @@ import urllib.error
 
 import yaml
 
-from netwatch.discovery_proxmox import fetch_proxmox, pick_guest_ip, proxmox_observations
+from netwatch.discovery_proxmox import (
+    agent_enabled, fetch_proxmox, pick_guest_ip, proxmox_observations,
+)
 
 GUEST_MAC = "bc:24:11:f7:7e:65"
 
@@ -77,8 +79,9 @@ def test_fetch_proxmox_reads_running_guests_ips():
         {"vmid": 116, "type": "qemu", "name": "Solaris10", "status": "running"},
         {"vmid": 103, "type": "qemu", "name": "netbsd", "status": "stopped"}]}]
     configs = {("pve", 120): {"net0": f"name=eth0,hwaddr={GUEST_MAC.upper()},bridge=vmbr0"},
-               ("pve", 121): {"net0": "virtio=BC:24:11:54:3D:18,bridge=vmbr0"},
-               ("pve", 116): {"net0": "e1000=BC:24:11:FB:57:0F,bridge=vmbr0"},
+               ("pve", 121): {"net0": "virtio=BC:24:11:54:3D:18,bridge=vmbr0", "agent": "1"},
+               ("pve", 116): {"net0": "e1000=BC:24:11:FB:57:0F,bridge=vmbr0",
+                              "agent": "enabled=1,fstrim_cloned_disks=1"},   # enabled, but not running
                ("pve", 103): {"net0": "virtio=BC:24:11:6D:7D:40,bridge=vmbr0"}}
     p = _poller(nodes, configs, {("pve", 120): LXC_IFACES, ("pve", 121): QEMU_AGENT},
                 fail={("pve", 116)})
@@ -337,3 +340,30 @@ def test_monitor_guests_route_is_admin_only(tmp_path):
     finally:
         server.server_close(); t.join()
     hdb.close()
+
+
+def test_agent_enabled_parsing():
+    assert agent_enabled({"agent": "1"}) and agent_enabled({"agent": "enabled=1,type=virtio"})
+    assert agent_enabled({"agent": 1})
+    assert not agent_enabled({"agent": "0"}) and not agent_enabled({"agent": "enabled=0"})
+    assert not agent_enabled({}) and not agent_enabled(None)
+
+
+def test_fetch_skips_the_agent_call_for_vms_without_one():
+    nodes = [{"name": "pve", "status": "online", "guests": [
+        {"vmid": 103, "type": "qemu", "name": "netbsd", "status": "running"}]}]
+    p = _poller(nodes, {("pve", 103): {"net0": "virtio=BC:24:11:6D:7D:40,bridge=vmbr0"}}, {})
+    fetch_proxmox(p)
+    assert not any("agent" in x for x in p.paths)
+
+
+def test_accept_all_matches_string_ids_for_monitor():
+    with tempfile.TemporaryDirectory() as d:
+        hdb, idb = _idb(d)
+        node = _add(idb, "HP EliteDesk")
+        ctx = _ctx(d)
+        sid, fp = _guest_suggestion(idb, node, "immich", 1, "192.168.6.13")
+        _, body = _h_post_suggestions_accept_all(
+            {"items": [{"id": str(sid), "fingerprint": fp, "monitor": True}]}, idb, ctx)
+        assert body["results"][0]["monitored"] is True
+        hdb.close()

@@ -1153,7 +1153,7 @@ def _monitor_guests(device_ids, inventory_db, monitor):
         logging.warning(f"guest monitoring: could not update hosts.yaml: {type(e).__name__}")
         out.update({i: "error" for i in entries})
         return out
-    if added:
+    if added and monitor.get("host_manager") is not None:
         settings = monitor.get("settings") or {}
         monitor["host_manager"].reload_from_config(hosts, settings.get("default_interval", 30))
         logging.info(f"guest monitoring: added {', '.join(a['name'] for a in added)}")
@@ -1199,9 +1199,9 @@ def _h_post_suggestions_accept_all(body: dict, inventory_db, monitor=None) -> tu
     if not isinstance(items, list) or len(items) > MAX_ACCEPT_ALL_ITEMS:
         return 400, {"error": f"items must be a list of at most {MAX_ACCEPT_ALL_ITEMS}"}
     results = inventory_db.accept_suggestions(items)
-    wanted = {it.get("id") for it in items if isinstance(it, dict) and it.get("monitor") is True}
+    wanted = {str(it.get("id")) for it in items if isinstance(it, dict) and it.get("monitor") is True}
     ids = [r["device_id"] for r in results
-           if r["ok"] and r.get("device_id") is not None and r["id"] in wanted]
+           if r["ok"] and r.get("device_id") is not None and str(r["id"]) in wanted]
     if ids:
         reasons = _monitor_guests(ids, inventory_db, monitor)   # one write + one reload
         for r in results:

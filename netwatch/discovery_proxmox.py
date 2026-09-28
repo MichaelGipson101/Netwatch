@@ -43,6 +43,14 @@ def pick_guest_ip(macs, raw):
     return None
 
 
+def agent_enabled(config):
+    """QEMU config 'agent: 1' or 'agent: enabled=1,fstrim_cloned_disks=1'.
+    Asking a VM without it just costs Proxmox a timeout."""
+    raw = str((config or {}).get("agent") or "").strip()
+    first = raw.split(",")[0]
+    return first in ("1", "enabled=1", "enabled=true", "enabled=yes")
+
+
 class ProxmoxUnavailable(Exception):
     """The Proxmox poller has no fresh node/guest data to build on."""
 
@@ -157,6 +165,8 @@ def fetch_proxmox(poller):
                 configs[(name, vmid)] = None
             if g.get("status") != "running":
                 continue
+            if kind == "qemu" and not agent_enabled(configs[(name, vmid)]):
+                continue   # no guest agent configured: ARP/UniFi may still know its IP
             base = f"/api2/json/nodes/{urllib.parse.quote(name, safe='')}/{kind}/{vmid}"
             try:
                 interfaces[(name, vmid)] = poller.api_get(
