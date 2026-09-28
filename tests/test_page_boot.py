@@ -24,4 +24,7 @@ def test_page_boots_without_errors(page, theme, tmp_path):
 @pytest.mark.parametrize("width", [320, 390])
 def test_page_has_no_horizontal_overflow(page, theme, width, tmp_path):
     r = render(page.html, default_fixtures(tmp_path), width=width, height=800, theme=theme)
+    assert r.inner_width == width, (
+        f"{page.name} ({theme}): viewport was {r.inner_width}px, not {width}px; "
+        "the overflow check would be vacuous")
     assert r.overflow <= 0, f"{page.name} ({theme}) overflows by {r.overflow}px at {width}px"
